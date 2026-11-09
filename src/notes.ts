@@ -22,7 +22,8 @@ export function looksLikeSpell(fm: FM, bodyTags: readonly string[] = []): boolea
 
 /** A line's value in the note's text: "**Range:** 150 feet", "- Range: Self (15-foot cone)", "Range | 60 feet". */
 function lineValue(body: string, label: string): string {
-  const re = new RegExp(`^[\\s>*_\\-|]*\\**${label}\\**\\s*[:|]\\**\\s*\\**\\s*([^\\n|]+)`, 'im');
+  // "Range:", or Pathfinder's "**Range** 30 feet" (a bold label, no colon)
+  const re = new RegExp(`^[\\s>*_\\-|]*(?:\\*\\*${label}\\*\\*\\s*:?|${label}\\**\\s*[:|])\\**\\s*\\**\\s*([^\\n|;]+)`, 'im');
   const m = re.exec(body);
   return m ? m[1].replace(/\*+/g, '').trim() : '';
 }
@@ -37,7 +38,7 @@ export function spellFromNote(path: string, fm: FM, body: string): SpellEntry {
   return {
     key: 'note:' + path,
     name,
-    range: str(fm?.['range']) || lineValue(text, 'Range'),
+    range: str(fm?.['range']) || lineValue(text, 'Range') || lineValue(text, 'Distance'),
     duration: str(fm?.['duration']) || lineValue(text, 'Duration'),
     descFull: text,
     ...(Number.isFinite(level) ? { level } : {}),

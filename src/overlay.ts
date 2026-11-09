@@ -2,7 +2,7 @@
 // map canvas (turned with the TV), and every effect is an element placed in it from its box in the world.
 // Animations are the vault's files (video or image); without one, the add-on draws the shape itself.
 import { boxOf, coneWidth, wallPieces, wallPoints, wallThickness, type Controls, type Point, type Box, type Effect, type Scale, type TokenAt } from './geometry';
-import type { Shape } from './areas';
+import { fromFeet, unitLabel, type Shape } from './areas';
 import { fitOf, type Trim } from './trim';
 
 export interface Mapping {
@@ -53,6 +53,9 @@ export const FADE_MS = 450;
 
 
 /** One surface's elements, by effect id. */
+/** A preview while placing: the aimed area, or the range ring round the caster. */
+const isPreview = (e: Effect): boolean => e.id === 'preview' || e.id.startsWith('preview-');
+
 export class Painter {
   private els = new Map<string, HTMLElement>();
   private under: HTMLElement | null = null;
@@ -60,13 +63,14 @@ export class Painter {
   constructor(readonly surface: Surface, private readonly world: World) {}
 
   /** Draws `effects` as they are now (`now`, ms); `out` are ending (fading). */
-  paint(effects: readonly Effect[], now: number, out: ReadonlySet<string>, preview?: Effect | null): void {
+  paint(effects: readonly Effect[], now: number, out: ReadonlySet<string>, preview?: Effect | readonly (Effect | null)[] | null): void {
     const layer = this.surface.layer();
     const m = layer ? this.surface.mapping() : null;
     const keep = new Set<string>();
     const holes: { x: number; y: number; r: number; sel: boolean }[] = [];
     if (layer && m) {
-      const all = preview ? [...effects, preview] : effects;
+      const extra = (Array.isArray(preview) ? preview : [preview]).filter((x): x is Effect => !!x);
+      const all = extra.length ? [...effects, ...extra] : effects;
       // lasting effects sit together under the tokens' holes: what stays on the map never hides who stands in it
       if (!this.under || this.under.parentElement !== layer) { this.under?.remove(); this.under = layer.createDiv({ cls: 'sfx-under' }); layer.prepend(this.under); this.mask = ''; }
       const maps = new Set<string>();
@@ -82,8 +86,8 @@ export class Painter {
         if (e.token && !tok) continue;                               // its token is gone (or on another level)
         const info = e.file ? artInfo.get(e.file) : undefined;
         let el = this.els.get(e.id);
-        if (!el) { const made = this.make(e, e.lasting && e.id !== 'preview' ? this.under : layer); if (!made) continue; el = made; this.els.set(e.id, el); }
-        if (e.shape === 'wall') { if (e.file && e.id !== 'preview') this.placeWall(el, e, wallPieces(e, s, tok, true), m, s, info, wallPoints(e, tok)); else this.drawWall(el, e, s, tok, m); }
+        if (!el) { const made = this.make(e, e.lasting && !isPreview(e) ? this.under : layer); if (!made) continue; el = made; this.els.set(e.id, el); }
+        if (e.shape === 'wall') { if (e.file && !isPreview(e)) this.placeWall(el, e, wallPieces(e, s, tok, true), m, s, info, wallPoints(e, tok)); else this.drawWall(el, e, s, tok, m); }
         else { this.place(el, boxOf(e, s, tok, info ? { aspect: info.aspect, feet: info.feet } : null), m, s); this.fit(el, e); }
         if (el.classList.contains('sfx-out') !== out.has(e.id)) el.classList.toggle('sfx-out', out.has(e.id));
         keep.add(e.id);
@@ -103,7 +107,7 @@ export class Painter {
   }
 
   private make(e: Effect, layer: HTMLElement): HTMLElement | null {
-    const el = layer.createDiv({ cls: `sfx sfx-${e.shape} ${e.lasting ? 'sfx-lasting' : 'sfx-instant'}${e.id === 'preview' ? ' sfx-preview' : ''}` });
+    const el = layer.createDiv({ cls: `sfx sfx-${e.shape} ${e.lasting ? 'sfx-lasting' : 'sfx-instant'}${isPreview(e) ? ' sfx-preview' : ''}${e.id === 'preview-range' ? ' sfx-range' : ''}` });
     el.style.setProperty('--c', e.colour || '#ff8a2a');
     if (e.colour2) el.style.setProperty('--c2', e.colour2);
     if (e.alpha !== undefined && e.alpha < 1) el.style.setProperty('--sfx-alpha', String(Math.max(0.05, e.alpha)));
@@ -116,12 +120,12 @@ export class Painter {
   /** The effect's animation (or the drawn shape) inside `el`. */
   private fill(el: HTMLElement, e: Effect): void {
     const doc = this.surface.doc;
-    const url = e.file && e.id !== 'preview' ? this.world.url(e.file) : null;
+    const url = e.file && !isPreview(e) ? this.world.url(e.file) : null;
     if (url && e.file) {
       const file = e.file;
       const video = /\.(webm|mp4)$/i.test(file);
       const media: HTMLVideoElement | HTMLImageElement = video ? el.createEl('video') : el.createEl('img');
-      const feet = Number((/(\d+)\s*ft/i.exec(file) ?? [])[1] ?? 0) || 0;
+      const feet = fromFeet(Number((/(\d+)\s*ft/i.exec(file) ?? [])[1] ?? 0) || 0);
       const learn = (w: number, h: number, duration: number) => { if (w > 0 && h > 0) artInfo.set(file, { aspect: w / h, feet, duration }); };
       if (video) {
         const v = media as HTMLVideoElement;
@@ -219,7 +223,7 @@ export class Painter {
 
   /** The art laid out so its picture, not its empty frame, fills the area (a cone reaching its full length). */
   private fit(el: HTMLElement, e: Effect): void {
-    const fo = e.file && e.id !== 'preview' && (e.shape === 'cone' || e.shape === 'line') ? fitOf(this.world.trim(e.file), e.shape) : null;
+    const fo = e.file && !isPreview(e) && (e.shape === 'cone' || e.shape === 'line') ? fitOf(this.world.trim(e.file), e.shape) : null;
     if (fo) {
       setVar(el, '--fx-l', `${fo.l.toFixed(2)}%`); setVar(el, '--fx-t', `${fo.t.toFixed(2)}%`);
       setVar(el, '--fx-w', `${fo.w.toFixed(2)}%`); setVar(el, '--fx-h', `${fo.h.toFixed(2)}%`);
@@ -360,10 +364,10 @@ export function paintHandles(layer: HTMLElement | null, m: Mapping | null, picke
     const q = loc(one.badge);
     const b = box.createDiv({ cls: 'sfx-sizebadge' });
     b.style.transform = `translate(${f(q.x)}px, ${f(q.y)}px)`;
-    const v = b.createDiv({ cls: 'sfx-size', text: one.badge.text }); v.title = `${one.badge.text} feet`;
+    const v = b.createDiv({ cls: 'sfx-size', text: one.badge.text }); v.title = `${one.badge.text} ${unitLabel()}`;
     const col = b.createDiv({ cls: 'sfx-steps' });
-    for (const [cls, by, t] of [['sfx-plus', 5, '+'], ['sfx-minus', -5, '−']] as const) {
-      const btn = col.createEl('button', { cls, text: t }); btn.dataset.step = String(by); btn.title = by > 0 ? '5 ft more' : '5 ft less';
+    for (const [cls, by, t] of [['sfx-plus', 1, '+'], ['sfx-minus', -1, '−']] as const) {
+      const btn = col.createEl('button', { cls, text: t }); btn.dataset.step = String(by); btn.title = by > 0 ? 'One square more' : 'One square less';
     }
     b.appendChild(col);
     box.appendChild(b);

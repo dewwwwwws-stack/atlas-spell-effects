@@ -117,7 +117,16 @@ export class StatblockLinker {
             ok = !!unit.closest(LIST) || SPELL_TEXT.test(unit.textContent ?? '') || (spelly && !!host.closest('strong, em, b, i'));
             about.set(unit, ok);
           }
-          if (!ok) continue;
+          if (!ok) {
+            // a name standing on its own in bold, italics or a link ("***Fireball (Recharge 5–6).***", "[[Shield]]"):
+            // a spell, wherever it is
+            const own = host.closest('strong, em, b, i, a');
+            if (own && sb.contains(own)) {
+              const t = (own.textContent ?? '').replace(/\([^)]*\)/g, '').replace(/[\s.:;,*]+$/g, '').trim();
+              for (const f of names.find(text)) if (norm(f.link.name) === norm(t) || norm(text.slice(f.start, f.end)) === norm(t)) hits.push({ node: n, ...f });
+            }
+            continue;
+          }
           for (const f of names.find(text)) hits.push({ node: n, ...f });
         }
       }

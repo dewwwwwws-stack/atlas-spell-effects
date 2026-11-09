@@ -1,4 +1,4 @@
-# Atlas Spell Effects
+# Spell Effects for AtlasVTT
 
 Animated spell areas on your Atlas VTT maps: Fireball's burst, Burning Hands' cone, Lightning Bolt's line,
 Spirit Guardians around the cleric. They show on your screen and on the player window (the TV), in the right
@@ -12,7 +12,7 @@ place and at the right size, and follow the players' own view. A bridge until At
 - Obsidian 1.10 or later. Spell bases need the Bases core plugin on.
 
 ## Install
-Settings → Community plugins → Browse → search **Atlas Spell Effects** → Install → Enable. Then open an Atlas map:
+Settings → Community plugins → Browse → search **Spell Effects** → Install → Enable. Then open an Atlas map:
 ✨ is in Atlas's toolbar.
 
 ## What it reads, writes and downloads
@@ -21,8 +21,9 @@ Settings → Community plugins → Browse → search **Atlas Spell Effects** →
   preview picture shows in the cast window, or when you press *Download everything*. Turn *Offer every JB2A
   animation* off in the settings and it fetches nothing at all. No tracking, no accounts, nothing sent anywhere.
 - **Your vault:** it saves downloaded animations, and a JB2A credit and licence note, in the JB2A folder
-  (`JB2A_DnD5e`). *Save as defaults* writes `effect-…` properties onto that spell's note. An effect of your own gets
-  a note, and a Base, in its own folder (*Spell Storage*). It never deletes or changes anything else.
+  (`JB2A_DnD5e`). *Save* writes `effect-…` properties onto that spell's note (and *Forget saved* takes them off
+  again). A spell of your own (*Save as new…*) gets a note, and a Base, in its own folder (*Spell Storage*);
+  *Delete* puts that note in Obsidian's bin. It never deletes or changes anything else.
 - **Atlas:** it reads the open map (grid, tokens, view) and adds lights and walls for lasting effects when you ask
   for them. It removes those again when the effect ends, and doesn't add them to your undo history. It relies on
   Atlas's internals, so an Atlas update can break something until this add-on is updated.
@@ -45,18 +46,57 @@ the downloaded files. Support them on [Patreon](https://www.patreon.com/jb2a) fo
 licence, this add-on is and stays free.
 
 ## Spells: your Bases
-Pick **Spell bases** in the settings (start typing a `.base` file's name), as you pick loot bases in Atlas. Every
-note a Base shows, in any of its views, is a spell. Your compendium's spell pages, homebrew notes, anything.
-Its area, light and walls are read from its text (and from "**Range:**" and "**Duration:**" lines).
+The add-on finds your spells through **Obsidian Bases**: every note a Base shows is a spell it can cast. Its area,
+light and walls are read from the note's text (and from "**Range:**" and "**Duration:**" lines). It works like
+picking loot bases in Atlas.
 
-Without a Base, any note whose properties have a `school` and a `level`, or that has a "spell" tag, is offered
-(turn *Also find spell notes anywhere* off to use only your Bases).
+### Setting up a spell Base, step by step
+1. **Turn Bases on.** Settings → Core plugins → **Bases** (it's on by default in Obsidian 1.10 and later).
+2. **Have your spells as notes**, one note per spell, with the spell's text in the note (the bit that says
+   "20-foot-radius sphere", "60-foot cone", "Duration: Concentration, up to 10 minutes"…). Imported compendium
+   pages, a 5e.tools or Plutonium export, or your own homebrew notes all work. Properties aren't needed, but
+   `level` and `school` help.
+3. **Make a Base that shows them.** Right-click the folder your spells are in → **New base**. Or use the command
+   palette: **Bases: Create new base**. Give it a name, for example `Spells.base`.
+4. **Filter it to your spells.** Open the Base, click **Filter** and add one that matches only spell notes, for example:
+   - *the folder:* `file.inFolder("Compendium/Spells")`;
+   - *a tag:* `file.hasTag("spell")`;
+   - *a property:* `level` *is not empty*.
 
-**Saved defaults.** In the cast window, **Save as defaults** writes the area, animation, colour, light and walls
-onto the spell's own note as `effect-…` properties. Nothing else in the note is touched, and no copies are made.
-Spells with saved defaults are listed first (★). Add the `effect-…` columns to your Base to see and edit them all
-in one table. An effect of your own (not a spell note) gets a note in the folder for them (*Spell Storage* unless
-you change it), with a Base of its own.
+   The table should now list your spells and nothing else. A Base made by right-clicking a folder already has the
+   folder filter.
+5. **Pick it in the add-on.** Settings → Atlas Spell Effects → **Spell bases**: start typing the Base's name and
+   pick it. The line under it says how many notes it found (for example "312 notes"). "Bases is off" means step 1,
+   and "Not found" means the Base was moved or renamed.
+6. **Check it.** Open ✨ → **Cast a spell effect…**. Your spells are listed, and the ones whose text names an area
+   are under **Spells with an area**. Search for any of them by name.
+
+Good to know:
+- You can pick several Bases (core spells, homebrew, a setting's spells…). A Base with several views counts every
+  view.
+- A spell whose text names no area (Shield, Mage Hand) is still listed when you search for it. Set its area in the
+  cast window and press **Save**.
+- Without any Base, notes whose properties have a `school` and a `level`, or that have a `spell` tag, are still
+  found. Turn *Also find spell notes anywhere* off to use only your Bases.
+- **Optional:** add the `effect-…` columns (below) to your Base's table to see and change every saved spell in one
+  place.
+
+### Saved spells
+Set a spell up as you like it in the cast window (its area, animation, colours, light, walls), then:
+- **Save** keeps it as how that spell is cast from now on: the next time you cast it, from the cast window or a
+  statblock, it's just like that. It's written onto the spell's own note as `effect-…` properties. Nothing else in
+  the note is touched, and no copies are made. **Save changes** updates it.
+- **Save as new…** keeps it as a spell of its own under a new name ("Big blue Fireball", "Darkness (small)"). It
+  gets a note in the folder for them (*Spell Storage* unless you change it), with a Base of its own. Use it for a
+  second version of a spell, or for an effect that isn't a spell at all.
+- **In ✨ menu** puts a saved spell in the menu of the map's ✨ button, to cast in one click. It's also in Ctrl+P →
+  **Cast a saved spell…**.
+- **Delete** (a spell of your own) puts its note in Obsidian's bin. On one of your spell pages the button says
+  **Forget saved**: it takes the `effect-…` properties off and leaves the rest of the note alone, so the spell is cast
+  from its text again.
+
+Saved spells are listed first in the cast window, under **Saved spells** (★). Presets from versions before 1.4
+become saved spells of their own automatically, still in ✨'s menu.
 
 | Property | What it does | Example |
 |---|---|---|
@@ -67,13 +107,17 @@ you change it), with a Base of its own.
 | `effect-lasting` | stays until ended | `true` |
 | `effect-attach` | follows the caster's token | `true` |
 | `effect-animation` | the animation file | `[[Darkness_01_Black_600x600.webm]]` |
-| `effect-colour` | colour for a drawn effect | `#6a3cff` |
+| `effect-colour` | colour for a drawn effect (its heart) | `#6a3cff` |
+| `effect-colour-outer` | a drawn effect's edge colour | `#2a0f7a` |
+| `effect-opacity` | how see-through, from 0 to 1 | `0.8` |
+| `effect-angle` | a cone's angle in degrees | `90` |
 | `effect-ring` | a wall's ring form: its diameter in feet | `20` |
 | `effect-round` | make the wall as that ring | `true` |
 | `effect-walls` | a wall's real Atlas walls: `none`, `sight`, `movement` or `solid` | `sight` |
 | `effect-light` | `light`, `darkness` or `none` | `darkness` |
 | `effect-bright` / `effect-dim` | the light's bright and dim range in feet | `20` / `40` |
 | `effect-light-colour` | the light's colour | `#ffd28a` |
+| `effect-menu` | in ✨'s menu | `true` |
 | `image` (or `effect-image`) | card art, shown in the cast window | `[[Darkness card.png]]` |
 
 Notes saved by older versions (plain `area`, `size`… and a `spell-effect` tag) still work. They move to the new
@@ -81,7 +125,7 @@ properties the next time you save them.
 
 ## Cast
 ✨ in Atlas's main toolbar (or Ctrl+P → **Cast a spell effect…**):
-1. Pick a spell on the left: ones with saved defaults (★) first, then the others. Or **+ An effect of your own**.
+1. Pick a spell on the left: your saved spells (★) first, then the others. Or **+ An effect of your own**.
 2. On the right: its **area** (Sphere, Around caster, Cone, Cube, Line; size; at a point or from the caster;
    lasts until ended; follows the caster), its **animation** (pictures to pick from; hover to play; ⤓ ones are fetched from JB2A when you place them; or search all),
    its **colour**.
@@ -92,7 +136,12 @@ properties the next time you save them.
    - Esc or right-click stops.
 - "Follows the caster" on a cone or line keeps it on the caster's token as it moves (a beholder's antimagic eye).
 - Instant spells play once and go. Lasting ones stay until ended, also after you restart Obsidian.
-- ✨'s arrow: **Cast <spell> again**, **End** each lasting effect, **End them all**.
+- ✨'s arrow: **Cast <spell> again**, your saved spells ticked *In ✨ menu*, **Players see where I aim**, **End** each
+  lasting effect, **End them all**.
+- **Players see where you aim** (✨'s menu, or the settings; off unless you turn it on): while you place a spell,
+  the players' screen shows its area, so they can see what it will cover before you cast it. Choose how in the
+  settings: **Outline** (its edge, dashed, over a faint wash of its colour), **Filled**, or **Animation** (the
+  spell's own, a little see-through).
 
 ## Moving and changing effects
 - **Drag** an effect like a token to move it. Tokens come first: pressing a token inside an aura moves the token.
@@ -112,7 +161,8 @@ turning goes in 15° steps. Hold **Alt** to do the other for one placing or drag
 centred on it.
 
 ## Good to know
-- Effects are drawn over the map, so they also show over fog of war: cast where players can see.
+- Effects are drawn inside Atlas's map: over its lighting (a dark room doesn't hide them), under the tokens and
+  their bars, and under fog of war.
 - Several Atlas tabs: it casts on the one you used last.
 
 ## Walls
@@ -134,7 +184,8 @@ Wall spells (Wall of Fire, Wall of Stone, Blade Barrier, Wind Wall and the like)
 Lasting effects can give off real Atlas light, or spread Atlas's magical darkness, so your scene lighting and the players' view on the TV treat them like any other light.
 
 - The cast window reads it from the spell: Light, Daylight, Moonbeam, Flaming Sphere and the like give light; Darkness, Hunger of Hadar, Maddening Darkness and the like spread darkness. Change it under **Light** (None / Gives light / Magical darkness), with bright and dim feet and a colour for light.
-- Darkness covers the effect's area and grows or shrinks with it.
+- Darkness covers the effect's area and grows or shrinks with it. It also puts up a ring of Atlas walls that block
+  sight round its edge: no one sees into, out of or through it, and light doesn't pass, but tokens can walk in.
 - The light moves with the effect: drag it, or let it ride on a token. A wall glows along each of its stretches,
   and a line along its whole length.
 - Ordinary lights follow live as you drag. Darkness, and lights over a whole area (walls, lines, cubes), move once
@@ -149,10 +200,10 @@ on the TV):
 - an **outline** in your accent colour, round its actual shape;
 - the round **rotate** button: drag it to turn the effect (a cone or line turns about its point, keeping its length);
 - **‹ ›**: drag them to change the size (a cone or line has › at its far end, for its length);
-- the **size** in feet, with **+** and **−** for 5 ft more or less;
+- the **size** (in your game's unit), with **+** and **−** for one square more or less;
 - on a wall, a **dot on each corner**: drag one to reshape the wall (its Atlas walls and lights follow).
 
-With snapping on, sizes go in 5 ft steps, turns in 15° steps, and wall corners land on grid corners. Hold Alt for the
+With snapping on, sizes go in steps of one square, turns in 15° steps, and wall corners land on grid corners. Hold Alt for the
 other way. Drag the effect itself to move it. **Esc** lets go, and **Delete** ends what's picked. Effects on a token
 (a beholder's antimagic cone) keep their token.
 
@@ -168,28 +219,76 @@ from opening it to closing it, is one step.
 ## Inner and outer colours
 Effects drawn without an animation have an **Inner** colour (the heart) and an **Outer** colour (the edge and glow),
 and every effect has an **Opacity** slider. They're in the cast window and the double-click editor, and they're
-kept with saved defaults (`effect-colour`, `effect-colour-outer`, `effect-opacity`).
-
-## Presets
-Set a spell up as you like it, then press **Save as preset…** in the cast window and give it a name, for example
-"Big blue Fireball". A spell can have as many presets as you like. Presets show:
-- at the top of the cast window, under **Presets** (pick one to change it, then **Update preset**, or **Delete preset**);
-- in ✨'s menu, where one click casts it;
-- in Ctrl+P → **Cast a preset…**.
+kept with saved spells (`effect-colour`, `effect-colour-outer`, `effect-opacity`).
 
 ## Casting from Atlas statblocks
 In Atlas's statblocks (Ctrl / ⌘ + hover a token, the side panel, or a statblock note), the names of spells this
-add-on can cast are highlighted. That means spells with an area or saved defaults, matched by name to your spells and presets.
-Only spell lists, Spellcasting text, spell cards (*Casting Time… Range… Components…*), and spell names in bold or
-italics count, so "dim light" in a description isn't a link. A statblock opened from a token (Ctrl / ⌘ + hover) knows
-its creature. In the side panel, the token selected on the map is the caster.
-- **Click** a name to cast it straight away with its saved defaults or presets. If the statblock was opened from a
-  token on the map, that creature is the caster: an aura lands on it at once, and a cone or line starts from it,
-  so you just aim.
+add-on knows are highlighted: every spell in your spell notes and saved spells, by its name, its note's `aliases`,
+and its name without its inventor ("Hideous Laughter" for "Tasha's Hideous Laughter", as 2024 names it). They're
+found in:
+- spell lists (Atlas's, in a list or in tabs, and Fantasy Statblocks');
+- text about spellcasting: a 2024 *Spellcasting* action's "At Will:" and "1/Day Each:" lines, Pathfinder's
+  "Arcane Prepared Spells", "casts *Fireball*", spell cards (*Casting Time… Range… Components…*);
+- a spell name standing on its own in bold, italics or a link: an action called ***Cone of Cold (Recharge 5–6).***,
+  or `[[Shield]]`.
+
+Other text doesn't count, so "dim light" in a description, or a trait called *Light Sensitivity*, isn't a link.
+A spell whose text names no area can be cast too: on its caster when its range is Self (Shield), otherwise on a
+square at a point within range (Mage Hand).
+
+**Who's casting.** The add-on finds the creature casting it from the statblock:
+- a statblock opened from a token (Ctrl / ⌘ + hover) is that token's;
+- in Atlas's side panel, it's the token selected on the map;
+- in a statblock note open in a tab, it's the one token on the map linked to that note.
+
+If it can't tell, it asks you to click the caster's token first.
+
+- **Click** a name to cast it straight away, as you saved it (or as its text says). With the caster known:
+  - an aura lands on them at once;
+  - a cone or line (Lightning Bolt, Burning Hands) starts from them, so you just aim;
+  - an area cast at a point (Fireball) shows its **range** as a dashed ring round them (150 ft, from the edge of
+    their space), and can't be placed beyond it.
 - **Shift-click** opens the cast window with that spell picked, so you can change it first.
 - **Ctrl / ⌘-click** does what Atlas would do (opens a linked note, for example).
 
 The statblock itself isn't changed: the underline is drawn over it.
+
+### Statblocks with spells: where to get them, and a template
+- **Ready-made:** the [Fantasy Statblocks](https://github.com/javalent/fantasy-statblocks) plugin comes with the 5e
+  SRD's creatures, spellcasters among them (Mage, Archmage, Priest, Lich…). With it installed, a note holding a
+  `statblock` code block that names one (`creature: Archmage`) is a statblock Atlas can link tokens to.
+- **Your own:** copy [`examples/Battle Mage (statblock with spells).md`](examples/Battle%20Mage%20(statblock%20with%20spells).md)
+  into your vault and change it. It's an Atlas statblock (5E 2014 template) with a spell list and spells named in
+  its actions. The parts that matter:
+  - `statblock: true` and `atlas-template` make the note an Atlas statblock;
+  - `spells:` is the spell list: a first line ending in a colon (the heading), then one line per level,
+    `1st level (4 slots): burning hands, magic missile, shield`;
+  - in actions, traits and reactions, spell names in *italics* (or after "casts") are clickable too.
+- Or in Atlas's statblock editor, add spells to the **Spellcasting** part of any statblock in the same way.
+
+Only spells the add-on knows (your spell notes, see *Spells: your Bases*) are clickable.
+
+## Your game system
+The add-on reads the game system of the map's collection from Atlas (**Settings → Atlas Spell Effects** shows what it
+found), so there's nothing to set up. It works with every system built into Atlas: D&D 5e, Pathfinder 2e,
+Daggerheart, Shadowdark, Old-School Essentials, Cairn, Call of Cthulhu, Cyberpunk RED and Draw Steel, and with your
+own.
+- **Units:** sizes and ranges are in your game's own unit, as Atlas's rulers and lights are: feet, yards (Call of
+  Cthulhu), metres (Cyberpunk RED) or squares (Draw Steel). Steps, and things that default to "one square" (a
+  line's width), follow your grid.
+- **Spell text** is read the way Atlas reads statblocks, and converted into your unit: "60 ft.", "18 m", "20'",
+  "10 yards", "12 squares". A D&D spell's 20 ft is 6 m in a metric game, 6.67 yd in Call of Cthulhu, and 4 squares
+  in Draw Steel.
+- **Other games' wording:** Pathfinder's "20-foot burst", "30-foot emanation" and "**Range** 500 feet";
+  Old-School Essentials' "20' radius"; Cyberpunk RED's "10m square"; Draw Steel's "3 burst", "3 cube within 10",
+  "5 × 1 line".
+- **Range bands** (Daggerheart, Shadowdark), at the squares Atlas gives them: "all adversaries within Very Close
+  range" is an area round the caster, "a Near-sized cube" a cube, and a range of "Far" shows as a ring.
+- **Cone angle:** 53° in D&D 5e, 90° in most others. Leave *Cone angle* empty in the settings to follow Atlas, or
+  enter one to override it.
+
+Saved spells keep their sizes in the unit they were saved in, so save them again if you change a collection's
+system.
 
 ## Spells cast at creatures
 Spells with no area are cast by clicking their targets. Click the spell (in a statblock or the cast window's
@@ -203,7 +302,7 @@ right-click when done.
 
 Which kind a spell is gets read from its text (ranged spell attacks, rays, bolts and darts are bolts; spells naming a
 creature or target play on it). Change it in the cast window: *A bolt at creatures* on a Line, *On creatures* on
-an "Around caster" area. It's kept with saved defaults as `effect-target` (`on` or `bolt`).
+an "Around caster" area. It's kept with a saved spell as `effect-target` (`on` or `bolt`).
 
 ## Licence
 The add-on's code: MIT (see `LICENSE`). JB2A's animations are not part of it. They're downloaded from JB2A and

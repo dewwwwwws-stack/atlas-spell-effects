@@ -2,7 +2,7 @@
 // lighting and vision then handle it (players' sight, fog, the darkness preset that swallows light). A sphere or
 // an aura is a light at its centre; a cone shines from its point in its direction; a cube or a line glows from
 // its whole area (Atlas's area lights).
-import type { Area, SpellEntry } from './areas';
+import { fromFeet, type Area, type SpellEntry } from './areas';
 import { placeOf, type Box, type Effect, type TokenAt } from './geometry';
 
 /** What an effect gives off. Feet: `bright` and `dim` from its centre, or from its outline for a cube or line. */
@@ -49,15 +49,15 @@ export function lightOf(spell: SpellEntry | null | undefined, area: Area | null)
   const t = String(spell?.descFull ?? '');
   if (!t) return null;
   // the area is darkness (not a spell that only mentions it, as Hallow's choices or a light it can't put out)
-  if (/magical darkness (spreads|pours|fills)|filled with magical darkness|is magical darkness|Sphere of Darkness appears/i.test(t)) return { mode: 'darkness', bright: 0, dim: area?.size ?? 15 };
+  if (/magical darkness (spreads|pours|fills)|filled with magical darkness|is magical darkness|Sphere of Darkness appears/i.test(t)) return { mode: 'darkness', bright: 0, dim: area?.size ?? fromFeet(15) };
   // things in the area glow (Faerie Fire), not the area: none
   if (/creatures shed Dim Light/i.test(t)) return null;
   let m = /Bright Light in an? (\d+)-foot radius and Dim Light for an additional (\d+) feet/i.exec(t);
-  if (m) { const b = Number(m[1]), d = Number(m[2]); return { mode: 'light', bright: b, dim: b + d }; }
+  if (m) { const b = fromFeet(Number(m[1])), d = fromFeet(Number(m[2])); return { mode: 'light', bright: b, dim: b + d }; }
   m = /area is Bright Light and sheds Dim Light for an additional (\d+) feet/i.exec(t);
-  if (m && area) return { mode: 'light', bright: area.size, dim: area.size + Number(m[1]) };
+  if (m && area) return { mode: 'light', bright: area.size, dim: area.size + fromFeet(Number(m[1])) };
   m = /Dim Light in an? (\d+)-foot radius/i.exec(t);
-  if (m) return { mode: 'light', bright: 0, dim: Number(m[1]) };
+  if (m) return { mode: 'light', bright: 0, dim: fromFeet(Number(m[1])) };
   if (/Dim Light fills/i.test(t) && area) return { mode: 'light', bright: 0, dim: area.size };
   return null;
 }
@@ -120,7 +120,7 @@ function placedLightsOf(e: Effect, light: EffectLight, box: Box, tokenAt: TokenA
   // own torches), where a light over an area is worked out again in full at every change.
   if (e.shape === 'wall' && light.mode !== 'darkness' && pieces.length) {
     const ft = ppf || 14;
-    const pts = alongWall(pieces, 10 * ft);
+    const pts = alongWall(pieces, fromFeet(10) * ft);
     return pts.map((q) => ({ x: q.x, y: q.y, emission: { ...one.emission, bright: Math.max(0, light.bright), dim: Math.max(light.bright, light.dim, 1) } }));
   }
   return along.map((b) => {

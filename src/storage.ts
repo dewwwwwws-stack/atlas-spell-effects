@@ -2,14 +2,14 @@
 // (your compendium's spell pages, as Atlas's loot bases use item notes), or a note the add-on makes for an effect
 // of your own. Every property is named "effect-…", so none of them clashes with what your spell pages already
 // hold. Notes stored by older versions (plain "area", "size"… and a "spell-effect" tag) are still read.
-import type { Area, Shape, WallBlocks } from './areas';
+import { square, fromFeet, type Area, type Shape, type WallBlocks } from './areas';
 import type { EffectLight } from './lights';
 
 export const STORAGE_TAG = 'spell-effect';
 export const SHAPES: readonly Shape[] = ['radius', 'emanation', 'cone', 'cube', 'line', 'wall'];
 const BLOCKS: readonly WallBlocks[] = ['none', 'sight', 'movement', 'solid'];
 /** The add-on's properties, without their "effect-" prefix. */
-const KEYS = ['area', 'size', 'width', 'angle', 'origin', 'lasting', 'attach', 'animation', 'colour', 'colour-outer', 'opacity', 'target', 'ring', 'round', 'walls', 'light', 'bright', 'dim', 'light-colour'] as const;
+const KEYS = ['area', 'size', 'width', 'angle', 'origin', 'lasting', 'attach', 'animation', 'colour', 'colour-outer', 'opacity', 'target', 'ring', 'round', 'walls', 'light', 'bright', 'dim', 'light-colour', 'menu'] as const;
 type Key = (typeof KEYS)[number];
 export const prop = (k: Key): string => 'effect-' + k;
 
@@ -30,6 +30,8 @@ export interface StoredSpell {
   attach?: boolean;
   /** The light it gives off or the darkness it spreads; null: none (said so); missing: not said. */
   light?: EffectLight | null;
+  /** In ✨'s menu, to cast in one click. */
+  menu?: boolean;
 }
 
 const yes = (v: unknown) => v === true || v === 'true' || v === 'yes' || v === 1;
@@ -74,9 +76,9 @@ export function storedFrom(path: string, fm: Record<string, unknown>, resolve: (
   const target = tg === 'on' && shape === 'emanation' ? 'on' as const : tg === 'bolt' && shape === 'line' ? 'bolt' as const : undefined;
   const area: Area = {
     shape,
-    size: target === 'on' && Number(get(fm, 'size')) >= 0 ? Number(get(fm, 'size')) || 0 : numOf(get(fm, 'size'), shape === 'line' || shape === 'wall' ? 30 : 15),
+    size: target === 'on' && Number(get(fm, 'size')) >= 0 ? Number(get(fm, 'size')) || 0 : numOf(get(fm, 'size'), fromFeet(shape === 'line' || shape === 'wall' ? 30 : 15)),
     ...(target ? { target } : {}),
-    ...(shape === 'line' ? { width: numOf(get(fm, 'width'), 5) } : shape === 'wall' ? { width: numOf(get(fm, 'width'), 1) } : {}),
+    ...(shape === 'line' ? { width: numOf(get(fm, 'width'), square()) } : shape === 'wall' ? { width: numOf(get(fm, 'width'), fromFeet(1)) } : {}),
     ...(shape === 'cone' && Number(get(fm, 'angle')) > 0 ? { angle: Number(get(fm, 'angle')) } : {}),
     ...(shape === 'wall' && Number(get(fm, 'ring')) > 0 ? { ring: Number(get(fm, 'ring')) } : {}),
     ...(shape === 'wall' && yes(get(fm, 'round')) ? { round: true } : {}),
@@ -96,11 +98,11 @@ export function storedFrom(path: string, fm: Record<string, unknown>, resolve: (
     lm === 'light' || lm === 'bright' || lm === 'dim' ? { mode: 'light', bright: feet(get(fm, 'bright')), dim: Math.max(feet(get(fm, 'dim')), feet(get(fm, 'bright'))) || area.size, ...(lc ? { colour: lc } : {}) } :
     lm === 'none' || lm === 'no' || lm === 'false' ? null : undefined;
   const col = get(fm, 'colour'), col2 = fm[prop('colour-outer')], op = Number(fm[prop('opacity')]);
-  return { path, name, area, ...(file ? { file } : {}), ...(typeof col === 'string' ? { colour: col } : {}), ...(typeof col2 === 'string' ? { colour2: col2 } : {}), ...(op > 0 && op < 1 ? { alpha: op } : op > 1 && op < 100 ? { alpha: op / 100 } : {}), ...(image ? { image } : {}), ...(yes(get(fm, 'attach')) ? { attach: true } : {}), ...(light !== undefined ? { light } : {}) };
+  return { path, name, area, ...(file ? { file } : {}), ...(typeof col === 'string' ? { colour: col } : {}), ...(typeof col2 === 'string' ? { colour2: col2 } : {}), ...(op > 0 && op < 1 ? { alpha: op } : op > 1 && op < 100 ? { alpha: op / 100 } : {}), ...(image ? { image } : {}), ...(yes(get(fm, 'attach')) ? { attach: true } : {}), ...(light !== undefined ? { light } : {}), ...(yes(fm[prop('menu')]) ? { menu: true } : {}) };
 }
 
 /** Writes a spell's defaults into a note's properties (keeps everything else in them; an older note's plain ones are moved over). */
-export function writeDefaults(fm: Record<string, unknown>, s: { area: Area; file?: string | undefined; colour?: string | undefined; colour2?: string | undefined; alpha?: number | undefined; attach?: boolean | undefined; light?: EffectLight | null | undefined }): void {
+export function writeDefaults(fm: Record<string, unknown>, s: { area: Area; file?: string | undefined; colour?: string | undefined; colour2?: string | undefined; alpha?: number | undefined; attach?: boolean | undefined; light?: EffectLight | null | undefined; menu?: boolean | undefined }): void {
   if (isLegacy(fm)) {
     for (const k of [...KEYS, 'blocks', 'color', 'light-color']) delete fm[k];
     if (Array.isArray(fm['tags'])) { fm['tags'] = (fm['tags'] as unknown[]).filter((t) => String(t).replace(/^#/, '').toLowerCase() !== STORAGE_TAG); if (!(fm['tags'] as unknown[]).length) delete fm['tags']; }
@@ -110,7 +112,7 @@ export function writeDefaults(fm: Record<string, unknown>, s: { area: Area; file
   const a = s.area;
   set('area', a.shape);
   set('size', a.size);
-  set('width', a.shape === 'line' ? a.width ?? 5 : a.shape === 'wall' ? a.width ?? 1 : undefined);
+  set('width', a.shape === 'line' ? a.width ?? square() : a.shape === 'wall' ? a.width ?? fromFeet(1) : undefined);
   set('angle', a.shape === 'cone' && a.angle ? a.angle : undefined);
   set('origin', a.shape === 'radius' || a.shape === 'cube' ? (a.from === 'caster' ? 'caster' : 'point') : undefined);
   set('ring', a.shape === 'wall' && a.ring ? a.ring : undefined);
@@ -127,6 +129,14 @@ export function writeDefaults(fm: Record<string, unknown>, s: { area: Area; file
   set('bright', s.light?.mode === 'light' ? s.light.bright : undefined);
   set('dim', s.light?.mode === 'light' ? s.light.dim : undefined);
   set('light-colour', s.light?.mode === 'light' && s.light.colour ? s.light.colour : undefined);
+  set('menu', s.menu ? true : undefined);
+}
+
+/** Takes a spell's saved settings off its note (everything else in it stays): it is cast from its text again. */
+export function clearDefaults(fm: Record<string, unknown>): void {
+  // an older note's plain properties go too (writing moves them over; then they are taken off)
+  if (isLegacy(fm)) writeDefaults(fm, { area: { shape: 'radius', size: 1, from: 'point', lasting: false } });
+  for (const k of KEYS) delete fm[prop(k)];
 }
 
 /** A file name for a spell's note. */

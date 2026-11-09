@@ -2,17 +2,17 @@
 // Cast from the command palette or the ribbon: pick a spell (your spell list says its area), pick its animation
 // (JB2A or your own files; or one the add-on draws), click the caster / aim / click where it lands. It plays on
 // your map and on the player window (the TV) at the right place and size; lasting ones stay until you end them.
-import { Plugin, Modal, Menu, Notice, PluginSettingTab, Setting, setIcon, TFile, type App } from 'obsidian';
+import { Plugin, Modal, Menu, Notice, PluginSettingTab, Setting, setIcon, TFile, MarkdownView, type App } from 'obsidian';
 import { BaseReader, basesReady } from './bases';
 import { jb2aFiles, fetchJb2a, fetchAll } from './jb2a';
 import { measureArt, type Trim } from './trim';
-import { kitOf, PixiPainter, forgetBlobs } from './pixi';
+import { kitOf, PixiPainter, forgetBlobs, type AimLook } from './pixi';
 import { call, field, type Tab, type AtlasView, type AtlasViewport, type AtlasState, type CanvasNode, type PlayersView, type Measurement } from './atlas';
 import { FolderSuggest, BaseSuggest } from './suggest';
 import { SpellNames, StatblockLinker, type SpellLink } from './statblocks';
-import { areaOf, targetOf, describe, type Area, type Shape, type SpellEntry, type WallBlocks } from './areas';
+import { areaOf, targetOf, fallbackArea, describe, rangeOf, setRules, unitLabel, square, squares, fromFeet, type GameUnitType, type Area, type Shape, type SpellEntry, type WallBlocks } from './areas';
 import { indexFiles, indexFile, matchesFor, coloursOf, search, type EffectFile } from './library';
-import { isStored, storedFrom, writeDefaults, baseFile, noteName, type StoredSpell } from './storage';
+import { isStored, storedFrom, writeDefaults, clearDefaults, baseFile, noteName, type StoredSpell } from './storage';
 import { looksLikeSpell, spellFromNote } from './notes';
 import { lightOf, placedLights, adoptLook, lightKey, LIGHT_COLOUR, type EffectLight } from './lights';
 
@@ -23,9 +23,11 @@ const ATLAS_VIEW = 'atlas-vtt';
 const PLAYER_VIEW = 'atlas-vtt-local-player';
 const PLAYER_CANVAS = 'atlas-player-canvas';
 
+/** `p`, or the nearest point to it no further than `reach` from `c`. */
+const inReach = (p: Point, c: Point, reach: number): Point => { const d = Math.hypot(p.x - c.x, p.y - c.y); return d <= reach || d === 0 ? p : { x: c.x + ((p.x - c.x) * reach) / d, y: c.y + ((p.y - c.y) * reach) / d }; };
 const uid = () => 'fx' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
-/** A preset: a spell (or an effect of your own) as you like to cast it, under a name of its own. */
+/** A preset, from versions before 1.4: made into a saved spell (a note of its own) when the add-on loads. */
 export interface Preset { id: string; name: string; of: string; area: Area; file?: string; colour: string; colour2?: string; alpha?: number; attach?: boolean; light?: EffectLight | null }
 interface Remembered { angle?: number; target?: 'on' | 'bolt'; colour2?: string; alpha?: number; file?: string; colour?: string; shape?: Shape; size?: number; width?: number; from?: 'caster' | 'point'; lasting?: boolean; light?: EffectLight | null; ring?: number; round?: boolean; blocks?: WallBlocks }
 interface Settings {
@@ -35,22 +37,24 @@ interface Settings {
   snap: boolean;
   storage: string;                 // the folder for new spell notes (effects of your own)
   bases: string[];                 // .base files whose notes are spells
-  presets: Preset[];               // your presets, in the order you made them
+  presets: Preset[];               // older versions' presets, not made into saved spells yet
+  showAim: boolean;                // the players see where a spell is aimed, before it is cast
+  aimLook: AimLook;                // how: its outline, filled in, or its animation
   jb2aFolder: string;              // where JB2A animations are downloaded to
   jb2aOffer: boolean;              // offer every JB2A animation (downloaded when first used)
   orphanLights: { map: string; id: string; wall?: boolean }[];   // lights of ended effects on maps that weren't open: removed when they are
   noteSpells: boolean;             // offer the vault's spell notes (notes whose properties say they are spells)
   artTrim: Record<string, Trim | 0>;   // where each animation's picture is in its frame (0: looked, nothing to trim)
-  coneAngle: number;               // a cone's angle at its point when a spell doesn't say (5e: 53.13°, as wide as it is long)
+  coneAngle: number;               // a cone's angle when a spell doesn't say; 0: the game system's, from Atlas
 }
-const DEFAULTS: Settings = { folders: '', remember: {}, lasting: [], snap: true, storage: 'Spell Storage', bases: [], presets: [], jb2aFolder: 'JB2A_DnD5e', jb2aOffer: true, noteSpells: true, orphanLights: [], coneAngle: CONE_ANGLE, artTrim: {} };
+const DEFAULTS: Settings = { folders: '', remember: {}, lasting: [], snap: true, storage: 'Spell Storage', bases: [], presets: [], jb2aFolder: 'JB2A_DnD5e', jb2aOffer: true, noteSpells: true, orphanLights: [], coneAngle: 0, artTrim: {}, showAim: false, aimLook: 'outline' };
 
-/** A spell to pick in the cast window: one with saved defaults, or a spell note (from a Base or found in the vault). */
+/** A spell to pick in the cast window: a saved one, or a spell note (from a Base or found in the vault). */
 export interface Choice { key: string; name: string; source: 'stored' | 'note'; entry?: SpellEntry; stored?: StoredSpell; notePath?: string }
 
 
 /** What is being cast: the area and look, before it is placed. */
-interface Pending { name: string; key: string; area: Area; file?: string; colour: string; colour2?: string; alpha?: number; attach?: boolean; light?: EffectLight }
+interface Pending { name: string; key: string; area: Area; file?: string; colour: string; colour2?: string; alpha?: number; attach?: boolean; light?: EffectLight; /** How far from its caster it can be cast (feet, from the edge of their space). */ range?: number }
 
 export default class AtlasSpellEffects extends Plugin {
   settings: Settings = { ...DEFAULTS };
@@ -60,7 +64,7 @@ export default class AtlasSpellEffects extends Plugin {
   effects: Effect[] = [];
   private painters = new Map<object, Painter>();          // by view or player document
   private loop = 0;
-  private placing: { tab: Tab; pending: Pending; caster: { x: number; y: number; token?: string; r: number } | null; preview: Effect | null; stop: () => void; hint: HTMLElement } | null = null;
+  private placing: { tab: Tab; pending: Pending; caster: { x: number; y: number; token?: string; r: number } | null; preview: Effect | null; stop: () => void; hint: HTMLElement; /** The spell's range round its caster. */ range?: Effect | null } | null = null;
   private saveTimer: number | null = null;
   last: Pending | null = null;
   stored: StoredSpell[] = [];
@@ -77,6 +81,8 @@ export default class AtlasSpellEffects extends Plugin {
     const loaded = ((await this.loadData()) ?? {}) as Partial<Settings> & Record<string, unknown>;
     this.settings = { ...DEFAULTS, ...loaded };
     const firstBases = !('bases' in loaded);
+    // the old default (5e's) gives way to Atlas's game system; an angle someone chose stays
+    if (this.settings.coneAngle === CONE_ANGLE) this.settings.coneAngle = 0;
     basesReady(this);
     // an older version's spell list from GitHub: gone (spells come from your vault)
     const old = this.settings as unknown as Record<string, unknown>;
@@ -86,7 +92,7 @@ export default class AtlasSpellEffects extends Plugin {
     this.addRibbonIcon('sparkles', 'Cast a spell effect', () => this.openCast());
     this.addCommand({ id: 'cast', name: 'Cast a spell effect…', callback: () => this.openCast() });
     this.addCommand({ id: 'cast-again', name: 'Cast the last effect again', callback: () => (this.last ? this.place(this.last) : this.openCast()) });
-    this.addCommand({ id: 'preset', name: 'Cast a preset…', callback: () => new PresetPicker(this.app, this).open() });
+    this.addCommand({ id: 'preset', name: 'Cast a saved spell…', callback: () => new SavedPicker(this.app, this).open() });
     this.addCommand({ id: 'end', name: 'End a lasting effect…', callback: () => new EndModal(this.app, this).open() });
     this.addCommand({ id: 'end-all', name: 'End every lasting effect on this map', callback: () => this.endAllHere() });
     this.addCommand({ id: 'snap', name: 'Snap effects to the grid on or off', callback: () => { void this.toggleSnap(); } });
@@ -95,6 +101,7 @@ export default class AtlasSpellEffects extends Plugin {
       // from an older version: its Spell Storage folder's Base becomes the first spell Base
       if (firstBases) { const b = `${this.storageFolder()}/${this.storageFolder().split('/').pop()}.base`; if (this.app.vault.getAbstractFileByPath(b)) { this.settings.bases = [b]; void this.save(); } }
       this.indexVault(); this.indexSpells(); void this.startBases(); this.linkStatblocks(); this.wake();
+      void this.presetsToSaved();
     });
     this.registerEvent(this.app.vault.on('modify', (f) => { if (this.settings.bases.includes(f.path)) void this.startBases(); }));
     const respell = () => { window.clearTimeout(this.timers.rs); this.timers.rs = window.setTimeout(() => this.indexSpells(), 800); };
@@ -172,7 +179,7 @@ export default class AtlasSpellEffects extends Plugin {
       const target = ev.target as HTMLElement | null;
       const sel = this.selected?.ids.length === 1 ? this.effects.find((e) => e.id === this.selected!.ids[0]) : null;
       const step = target?.closest?.('[data-step]') as HTMLElement | null;
-      if (step && sel) { stopAll(ev); const before = this.snapshot(); stepSize(sel, Number(step.dataset.step)); this.commit(before); this.changed(); return; }
+      if (step && sel) { stopAll(ev); const before = this.snapshot(); stepSize(sel, Number(step.dataset.step), square()); this.commit(before); this.changed(); return; }
       const handle = target?.closest?.('.sfx-ctl') as HTMLElement | null;
       if (handle && sel) {
         stopAll(ev);
@@ -405,11 +412,13 @@ export default class AtlasSpellEffects extends Plugin {
     const menu = new Menu();
     menu.addItem((i) => i.setTitle('Cast a spell effect…').setIcon('sparkles').onClick(() => this.openCast()));
     if (this.last) { const l = this.last; menu.addItem((i) => i.setTitle(`Cast ${l.name} again`).setIcon('repeat').onClick(() => this.place(l))); }
-    if (this.settings.presets.length) {
+    const quick = this.stored.filter((st) => st.menu);
+    if (quick.length) {
       menu.addSeparator();
-      for (const pr of this.settings.presets) menu.addItem((i) => i.setTitle(pr.name).setIcon('zap').onClick(() => this.castPreset(pr)));
+      for (const st of quick) menu.addItem((i) => i.setTitle(st.name).setIcon('star').onClick(() => { void this.castSaved(st); }));
     }
     menu.addSeparator();
+    menu.addItem((i) => { i.setTitle('Players see where I aim').setIcon('crosshair').onClick(() => { this.settings.showAim = !this.settings.showAim; void this.save(); this.wake(); }); i.setChecked?.(this.settings.showAim); });
     menu.addItem((i) => { i.setTitle('Snap to grid (Alt: the other way)').setIcon('grid').onClick(() => { void this.toggleSnap(); }); i.setChecked?.(this.settings.snap); });
     const here = this.lastingHere();
     if (here.length) {
@@ -428,12 +437,33 @@ export default class AtlasSpellEffects extends Plugin {
     menu.showAtMouseEvent(e);
   }
 
-  /** A preset straight onto the map (its animation fetched first, if it is a JB2A one not downloaded yet). */
-  async castPreset(pr: Preset): Promise<void> {
+  /** A saved spell straight onto the map (its animation fetched first, if it is a JB2A one not downloaded yet). */
+  async castSaved(st: StoredSpell): Promise<void> {
     if (!this.atlasTab()) { new Notice('Atlas Spell Effects: open an Atlas map first.'); return; }
-    const ok = await this.ensureFile(pr.file);
-    this.indexVault();
-    this.place({ name: pr.of || pr.name, key: 'preset:' + pr.id, area: { ...pr.area }, ...(pr.file && ok ? { file: pr.file } : {}), colour: pr.colour, ...(pr.colour2 ? { colour2: pr.colour2 } : {}), ...(pr.alpha ? { alpha: pr.alpha } : {}), ...(pr.attach ? { attach: true } : {}), ...(pr.light ? { light: { ...pr.light } } : {}) });
+    const c = this.choices().find((x) => x.stored?.path === st.path);
+    if (!c) return;
+    const m = new CastModal(this.app, this);
+    await m.pick(c);
+    this.place(await m.pending());
+  }
+
+  /**
+   * Presets (before 1.4) become saved spells: each a note of its own, in ✨'s menu as before. One saved spell is
+   * one thing to know about, kept, changed and deleted the same way.
+   */
+  async presetsToSaved(): Promise<void> {
+    const ps = this.settings.presets;
+    if (!ps.length) return;
+    let done = 0;
+    for (const pr of ps) {
+      try {
+        await this.storeSpell({ name: pr.name }, { area: { ...pr.area }, file: pr.file, colour: pr.colour, colour2: pr.colour2, alpha: pr.alpha, attach: pr.attach, light: pr.light ?? null, menu: true });
+        this.settings.presets = this.settings.presets.filter((x) => x.id !== pr.id); done++;
+      } catch (e) { console.error('Atlas Spell Effects: could not keep a preset as a saved spell', pr.name, e); }
+    }
+    await this.save();
+    this.namesChanged();
+    if (done) new Notice(`Atlas Spell Effects: your ${done === 1 ? 'preset is' : `${done} presets are`} now saved spells, in ${this.storageFolder()} (and still in ✨’s menu).`);
   }
 
   private updateTool(tool: HTMLElement, t: Tab): void {
@@ -468,19 +498,27 @@ export default class AtlasSpellEffects extends Plugin {
   /** The token whose statblock Atlas opened (the one under the pointer as it opened). */
   private hoverTok: { tab: Tab; id: string; at: number } | null = null;
   private windowTok = new WeakMap<Element, { tab: Tab; id: string }>();
-  /** Spell names changed (spells read, saved, presets): looked for again. */
+  /** Spell names changed (spells read or saved): looked for again. */
   namesChanged(): void { this.names = null; for (const l of this.linkers.values()) l.soon(); }
 
-  /** The names this add-on can cast: spells with an area (or saved defaults), and presets of spells it doesn't list. */
+  /** The names this add-on can cast: spells with an area, and saved ones. */
   spellNames(): SpellNames {
     if (this.names) return this.names;
     const links: SpellLink[] = [];
     const seen = new Set<string>();
-    for (const c of this.choices()) {
-      const ok = !!c.stored || (!!c.entry && !!(areaOf(c.entry) ?? targetOf(c.entry)));
-      if (ok && !seen.has(c.name.toLowerCase())) { links.push({ key: c.key, name: c.name }); seen.add(c.name.toLowerCase()); }
+    // every spell (one with no area is cast on its caster, or at a point), by its name and its other names: a
+    // note's aliases, and the name without its inventor ("Acid Arrow" for "Melf's Acid Arrow", as 2024 names it)
+    const add = (key: string, name: string) => { const k = name.trim().toLowerCase(); if (k.length >= 3 && !seen.has(k)) { links.push({ key, name: name.trim() }); seen.add(k); } };
+    const all = this.choices().filter((c) => !!c.stored || !!c.entry || !!c.notePath);
+    for (const c of all) add(c.key, c.name);
+    for (const c of all) {
+      const f = c.notePath ? this.app.vault.getAbstractFileByPath(c.notePath) : null;
+      const al = f instanceof TFile ? this.app.metadataCache.getFileCache(f)?.frontmatter?.['aliases'] as unknown : undefined;
+      for (const a of Array.isArray(al) ? al : typeof al === 'string' ? al.split(',') : []) if (typeof a === 'string') add(c.key, a);
+      // (two words or more left: "Hunter's Mark" isn't "Mark")
+      const m = /^[\p{L}.-]+['’]s\s+(\S+\s+\S.*)$/u.exec(c.name.trim());
+      if (m) add(c.key, m[1]);
     }
-    for (const pr of this.settings.presets) if (pr.of && !seen.has(pr.of.toLowerCase())) { links.push({ key: 'preset:' + pr.id, name: pr.of }); seen.add(pr.of.toLowerCase()); }
     return (this.names = new SpellNames(links));
   }
 
@@ -507,7 +545,15 @@ export default class AtlasSpellEffects extends Plugin {
       // a statblock elsewhere (Atlas's side panel, a note): the one token selected on the map, if there is one
       const t = this.atlasTab(); const st = t?.store.getState?.();
       const sel = (st?.selectedIds ?? []).filter((id: string) => st?.objects?.tokens?.[id]);
-      return t && sel.length === 1 ? { tab: t, id: sel[0] } : null;
+      if (t && sel.length === 1) return { tab: t, id: sel[0] };
+      // a statblock note open in a tab: the one token on the map linked to that note
+      const note = this.app.workspace.getLeavesOfType('markdown').find((l) => l.view.containerEl.contains(sb))?.view;
+      const path = note instanceof MarkdownView ? note.file?.path : undefined;
+      if (t && path) {
+        const linked = Object.entries(st?.objects?.tokens ?? {}).filter(([, tok]) => tok.statblockPath === path && !tok.offMap).map(([id]) => id);
+        if (linked.length === 1) return { tab: t, id: linked[0] };
+      }
+      return null;
     }
     let t = this.windowTok.get(win);
     if (!t && this.hoverTok && Date.now() - this.hoverTok.at < 5000) { t = { tab: this.hoverTok.tab, id: this.hoverTok.id }; this.windowTok.set(win, t); }
@@ -517,11 +563,10 @@ export default class AtlasSpellEffects extends Plugin {
   /** A spell clicked in a statblock: cast it (its creature as the caster), or Shift: open it in the cast window. */
   async castFromStatblock(link: SpellLink, how: { shift: boolean; statblock: HTMLElement }): Promise<void> {
     const tok = this.tokenOfStatblock(how.statblock);
-    const pr = link.key.startsWith('preset:') ? this.settings.presets.find((x) => 'preset:' + x.id === link.key) : null;
-    const c = pr ? null : this.choices().find((x) => x.key === link.key) ?? null;
-    if (!pr && !c) return;
+    const c = this.choices().find((x) => x.key === link.key) ?? null;
+    if (!c) return;
     const m = new CastModal(this.app, this);
-    if (pr) m.pickPreset(pr); else await m.pick(c);
+    await m.pick(c);
     if (how.shift) { m.casterToken = tok?.id; m.open(); return; }
     const p = await m.pending();
     if (!this.atlasTab()) { new Notice('Atlas Spell Effects: open an Atlas map first.'); return; }
@@ -543,7 +588,7 @@ export default class AtlasSpellEffects extends Plugin {
   }
 
   async save(): Promise<void> {
-    this.names = null;                                             // presets may have changed
+    this.names = null;                                             // saved spells may have changed
     this.settings.lasting = this.effects.filter((e) => e.lasting);
     await this.saveData(this.settings);
   }
@@ -614,7 +659,7 @@ export default class AtlasSpellEffects extends Plugin {
   }
 
   /** Saves a spell's defaults onto its own note's properties (a note in the folder for your own effects, for one without). */
-  async storeSpell(c: { name: string; stored?: StoredSpell; entry?: SpellEntry; notePath?: string }, d: { area: Area; file?: string | undefined; colour?: string | undefined; colour2?: string | undefined; alpha?: number | undefined; attach?: boolean | undefined; light?: EffectLight | null | undefined }): Promise<string> {
+  async storeSpell(c: { name: string; stored?: StoredSpell; entry?: SpellEntry; notePath?: string }, d: { area: Area; file?: string | undefined; colour?: string | undefined; colour2?: string | undefined; alpha?: number | undefined; attach?: boolean | undefined; light?: EffectLight | null | undefined; menu?: boolean | undefined }): Promise<string> {
     const vault = this.app.vault;
     let file: TFile | null = null;
     // the spell's own note (a stored one, or the one its Base or the vault shows)
@@ -637,7 +682,26 @@ export default class AtlasSpellEffects extends Plugin {
     writeDefaults(fm, d);
     const st = storedFrom(file.path, fm, this.resolver(file.path));
     this.stored = [...this.stored.filter((x) => x.path !== file.path), st].sort((a, b) => a.name.localeCompare(b.name));
+    this.namesChanged();
     return file.path;
+  }
+
+  /** Whether a saved spell's note is one the add-on made (a spell of your own): deleting it deletes the note. */
+  ownNote(path: string): boolean { return path.startsWith(this.storageFolder() + '/'); }
+
+  /**
+   * A saved spell gone: a note the add-on made goes to the bin; a spell page of yours keeps everything but its
+   * effect-… properties (it is cast from its text again).
+   */
+  async forgetSpell(st: StoredSpell): Promise<void> {
+    const f = this.app.vault.getAbstractFileByPath(st.path);
+    if (f instanceof TFile) {
+      if (this.ownNote(st.path)) await this.app.fileManager.trashFile(f);
+      else await this.app.fileManager.processFrontMatter(f, (fm: Record<string, unknown>) => clearDefaults(fm));
+    }
+    this.stored = this.stored.filter((x) => x.path !== st.path);
+    this.storedChoices.delete(st.path);
+    this.namesChanged();
   }
 
   folders(): string[] { return this.settings.folders.split(',').map((f) => f.trim().replace(/^\/+|\/+$/g, '')).filter(Boolean); }
@@ -718,14 +782,39 @@ export default class AtlasSpellEffects extends Plugin {
   scaleOf(t: Tab): Scale {
     const gridSize = field(call(t.renderer, 'getGridOptions'), 'size');
     const cell = (typeof gridSize === 'number' ? gridSize : undefined) ?? t.store.getState()?.grid?.size ?? 70;
-    // the map's measurement (units, feet per cell), as Atlas's drag ruler reads it
+    // the map's measurement (its game unit, and how many to a cell), as Atlas's drag ruler reads it. Every size
+    // the add-on keeps is in these game units, as Atlas's own lights and rulers are.
     const m = call<Measurement>(field(call(t.renderer, 'getTokenRenderer'), 'dragRuler'), 'settingsProvider');
-    let feet = 5;
     const dist = m?.unitDistance;
-    if (typeof dist === 'number' && Number.isFinite(dist) && dist > 0) {
-      feet = m?.unitType === 'meters' ? dist / 0.3 : m?.unitType === 'yards' ? dist * 3 : dist;
-    }
-    return { cell, feetPerCell: feet };
+    const per = typeof dist === 'number' && Number.isFinite(dist) && dist > 0 ? dist : 5;
+    this.readSystem(m, per);
+    return { cell, feetPerCell: per };
+  }
+
+  /** The game system Atlas measures the open map with (its collection's): what the settings show. */
+  atlasSystem: { perSquare: number; unit: string; cone: number; bands: string[] } | null = null;
+  private systemKey = '';
+  /** Atlas's game system, read with the map's measurement: spell text is read with its units and range bands. */
+  private readSystem(m: Measurement | undefined, perCell: number): void {
+    if (!m) return;
+    const t = m.unitType;
+    const unit: GameUnitType = t === 'meters' || t === 'yards' || t === 'units' || t === 'custom' ? t : 'feet';
+    const per = typeof m.ruleDistance === 'number' && m.ruleDistance > 0 ? m.ruleDistance : perCell;
+    const bands = (m.rangeBands ?? []).filter((b) => b && typeof b.name === 'string' && b.maxSquares > 0);
+    const cone = typeof m.coneAngle === 'number' && m.coneAngle > 0 && m.coneAngle < 180 ? m.coneAngle : CONE_ANGLE;
+    const key = JSON.stringify([per, unit, cone, bands]);
+    if (key === this.systemKey) return;
+    this.systemKey = key;
+    setRules({ unit, perSquare: per, bands: bands.map((b) => ({ name: b.name, squares: b.maxSquares })) });
+    this.atlasSystem = { perSquare: per, unit: unitLabel(), cone, bands: bands.map((b) => b.name) };
+    this.namesChanged();
+  }
+
+  /** A cone's angle when its spell doesn't say: the one set in the settings, else the game system's (Atlas's). */
+  coneAngle(fromAtlas = false): number {
+    if (!fromAtlas && this.settings.coneAngle > 0) return this.settings.coneAngle;
+    const t = this.atlasTab(); if (t) this.scaleOf(t);
+    return this.atlasSystem?.cone ?? CONE_ANGLE;
   }
 
   tokenOf(t: Tab, id: string): TokenAt | null {
@@ -970,21 +1059,22 @@ export default class AtlasSpellEffects extends Plugin {
         const giveUp = (e: unknown) => { this.noCanvas.add(t.viewport); this.pixiPainters.get(t.view)?.stop(); this.pixiPainters.delete(t.view); console.error('Atlas Spell Effects: drawing in Atlas’s canvas went wrong; drawing over it instead', e); this.wake(); };
         if (pp && !pp.cuts && kit.Graphics) { pp.stop(); this.pixiPainters.delete(t.view); pp = undefined; }   // now it can go over the lighting
         if (!pp) { pp = new PixiPainter(kit, t.viewport, t.renderer, world, (path) => this.readFile(path), () => this.wake(), giveUp); this.pixiPainters.set(t.view, pp); }
-        const px = pp, map = this.mapOf(t);
+        const px = pp, map = this.mapOf(t), pl = this.placing;
+        const aim = this.settings.showAim && pl && pl.tab.view === t.view ? pl.preview : null;
         let fine = true;
-        try { px.paint(this.effects, now, out, map); } catch (e) { fine = false; giveUp(e); }
+        try { px.paint(this.effects, now, out, map, aim, this.settings.aimLook); } catch (e) { fine = false; giveUp(e); }
         if (fine) { inCanvas = true; mine = this.effects.filter((e) => !PixiPainter.wants(e)); }
       }
       let p = this.painters.get(t.view); if (!p) { p = new Painter(this.tabSurface(t), world); this.painters.set(t.view, p); }
       const pl = this.placing;
-      const dom = p, list = mine; this.safely('drawing over the map', () => dom.paint(list, now, out, pl && pl.tab.view === t.view ? pl.preview : null)); live.add(t.view);
+      const dom = p, list = mine; this.safely('drawing over the map', () => dom.paint(list, now, out, pl && pl.tab.view === t.view ? [pl.preview, pl.range ?? null] : null)); live.add(t.view);
     }
     for (const [k, p] of this.pixiPainters) if (!live.has(k)) { p.stop(); this.pixiPainters.delete(k); }
     // the TV is a copy of Atlas's canvas: effects in it reach the TV that way
     if (!inCanvas) for (const l of this.app.workspace.getLeavesOfType(PLAYER_VIEW)) {
       const doc = l.view.containerEl.ownerDocument;
       let p = this.painters.get(doc); if (!p) { p = new Painter(this.playerSurface(doc), world); this.painters.set(doc, p); }
-      const pp = p; this.safely('drawing on the TV', () => pp.paint(this.effects, now, out, null)); live.add(doc);
+      const pp = p, aim = this.settings.showAim ? this.placing?.preview ?? null : null; this.safely('drawing on the TV', () => pp.paint(this.effects, now, out, aim)); live.add(doc);
     }
     for (const [k, p] of this.painters) if (!live.has(k)) { p.stop(); this.painters.delete(k); }
     // each on its own: one going wrong never stops the others (lights and walls are kept in step whatever happens)
@@ -1289,6 +1379,18 @@ export default class AtlasSpellEffects extends Plugin {
 
   remember(key: string, r: Remembered): void { this.settings.remember[key] = r; this.saveSoon(); }
 
+  /**
+   * A spell's range round its caster, as a ring to show while placing, and how far that reaches (world units,
+   * from the caster's centre: their space's edge plus the range). Null without a range (Self, or not said).
+   */
+  rangeRing(tab: Tab, pending: Pending, caster: { x: number; y: number; r: number }): { ring: Effect; reach: number } | null {
+    const ft = pending.range;
+    if (!ft || !(ft > 0)) return null;
+    const ppf = pxPerFoot(this.scaleOf(tab));
+    const reach = caster.r + ft * ppf;
+    return { reach, ring: { id: 'preview-range', map: this.mapOf(tab), name: pending.name, shape: 'radius', size: reach / ppf, at: { x: caster.x, y: caster.y }, colour: pending.colour, lasting: false, started: 0 } };
+  }
+
   /** Click the caster / aim / click the spot on the Atlas map, then it plays. */
   place(pending: Pending, casterToken?: string): void {
     const tab = this.atlasTab();
@@ -1302,7 +1404,7 @@ export default class AtlasSpellEffects extends Plugin {
     const hint = (tab.canvas.parentElement ?? doc.body).createDiv({ cls: 'sfx-hint' });
     const needsCaster = a.from === 'caster';
     const aims = a.shape === 'cone' || a.shape === 'line' || (a.shape === 'cube' && a.from === 'caster');
-    const say = () => { hint.textContent = `${pending.name}: ` + (needsCaster && !this.placing?.caster ? 'click the caster (a token, or a spot)' : aims ? 'aim and click' : 'click where it goes') + '   ·   Esc to stop'; };
+    const say = () => { hint.textContent = `${pending.name}: ` + (needsCaster && !this.placing?.caster ? `first click the caster’s token (it starts from them${aims ? '; then aim' : ''})` : aims ? 'aim and click' : reach ? `click where it goes (within its ${pending.range} ${unitLabel()} range, shown round the caster)` : 'click where it goes') + '   ·   Esc to stop'; };
     const toWorld = (e: PointerEvent | MouseEvent): Point | null => {
       const r = tab.canvas.getBoundingClientRect();
       if (e.clientX < r.left || e.clientY < r.top || e.clientX > r.right || e.clientY > r.bottom) return null;
@@ -1310,9 +1412,15 @@ export default class AtlasSpellEffects extends Plugin {
       return p && Number.isFinite(p.x) ? { x: p.x, y: p.y } : null;
     };
     let alt = false;
-    const effectAt = (p: Point, id: string): Effect | null => {
+    // a spell cast at a point, by a known caster (a statblock's creature): its range shows round them, and the
+    // area can't go beyond it
+    const rc = casterToken && !needsCaster ? this.tokenOf(tab, casterToken) : null;
+    const reach = rc ? this.rangeRing(tab, pending, rc) : null;
+    const inRange = (p: Point): Point => reach && rc ? inReach(p, rc, reach.reach) : p;
+    const effectAt = (q: Point, id: string): Effect | null => {
       const map = this.mapOf(tab); const sc = this.scaleOf(tab);
-      const base = { id, map, name: pending.name, shape: a.shape, size: a.size, ...(a.width ? { width: a.width } : {}), ...(a.shape === 'cone' ? { angle: a.angle ?? this.settings.coneAngle } : {}), colour: pending.colour, ...(pending.colour2 ? { colour2: pending.colour2 } : {}), ...(pending.alpha ? { alpha: pending.alpha } : {}), lasting: a.lasting, started: Date.now(), ...(pending.file ? { file: pending.file } : {}), ...(pending.light && id !== 'preview' ? { light: { ...pending.light } } : {}) };
+      const p = aims || needsCaster ? q : inRange(q);
+      const base = { id, map, name: pending.name, shape: a.shape, size: a.size, ...(a.width ? { width: a.width } : {}), ...(a.shape === 'cone' ? { angle: a.angle ?? this.coneAngle() } : {}), colour: pending.colour, ...(pending.colour2 ? { colour2: pending.colour2 } : {}), ...(pending.alpha ? { alpha: pending.alpha } : {}), lasting: a.lasting, started: Date.now(), ...(pending.file ? { file: pending.file } : {}), ...(pending.light && id !== 'preview' ? { light: { ...pending.light } } : {}) };
       const c = this.placing?.caster;
       if (needsCaster && !c) {
         // before the caster is chosen: show the area on whatever is under the pointer
@@ -1322,7 +1430,7 @@ export default class AtlasSpellEffects extends Plugin {
       if (aims && c) return { ...base, at: { x: c.x, y: c.y }, dir: dirTo(c, p), ...(c.token && (pending.attach || a.shape === 'cube') ? { token: c.token } : {}) };
       if (needsCaster && c) return { ...base, at: { x: c.x, y: c.y }, ...(c.token ? { token: c.token } : {}) };
       void sc;
-      const at = a.shape === 'radius' || a.shape === 'cube' ? this.snapPoint(tab, p, { altKey: alt }) : p;
+      const at = a.shape === 'radius' || a.shape === 'cube' ? inRange(this.snapPoint(tab, p, { altKey: alt })) : p;
       return { ...base, at };
     };
     const move = (e: PointerEvent) => {
@@ -1364,7 +1472,7 @@ export default class AtlasSpellEffects extends Plugin {
       hint.remove();
       if (this.placing?.tab === tab) this.placing = null;
     };
-    this.placing = { tab, pending, caster: null, preview: null, stop: () => { stop(); this.bars(); }, hint };
+    this.placing = { tab, pending, caster: null, preview: null, stop: () => { stop(); this.bars(); }, hint, range: reach?.ring ?? null };
     // cast from a creature's statblock: that creature is the caster already
     const ct = casterToken && needsCaster ? this.tokenOf(tab, casterToken) : null;
     if (ct) {
@@ -1389,6 +1497,7 @@ export default class AtlasSpellEffects extends Plugin {
     const ct = casterToken ? this.tokenOf(tab, casterToken) : null;
     let caster: { x: number; y: number } | null = ct ? { x: ct.x, y: ct.y } : null;
     let count = 0;
+    const ring = (c: { x: number; y: number; r: number } | null) => { if (this.placing) this.placing.range = c ? this.rangeRing(tab, pending, c)?.ring ?? null : null; };
     const toWorld = (e: PointerEvent | MouseEvent): Point | null => {
       const r = tab.canvas.getBoundingClientRect();
       if (e.clientX < r.left || e.clientY < r.top || e.clientX > r.right || e.clientY > r.bottom) return null;
@@ -1407,7 +1516,7 @@ export default class AtlasSpellEffects extends Plugin {
         const to = tok ? { x: tok.x, y: tok.y } : p;
         const len = Math.hypot(to.x - caster.x, to.y - caster.y) / pxPerFoot(this.scaleOf(tab));
         if (len < 1) return null;
-        return { ...base, shape: 'line', size: Math.round(len * 10) / 10, width: a.width ?? 5, at: { x: caster.x, y: caster.y }, dir: dirTo(caster, to), lasting: false };
+        return { ...base, shape: 'line', size: Math.round(len * 10) / 10, width: a.width ?? square(), at: { x: caster.x, y: caster.y }, dir: dirTo(caster, to), lasting: false };
       }
       return { ...base, shape: 'emanation', size: a.size, at: tok ? { x: tok.x, y: tok.y } : p, ...(tok ? { token: tok.id } : {}), lasting: a.lasting, ...(pending.light && id !== 'preview' ? { light: { ...pending.light } } : {}) };
     };
@@ -1420,6 +1529,7 @@ export default class AtlasSpellEffects extends Plugin {
       if (bolt && !caster) {
         const tok = this.tokenAt(tab, p);
         caster = tok ? { x: tok.x, y: tok.y } : this.snapPoint(tab, p, e);
+        ring({ ...caster, r: tok?.r ?? 0 });
         say(); return;
       }
       const fx = effect(uid(), p);
@@ -1437,6 +1547,7 @@ export default class AtlasSpellEffects extends Plugin {
       if (this.placing?.tab === tab) this.placing = null;
     };
     this.placing = { tab, pending, caster: null, preview: null, stop: () => { stop(); this.bars(); this.wake(); }, hint };
+    ring(ct);
     this.bars();
     say();
     this.wake();
@@ -1472,8 +1583,8 @@ export default class AtlasSpellEffects extends Plugin {
     const say = () => {
       const used = Math.round(pathLength(next ? [...pts, next] : pts) / ppf());
       hint.textContent = `${pending.name}: ` + (round ? 'click the ring’s centre'
-        : !pts.length ? `click where the wall starts (up to ${a.size} ft)`
-        : `click the next corner · ${used} of ${a.size} ft · Enter, double-click or right-click to finish · Backspace takes a corner back`) + '   ·   Esc to stop';
+        : !pts.length ? `click where the wall starts (up to ${a.size} ${unitLabel()})`
+        : `click the next corner · ${used} of ${a.size} ${unitLabel()} · Enter, double-click or right-click to finish · Backspace takes a corner back`) + '   ·   Esc to stop';
     };
     const show = () => {
       if (!this.placing) return;
@@ -1680,7 +1791,7 @@ export default class AtlasSpellEffects extends Plugin {
           const d = Math.max(0, Math.hypot(tok.x - b.cx, tok.y - b.cy) - tok.r);
           if (!best || d < best.d) best = { id, d };
         }
-        if (best) { const ft = Math.round(best.d / ppf / 5) * 5; bits.push(ft <= 5 ? `by ${this.tokenName(t, best.id)}` : `${ft} ft from ${this.tokenName(t, best.id)}`); }
+        if (best) { const st = square(), ft = Math.round(best.d / ppf / st) * st; bits.push(ft <= st ? `by ${this.tokenName(t, best.id)}` : `${Math.round(ft * 10) / 10} ${unitLabel()} from ${this.tokenName(t, best.id)}`); }
       }
     }
     const min = Math.round((Date.now() - fx.started) / 60000);
@@ -1773,7 +1884,7 @@ function lookPicker(anim: HTMLElement, colourEl: HTMLElement, c: LookCtx): void 
   if (cur) {
     row.createSpan({ cls: 'sfx-label sfx-flush', text: 'Colour' });
     const sw = row.createDiv({ cls: 'sfx-swatches' });
-    const cols = coloursOf(cur, P.files, c.size);
+    const cols = coloursOf(cur, P.files, c.size / Math.max(1e-6, fromFeet(1)));
     for (const k of cols) { const b = sw.createEl('button', { text: k.colour, cls: k.file.path === c.file ? 'is-on' : '' }); b.onclick = () => c.set({ file: k.file.path }, true); }
     if (cols.length <= 1) sw.createSpan({ cls: 'sfx-muted', text: 'This animation comes in one colour' });
   } else {
@@ -1840,15 +1951,15 @@ function lightPicker(pane: HTMLElement, light: EffectLight | null, lasting: bool
   const opts: [string, string][] = [['none', 'None'], ['light', 'Gives light'], ['darkness', 'Magical darkness']];
   for (const [k, t] of opts) {
     const b = seg.createEl('button', { text: t, cls: mode === k ? 'is-on' : '' });
-    b.onclick = () => set(k === 'none' ? null : k === 'darkness' ? { mode: 'darkness', bright: 0, dim: light?.dim ?? 15 } : { mode: 'light', bright: light?.mode === 'light' ? light.bright : 20, dim: light?.mode === 'light' ? light.dim : 40, ...(light?.colour ? { colour: light.colour } : {}) });
+    b.onclick = () => set(k === 'none' ? null : k === 'darkness' ? { mode: 'darkness', bright: 0, dim: light?.dim ?? squares(3) } : { mode: 'light', bright: light?.mode === 'light' ? light.bright : squares(4), dim: light?.mode === 'light' ? light.dim : squares(8), ...(light?.colour ? { colour: light.colour } : {}) });
   }
   const f = box.createDiv({ cls: 'sfx-fields' });
   if (light?.mode === 'light') {
     f.createSpan({ text: 'Bright' });
     const b = f.createEl('input', { type: 'number', value: String(light.bright) }); b.min = '0';
-    f.createSpan({ text: 'ft, dim to' });
+    f.createSpan({ text: `${unitLabel()}, dim to` });
     const d = f.createEl('input', { type: 'number', value: String(light.dim) }); d.min = '0';
-    f.createSpan({ text: 'ft' });
+    f.createSpan({ text: unitLabel() });
     const c = f.createEl('input', { type: 'color', value: light.colour || LIGHT_COLOUR }); c.title = 'The light’s colour';
     const upd = () => { const bv = Math.max(0, Number(b.value) || 0), dv = Math.max(bv, Number(d.value) || 0); light.bright = bv; light.dim = dv || bv; light.colour = c.value; set(light); };
     b.onchange = upd; d.onchange = upd; c.onchange = upd;
@@ -1902,23 +2013,23 @@ class EditModal extends Modal {
           fx.points = ring.map((p) => ({ x: p.x - ring[0].x, y: p.y - ring[0].y }));
           fx.size = v; this.changed();
         };
-        f.createSpan({ text: 'ft' });
+        f.createSpan({ text: unitLabel() });
       } else {
-        f.createSpan({ cls: 'sfx-chip', text: `${Math.round(pathLength(fx.points ?? []) / pxPerFoot(sc))} ft long, ${(fx.points?.length ?? 1) - 1} stretch${(fx.points?.length ?? 1) - 1 === 1 ? '' : 'es'}` });
+        f.createSpan({ cls: 'sfx-chip', text: `${Math.round(pathLength(fx.points ?? []) / pxPerFoot(sc))} ${unitLabel()} long, ${(fx.points?.length ?? 1) - 1} stretch${(fx.points?.length ?? 1) - 1 === 1 ? '' : 'es'}` });
       }
       f.createSpan({ text: 'Thickness' });
       const th = f.createEl('input', { type: 'number', value: String(fx.width ?? 1) }); th.min = '0.1'; th.step = '0.5';
       th.oninput = () => { const v = Number(th.value); if (v > 0) { fx.width = v; this.changed(); } };
-      f.createSpan({ text: 'ft' });
+      f.createSpan({ text: unitLabel() });
     } else {
     f.createSpan({ text: fx.shape === 'radius' || fx.shape === 'emanation' ? 'Radius' : fx.shape === 'cube' ? 'Side' : 'Length' });
     const size = f.createEl('input', { type: 'number', value: String(fx.size) }); size.min = '1';
     size.oninput = () => { const v = Number(size.value); if (v > 0) { fx.size = v; this.changed(); } };
-    f.createSpan({ text: 'ft' });
+    f.createSpan({ text: unitLabel() });
     }
     if (fx.shape === 'line') {
-      f.createSpan({ text: 'Width' }); const w = f.createEl('input', { type: 'number', value: String(fx.width ?? 5) });
-      w.oninput = () => { const v = Number(w.value); if (v > 0) { fx.width = v; this.changed(); } }; f.createSpan({ text: 'ft' });
+      f.createSpan({ text: 'Width' }); const w = f.createEl('input', { type: 'number', value: String(fx.width ?? square()) });
+      w.oninput = () => { const v = Number(w.value); if (v > 0) { fx.width = v; this.changed(); } }; f.createSpan({ text: unitLabel() });
     }
     if (fx.shape === 'cone') {
       f.createSpan({ text: 'Angle' }); const an = f.createEl('input', { type: 'number', value: String(Math.round((fx.angle ?? CONE_ANGLE) * 100) / 100) }); an.min = '1'; an.max = '170';
@@ -2005,19 +2116,20 @@ class EditModal extends Modal {
 class CastModal extends Modal {
   private choice: Choice | null = null;
   private name = 'Effect';
-  private area: Area = { shape: 'radius', size: 20, from: 'point', lasting: false };
+  private area: Area = { shape: 'radius', size: squares(4), from: 'point', lasting: false };
   private file: string | undefined;
   private colour = '#ff8a2a';
   private colour2: string | undefined;
   private alpha: number | undefined;
   private attach = false;
   private light: EffectLight | null = null;
-  private preset: Preset | null = null;
   /** Cast from a statblock: its creature is the caster. */
   casterToken: string | undefined;
   private query = '';
   private fileQuery = '';
   private saved = '';
+  /** Delete pressed once: pressed again, it goes. */
+  private sure = false;
   private listScroll = 0;
   /** The list's groups that are folded shut. */
   private folded = new Set<string>();
@@ -2026,23 +2138,15 @@ class CastModal extends Modal {
   onOpen(): void {
     this.modalEl.addClass('sfx-modal'); this.modalEl.addClass('sfx-cast');
     this.titleEl.setText('Cast a spell effect');
-    if (this.choice || this.preset) { this.render(); return; }      // opened with a spell already picked
+    if (this.choice) { this.render(); return; }      // opened with a spell already picked
     const last = this.plugin.last;
     if (last) { const c = this.plugin.choices().find((x) => x.name === last.name); if (c) void this.pick(c); else this.render(); } else this.render();
   }
 
-  /** A spell picked: its stored defaults, or what its text says (and the best animation for it). */
-  /** A preset picked: everything as it was saved. */
-  pickPreset(pr: Preset): void {
-    this.preset = pr; this.choice = null;
-    this.name = pr.of || pr.name; this.area = { ...pr.area }; this.file = pr.file; this.colour = pr.colour; this.colour2 = pr.colour2; this.alpha = pr.alpha;
-    this.attach = !!pr.attach; this.light = pr.light ? { ...pr.light } : null;
-    this.saved = `Preset “${pr.name}”`;
-    this.render();
-  }
+  /** A spell picked: as it was saved, or what its text says (and the best animation for it). */
 
   async pick(c: Choice | null): Promise<void> {
-    this.choice = c; this.saved = ''; this.preset = null;
+    this.choice = c; this.saved = ''; this.sure = false;
     const P = this.plugin;
     this.colour2 = undefined; this.alpha = undefined;
     if (c?.stored) {
@@ -2054,9 +2158,9 @@ class CastModal extends Modal {
     } else if (c) {
       const entry = await P.noteEntry(c);
       const r = entry ? P.settings.remember[entry.key] : undefined;
-      const a = entry ? areaOf(entry) ?? targetOf(entry) : null;
+      const a = entry ? areaOf(entry) ?? targetOf(entry) ?? fallbackArea(entry) : null;
       this.name = c.name;
-      this.area = { shape: r?.shape ?? a?.shape ?? 'radius', size: r?.size ?? a?.size ?? 20, ...((r?.width ?? a?.width) ? { width: r?.width ?? a?.width } : {}), ...(r?.angle ? { angle: r.angle } : {}), from: r?.from ?? a?.from ?? 'point', lasting: r?.lasting ?? a?.lasting ?? false,
+      this.area = { shape: r?.shape ?? a?.shape ?? 'radius', size: r?.size ?? a?.size ?? squares(4), ...((r?.width ?? a?.width) ? { width: r?.width ?? a?.width } : {}), ...(r?.angle ? { angle: r.angle } : {}), from: r?.from ?? a?.from ?? 'point', lasting: r?.lasting ?? a?.lasting ?? false,
         ...((r?.ring ?? a?.ring) ? { ring: r?.ring ?? a?.ring } : {}), ...(r?.round ? { round: true } : {}), ...((r?.blocks ?? a?.blocks) ? { blocks: r?.blocks ?? a?.blocks } : {}), ...((r ? r.target : a?.target) ? { target: (r ? r.target : a?.target)! } : {}) };
       if (this.area.target === 'on' && !r) this.area.size = a?.size ?? 0;
       this.file = r ? r.file : matchesFor(c.name, this.area.shape, P.files, 1)[0]?.file.path;
@@ -2112,16 +2216,14 @@ class CastModal extends Modal {
         it.createEl('small', { text: note });
         it.onclick = click;
       };
-      const presets = P.settings.presets.filter((pr) => words.every((w) => pr.name.toLowerCase().includes(w)));
-      if (presets.length) { const g = group('Presets', presets.length); if (g) for (const pr of presets) row(g, 'sfx-preset', 'zap', pr.name, describe(pr.area), this.preset?.id === pr.id, () => this.pickPreset(pr)); }
       const item = (g: HTMLElement, c: Choice) => {
         const a = c.stored ? c.stored.area : c.entry ? areaOf(c.entry) : null;
-        row(g, c.source === 'stored' ? 'sfx-saved-row' : '', c.source === 'stored' ? 'star' : 'wand-2', c.name, a ? describe(a).replace(' around the caster', a.shape === 'emanation' ? ' around' : '') : c.source === 'note' ? 'note' : '', !this.preset && this.choice?.key === c.key, () => { void this.pick(c); });
+        row(g, c.source === 'stored' ? 'sfx-saved-row' : '', c.source === 'stored' ? 'star' : 'wand-2', c.name, a ? describe(a).replace(' around the caster', a.shape === 'emanation' ? ' around' : '') : c.source === 'note' ? 'note' : '', this.choice?.key === c.key, () => { void this.pick(c); });
       };
-      if (stored.length) { const g = group('Saved effects', stored.length); if (g) for (const c of stored) item(g, c); }
+      if (stored.length) { const g = group('Saved spells', stored.length); if (g) for (const c of stored) item(g, c); }
       if (rest.length) { const g = group(words.length ? 'Other spells' : 'Spells with an area', rest.length); if (g) for (const c of rest) item(g, c); }
       const own = list.createDiv({ cls: 'sfx-rows' });
-      row(own, 'sfx-own', 'plus', 'An effect of your own', '', this.choice === null && !this.preset, () => { void this.pick(null); });
+      row(own, 'sfx-own', 'plus', 'An effect of your own', '', this.choice === null, () => { void this.pick(null); });
       if (!all.length && words.length) list.createDiv({ cls: 'sfx-empty', text: 'No spell by that name.' });
     };
     q.oninput = () => { this.query = q.value; fill(); };
@@ -2136,9 +2238,9 @@ class CastModal extends Modal {
     const img = this.choice?.stored?.image ? this.app.vault.getAbstractFileByPath(this.choice.stored.image) : null;
     if (img instanceof TFile) { const i = head.createEl('img', { cls: 'sfx-card' }); i.src = this.app.vault.getResourcePath(img); }
     const ht = head.createDiv({ cls: 'sfx-head-text' });
-    if (this.choice || this.preset) ht.createEl('h3', { text: this.name });
+    if (this.choice) ht.createEl('h3', { text: this.name });
     else { const n = ht.createEl('input', { type: 'text', value: this.name, placeholder: 'Name' }); n.oninput = () => { this.name = n.value || 'Effect'; }; }
-    ht.createSpan({ cls: 'sfx-chip', text: this.preset ? `Preset: ${this.preset.name}` : this.choice?.source === 'stored' ? 'Saved defaults' : this.choice?.source === 'note' ? 'Spell note' : 'Your own effect' });
+    ht.createSpan({ cls: 'sfx-chip', text: this.choice?.source === 'stored' ? (this.choice.stored?.menu ? 'Saved · in ✨ menu' : 'Saved') : this.choice?.source === 'note' ? 'Spell note' : 'Your own effect' });
 
     // the settings scroll; the colour and the buttons stay in view below them
     const body = pane.createDiv({ cls: 'sfx-body' });
@@ -2149,7 +2251,7 @@ class CastModal extends Modal {
     const seg = area.createDiv({ cls: 'sfx-seg' });
     for (const k of ['radius', 'emanation', 'cone', 'cube', 'line', 'wall'] as Shape[]) {
       const b = seg.createEl('button', { text: SHAPE_LABEL[k], cls: this.area.shape === k ? 'is-on' : '' });
-      b.onclick = () => { this.area = { ...this.area, shape: k, from: k === 'radius' || k === 'cube' ? this.area.from : k === 'wall' ? 'point' : 'caster' }; if (k === 'line' && !this.area.width) this.area.width = 5; if (k === 'wall' && !this.area.width) this.area.width = 1; if (k === 'wall' && this.area.lasting === false) this.area.lasting = true; if (this.area.target && !((k === 'line' && this.area.target === 'bolt') || (k === 'emanation' && this.area.target === 'on'))) delete this.area.target; this.render(); };
+      b.onclick = () => { this.area = { ...this.area, shape: k, from: k === 'radius' || k === 'cube' ? this.area.from : k === 'wall' ? 'point' : 'caster' }; if (k === 'line' && !this.area.width) this.area.width = square(); if (k === 'wall' && !this.area.width) this.area.width = fromFeet(1); if (k === 'wall' && this.area.lasting === false) this.area.lasting = true; if (this.area.target && !((k === 'line' && this.area.target === 'bolt') || (k === 'emanation' && this.area.target === 'on'))) delete this.area.target; this.render(); };
     }
     const f = area.createDiv({ cls: 'sfx-fields' });
     const lab = (t: string) => f.createSpan({ text: t });
@@ -2157,14 +2259,14 @@ class CastModal extends Modal {
       const ws = f.createDiv({ cls: 'sfx-seg' });
       for (const [k, t] of [[false, 'Straight'], [true, 'Ring']] as const) {
         const b = ws.createEl('button', { text: t, cls: !!this.area.round === k ? 'is-on' : '' });
-        b.onclick = () => { this.area.round = k || undefined; if (!k) delete this.area.round; if (k && !this.area.ring) this.area.ring = 20; this.render(); };
+        b.onclick = () => { this.area.round = k || undefined; if (!k) delete this.area.round; if (k && !this.area.ring) this.area.ring = squares(4); this.render(); };
       }
     }
     if (this.area.shape === 'wall' && this.area.round) {
       lab('Diameter');
-      const dia = f.createEl('input', { type: 'number', value: String(this.area.ring ?? 20) }); dia.min = '1';
-      dia.onchange = () => { this.area.ring = Math.max(1, Number(dia.value) || this.area.ring || 20); };
-      lab('ft');
+      const dia = f.createEl('input', { type: 'number', value: String(this.area.ring ?? squares(4)) }); dia.min = '1';
+      dia.onchange = () => { this.area.ring = Math.max(1, Number(dia.value) || this.area.ring || squares(4)); };
+      lab(unitLabel());
     } else {
       if (this.area.target === 'bolt') lab('From the caster to each target');
       else {
@@ -2172,20 +2274,20 @@ class CastModal extends Modal {
       const size = f.createEl('input', { type: 'number', value: String(this.area.size) }); size.min = this.area.target === 'on' ? '0' : '1';
       size.onchange = () => { const v = Number(size.value); this.area.size = this.area.target === 'on' ? Math.max(0, Number.isFinite(v) ? v : 0) : Math.max(1, v || this.area.size); };
       }
-      lab(this.area.shape === 'wall' ? 'ft long' : 'ft');
+      lab(this.area.shape === 'wall' ? `${unitLabel()} long` : unitLabel());
     }
     if (this.area.shape === 'wall') {
       lab('Thickness'); const w = f.createEl('input', { type: 'number', value: String(this.area.width ?? 1) }); w.min = '0.1'; w.step = '0.5';
-      w.onchange = () => { this.area.width = Math.max(0.1, Number(w.value) || 1); }; lab('ft');
+      w.onchange = () => { this.area.width = Math.max(0.1, Number(w.value) || 1); }; lab(unitLabel());
     }
     if (this.area.shape === 'line') {
-      lab('Width'); const w = f.createEl('input', { type: 'number', value: String(this.area.width ?? 5) }); w.onchange = () => { this.area.width = Math.max(1, Number(w.value) || 5); }; lab('ft');
+      lab('Width'); const w = f.createEl('input', { type: 'number', value: String(this.area.width ?? square()) }); w.onchange = () => { this.area.width = Math.max(0.1, Number(w.value) || square()); }; lab(unitLabel());
     }
     if (this.area.shape === 'cone') {
       lab('Angle');
-      const an = f.createEl('input', { type: 'number', value: String(Math.round((this.area.angle ?? P.settings.coneAngle) * 100) / 100) }); an.min = '1'; an.max = '170'; an.step = '1';
+      const an = f.createEl('input', { type: 'number', value: String(Math.round((this.area.angle ?? P.coneAngle()) * 100) / 100) }); an.min = '1'; an.max = '170'; an.step = '1';
       an.title = 'The cone’s angle at its point. The default (in the settings) suits your game: 53° is 5e’s (as wide as it is long), 90° Pathfinder’s';
-      an.onchange = () => { const v = Number(an.value); if (v >= 1 && v <= 170) this.area.angle = v; else { delete this.area.angle; an.value = String(P.settings.coneAngle); } this.render(); };
+      an.onchange = () => { const v = Number(an.value); if (v >= 1 && v <= 170) this.area.angle = v; else { delete this.area.angle; an.value = String(P.coneAngle()); } this.render(); };
       lab('°');
     }
     if (this.area.shape === 'radius' || this.area.shape === 'cube') {
@@ -2213,7 +2315,7 @@ class CastModal extends Modal {
     if (this.area.shape === 'wall') wallsPicker(body, this.area.blocks, this.area.lasting, (b) => { this.area.blocks = b; this.render(); });
     lightPicker(body, this.light, this.area.lasting, (l) => { this.light = l; this.render(); });
 
-    lookPicker(body.createDiv(), bottom, { app: this.app, plugin: P, name: this.name === 'Effect' ? '' : this.name, shape: this.area.shape, angle: this.area.angle ?? P.settings.coneAngle, size: this.area.size, file: this.file, colour: this.colour, colour2: this.colour2, alpha: this.alpha, fileQuery: this.fileQuery,
+    lookPicker(body.createDiv(), bottom, { app: this.app, plugin: P, name: this.name === 'Effect' ? '' : this.name, shape: this.area.shape, angle: this.area.angle ?? P.coneAngle(), size: this.area.size, file: this.file, colour: this.colour, colour2: this.colour2, alpha: this.alpha, fileQuery: this.fileQuery,
       set: (c, re) => {
         if ('file' in c) this.file = c.file;
         if (c.colour !== undefined) this.colour = c.colour;
@@ -2228,42 +2330,40 @@ class CastModal extends Modal {
     foot.createSpan({ cls: 'sfx-saved', text: this.saved });
     const sl = foot.createEl('label', { cls: 'sfx-toggle' }); const snap = sl.createEl('input', { type: 'checkbox' }); snap.checked = P.settings.snap; sl.appendText('Snap to grid');
     snap.onchange = () => { void P.toggleSnap(); };
-    // presets: save this as one, or update / delete the one picked
-    const look = (): Omit<Preset, 'id' | 'name' | 'of'> => ({ area: { ...this.area }, ...(this.file ? { file: this.file } : {}), colour: this.colour, ...(this.colour2 ? { colour2: this.colour2 } : {}), ...(this.alpha ? { alpha: this.alpha } : {}), ...(this.attach ? { attach: true } : {}), light: this.light ? { ...this.light } : null });
-    if (this.preset) {
-      const pr = this.preset;
-      const del = foot.createEl('button', { text: 'Delete preset', cls: 'mod-warning' });
-      del.onclick = async () => { P.settings.presets = P.settings.presets.filter((x) => x.id !== pr.id); await P.save(); this.preset = null; this.saved = `Deleted “${pr.name}”`; this.render(); };
-      const up = foot.createEl('button', { text: 'Update preset' });
-      up.onclick = async () => {
-        const l = look();
-        pr.area = l.area; pr.colour = l.colour; pr.light = l.light ?? null;
-        if (l.file) pr.file = l.file; else delete pr.file;
-        if (l.colour2) pr.colour2 = l.colour2; else delete pr.colour2;
-        if (l.alpha) pr.alpha = l.alpha; else delete pr.alpha;
-        if (l.attach) pr.attach = true; else delete pr.attach;
-        await P.save(); this.saved = `Updated “${pr.name}”`; this.render(); };
-    }
-    const sp = foot.createEl('button', { text: 'Save as preset…' });
-    sp.title = 'Keeps all of this under a name of its own, to cast in one click from ✨’s menu';
-    sp.onclick = () => new NameModal(this.app, `${this.name} (${describe(this.area)})`, async (name) => {
-      const pr: Preset = { id: uid(), name, of: this.name, ...look() };
-      P.settings.presets = [...P.settings.presets, pr]; await P.save();
-      this.pickPreset(pr);
-    }).open();
-    const target = this.choice?.stored?.path ?? this.choice?.notePath;
-    const store = foot.createEl('button', { text: this.choice?.stored ? 'Update saved defaults' : 'Save as defaults' });
-    if (this.preset) store.addClass('sfx-hidden');
-    store.title = target ? `Keeps this area, animation, colour, light and walls as the spell's defaults, in ${target} (its effect-… properties)` : `Keeps these as an effect of your own: a note in ${P.storageFolder()}`;
-    store.onclick = async () => {
-      store.disabled = true;
+    // saving: one kind of thing, a saved spell (kept in a note's effect-… properties)
+    const st = this.choice?.stored;
+    const look = () => ({ area: { ...this.area }, file: this.file, colour: this.colour, colour2: this.colour2, alpha: this.alpha, attach: this.attach, light: this.light });
+    const keep = async (btn: { disabled: boolean }, c: { name: string; stored?: StoredSpell; entry?: SpellEntry; notePath?: string }, menu: boolean | undefined) => {
+      btn.disabled = true;
       try {
-        const path = await P.storeSpell({ name: this.name, ...(this.choice?.stored ? { stored: this.choice.stored } : {}), ...(this.choice?.entry ? { entry: this.choice.entry } : {}), ...(this.choice?.notePath ? { notePath: this.choice.notePath } : {}) }, { area: { ...this.area }, file: this.file, colour: this.colour, colour2: this.colour2, alpha: this.alpha, attach: this.attach, light: this.light });
-        const c = P.choices().find((x) => x.stored?.path === path);
-        this.choice = c ?? this.choice; this.saved = `Saved in ${path}`;
+        const path = await P.storeSpell(c, { ...look(), menu });
+        this.choice = P.choices().find((x) => x.stored?.path === path) ?? this.choice; this.saved = `Saved in ${path}`; this.sure = false;
         this.render();
-      } catch (e) { new Notice('Atlas Spell Effects: could not store it (' + (e instanceof Error ? e.message : String(e)) + ')'); store.disabled = false; }
+      } catch (e) { new Notice('Atlas Spell Effects: could not save it (' + (e instanceof Error ? e.message : String(e)) + ')'); btn.disabled = false; }
     };
+    if (st) {
+      const own = P.ownNote(st.path);
+      const del = foot.createEl('button', { text: this.sure ? (own ? 'Sure? Delete it' : 'Sure? Forget it') : own ? 'Delete' : 'Forget saved', cls: 'mod-warning' });
+      del.title = own ? `Deletes this saved spell (its note, ${st.path}, goes to the bin)` : `Takes this spell’s saved settings off its note (${st.path}); it is cast from its text again`;
+      del.onclick = async () => {
+        if (!this.sure) { this.sure = true; this.render(); return; }
+        this.sure = false; await P.forgetSpell(st); this.saved = own ? `Deleted “${st.name}”` : `Forgot the saved settings for “${st.name}”`;
+        this.choice = own ? null : P.choices().find((x) => x.notePath === st.path && !x.stored) ?? null;
+        if (this.choice) await this.pick(this.choice); else this.render();
+      };
+      const ml = foot.createEl('label', { cls: 'sfx-toggle' }); const mc = ml.createEl('input', { type: 'checkbox' }); mc.checked = !!st.menu; ml.appendText('In ✨ menu');
+      ml.title = 'Lists it in the menu of the map’s ✨ button, to cast in one click';
+      mc.onchange = () => { void keep(mc, { name: st.name, stored: st }, mc.checked); };
+    }
+    const sp = foot.createEl('button', { text: 'Save as new…' });
+    sp.title = `Keeps all of this as a spell of its own, under a new name (a note in ${P.storageFolder()}): a blue Fireball, a small Darkness…`;
+    sp.onclick = () => new NameModal(this.app, this.choice ? `${this.name} (${describe(this.area)})` : this.name, async (name) => {
+      await keep(sp, { name, ...(this.choice?.entry ? { entry: this.choice.entry } : {}) }, true);
+    }).open();
+    const target = st?.path ?? this.choice?.notePath;
+    const store = foot.createEl('button', { text: st ? 'Save changes' : 'Save' });
+    store.title = target ? `From now on, ${this.name} is cast like this (kept in ${target}, as its effect-… properties)` : `Keeps this as a spell of your own: a note in ${P.storageFolder()}`;
+    store.onclick = () => { void keep(store, { name: this.name, ...(st ? { stored: st } : {}), ...(this.choice?.entry ? { entry: this.choice.entry } : {}), ...(this.choice?.notePath ? { notePath: this.choice.notePath } : {}) }, st ? st.menu : !this.choice); };
     const go = foot.createEl('button', { cls: 'mod-cta', text: 'Place on the map' });
     go.onclick = async () => {
       go.disabled = true;
@@ -2280,22 +2380,23 @@ class CastModal extends Modal {
       P.indexVault();
       const key = this.choice?.entry?.key ?? this.choice?.key ?? 'effect';
       if (this.choice && !this.choice.stored) P.remember(key, { ...(this.file ? { file: this.file } : {}), colour: this.colour, ...(this.colour2 ? { colour2: this.colour2 } : {}), ...(this.alpha ? { alpha: this.alpha } : {}), shape: this.area.shape, size: this.area.size, ...(this.area.width ? { width: this.area.width } : {}), ...(this.area.angle ? { angle: this.area.angle } : {}), from: this.area.from, lasting: this.area.lasting, light: this.light, ...(this.area.ring ? { ring: this.area.ring } : {}), ...(this.area.round ? { round: true } : {}), ...(this.area.blocks ? { blocks: this.area.blocks } : {}), ...(this.area.target ? { target: this.area.target } : {}) });
-      return { name: this.name, key: this.preset ? 'preset:' + this.preset.id : key, area: { ...this.area }, ...(this.file ? { file: this.file } : {}), colour: this.colour, ...(this.colour2 ? { colour2: this.colour2 } : {}), ...(this.alpha ? { alpha: this.alpha } : {}), ...(this.attach ? { attach: true } : {}), ...(this.light ? { light: { ...this.light } } : {}) };
+      const range = this.choice?.entry ? rangeOf(this.choice.entry) : null;
+      return { name: this.name, key, ...(range ? { range } : {}), area: { ...this.area }, ...(this.file ? { file: this.file } : {}), colour: this.colour, ...(this.colour2 ? { colour2: this.colour2 } : {}), ...(this.alpha ? { alpha: this.alpha } : {}), ...(this.attach ? { attach: true } : {}), ...(this.light ? { light: { ...this.light } } : {}) };
   }
   onClose(): void { this.contentEl.empty(); }
 }
 
-/** A name for a preset. */
+/** A name for a new saved spell. */
 class NameModal extends Modal {
   constructor(app: App, private readonly start: string, private readonly done: (name: string) => void | Promise<void>) { super(app); }
   onOpen(): void {
-    this.titleEl.setText('Save as preset');
+    this.titleEl.setText('Save as a new spell');
     const el = this.contentEl;
-    el.createEl('p', { text: 'Its name, as it shows in ✨’s menu and at the top of the cast window:' });
+    el.createEl('p', { text: 'Its name, as it shows in the cast window’s Saved spells and in ✨’s menu:' });
     const n = el.createEl('input', { type: 'text', value: this.start, cls: 'sfx-wide' });
     const foot = el.createDiv({ cls: 'sfx-foot' });
     foot.createEl('button', { text: 'Cancel' }).onclick = () => this.close();
-    const ok = foot.createEl('button', { text: 'Save preset', cls: 'mod-cta' });
+    const ok = foot.createEl('button', { text: 'Save', cls: 'mod-cta' });
     const go = () => { const v = n.value.trim(); if (!v) return; this.close(); void this.done(v); };
     ok.onclick = go; n.onkeydown = (e) => { if (e.key === 'Enter') go(); };
     window.setTimeout(() => { n.focus(); n.select(); }, 0);
@@ -2303,20 +2404,20 @@ class NameModal extends Modal {
   onClose(): void { this.contentEl.empty(); }
 }
 
-/** "Cast a preset…": your presets, one click each. */
-class PresetPicker extends Modal {
+/** "Cast a saved spell…": the saved spells (the ones in ✨'s menu first), one click each. */
+class SavedPicker extends Modal {
   constructor(app: App, private readonly plugin: AtlasSpellEffects) { super(app); }
   onOpen(): void {
     this.modalEl.addClass('sfx-modal'); this.modalEl.addClass('sfx-edit');
-    this.titleEl.setText('Cast a preset');
+    this.titleEl.setText('Cast a saved spell');
     const el = this.contentEl;
-    const ps = this.plugin.settings.presets;
-    if (!ps.length) { el.createDiv({ cls: 'sfx-empty', text: 'No presets yet. In the cast window, set a spell up as you like it and press “Save as preset…”.' }); return; }
+    const ss = [...this.plugin.stored].sort((a, b) => Number(!!b.menu) - Number(!!a.menu));
+    if (!ss.length) { el.createDiv({ cls: 'sfx-empty', text: 'No saved spells yet. In the cast window, set a spell up as you like it and press “Save”.' }); return; }
     const box = el.createDiv({ cls: 'sfx-list' });
-    for (const pr of ps) {
+    for (const st of ss) {
       const it = box.createDiv({ cls: 'sfx-item' });
-      it.createSpan({ cls: 'sfx-star', text: '⚡' }); it.createSpan({ cls: 'sfx-name', text: pr.name }); it.createEl('small', { text: describe(pr.area) });
-      it.onclick = () => { this.close(); void this.plugin.castPreset(pr); };
+      setIcon(it.createSpan({ cls: 'sfx-star' }), 'star'); it.createSpan({ cls: 'sfx-name', text: st.name }); it.createEl('small', { text: describe(st.area) });
+      it.onclick = () => { this.close(); void this.plugin.castSaved(st); };
     }
   }
   onClose(): void { this.contentEl.empty(); }
@@ -2384,7 +2485,7 @@ class EffectSettings extends PluginSettingTab {
     // ── spells ──
     new Setting(el).setName('Spells').setHeading();
     const bs = new Setting(el).setName('Spell bases')
-      .setDesc('Every note these Bases show (in any of their views) is a spell, with its area, light and walls read from its text. Pick the Base of your spell pages, as you pick loot bases in Atlas. Saved defaults are written onto each spell’s own note.');
+      .setDesc('Every note these Bases show (in any of their views) is a spell, with its area, light and walls read from its text. Pick the Base of your spell pages, as you pick loot bases in Atlas. When you save a spell, it’s written onto its own note.');
     if (!basesReady()) bs.setDesc('Bases needs Obsidian 1.10 or later with the Bases core plugin on. Until then, spell notes are found by their properties (below).');
     const list = el.createDiv({ cls: 'sfx-baselist' });
     for (const b of s.bases) {
@@ -2397,7 +2498,7 @@ class EffectSettings extends PluginSettingTab {
         t.setPlaceholder('Compendium/Spells.base');
         new BaseSuggest(this.app, t.inputEl, async (path) => { if (!s.bases.includes(path)) { s.bases = [...s.bases, path]; await p.save(); await p.startBases(); } window.setTimeout(() => this.display(), 400); });
       });
-    new Setting(el).setName('Folder for effects of your own').setDesc(`“Save as defaults” on an effect that isn’t a spell note makes a note here (and a Base showing them, added above). Now ${p.stored.length} spells have saved defaults.`)
+    new Setting(el).setName('Folder for effects of your own').setDesc(`“Save as new…”, and saving an effect that isn’t a spell note, makes a note here (and a Base showing them, added above). You have ${p.stored.length} saved spells.`)
       .addText((t) => {
         t.setPlaceholder('Spell Storage').setValue(s.storage).onChange((v) => { void (async () => { s.storage = v.trim() || 'Spell Storage'; await p.save(); })(); });
         new FolderSuggest(this.app, t.inputEl, async (v) => { s.storage = v.trim() || 'Spell Storage'; await p.save(); });
@@ -2438,11 +2539,20 @@ class EffectSettings extends PluginSettingTab {
     new Setting(el).setName('On the map').setHeading();
     new Setting(el).setName('Snap to grid').setDesc('Spheres, cubes and wall corners land on the nearest grid corner, as the rules place them (Alt: the other way, once).')
       .addToggle((t) => t.setValue(s.snap).onChange((v) => { void (async () => { s.snap = v; await p.save(); })(); }));
-    new Setting(el).setName('Cone angle').setDesc('A cone’s angle at its point when its spell doesn’t say: 53° for D&D 5e (as wide at its end as it is long), 90° for Pathfinder. Each spell or preset can have its own in the cast window.')
+    new Setting(el).setName('Players see where you aim').setDesc('While you place a spell, the players’ screen shows its area’s outline, in its colours, so they can see what it will cover before you cast it. Also in the ✨ button’s menu.')
+      .addToggle((t) => t.setValue(s.showAim).onChange((v) => { void (async () => { s.showAim = v; await p.save(); p.wake(); })(); }));
+    new Setting(el).setName('What the players see while you aim').setDesc('Outline: the area’s edge, dashed, in its colours. Filled: the area drawn in its colours. Animation: the spell’s own animation, a little see-through.')
+      .addDropdown((d) => d.addOptions({ outline: 'Outline', filled: 'Filled', animation: 'Animation' }).setValue(s.aimLook).onChange((v) => { void (async () => { s.aimLook = v === 'filled' || v === 'animation' ? v : 'outline'; await p.save(); p.wake(); })(); }));
+    const sys = p.atlasSystem;
+    new Setting(el).setName('Your game system').setDesc(sys
+      ? `From Atlas (the open map’s collection): ${sys.perSquare} ${sys.unit} to a square, ${Math.round(sys.cone * 100) / 100}° cones${sys.bands.length ? `, range bands ${sys.bands.join(', ')}` : ''}. Spell areas and ranges are read with these (Pathfinder’s bursts, metres, Daggerheart’s and Shadowdark’s range bands…). To change them, change the collection’s game system in Atlas.`
+      : 'Read from Atlas once a map is open: its squares, units, cone angle and range bands, from the collection’s game system.');
+    new Setting(el).setName('Cone angle').setDesc('Leave empty to use your game system’s, from Atlas (53° in D&D 5e, 90° in most others). Each spell can still have its own in the cast window.')
       .addText((t) => {
-        t.setValue(String(Math.round(s.coneAngle * 100) / 100));
+        t.setPlaceholder(`${Math.round(p.coneAngle(true) * 100) / 100} (from Atlas)`);
+        t.setValue(s.coneAngle > 0 ? String(Math.round(s.coneAngle * 100) / 100) : '');
         t.inputEl.type = 'number'; t.inputEl.min = '1'; t.inputEl.max = '170';
-        t.onChange((v) => { void (async () => { const n = Number(v); if (n >= 1 && n <= 170) { s.coneAngle = n; await p.save(); } })(); });
+        t.onChange((v) => { void (async () => { const n = Number(v); if (!v.trim()) s.coneAngle = 0; else if (n >= 1 && n <= 170) s.coneAngle = n; else return; await p.save(); })(); });
       });
   }
 }

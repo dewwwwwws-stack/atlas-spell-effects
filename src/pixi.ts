@@ -9,6 +9,7 @@
 import { boxOf, wallPieces, wallPoints, wallThickness, type Box, type Effect, type Point, type Scale, type TokenAt } from './geometry';
 import { artInfo, instantMs, FADE_MS, DRAWN_MS, type World } from './overlay';
 import { fitOf } from './trim';
+import { fromFeet } from './areas';
 import { call, type AtlasViewport } from './atlas';
 
 /** The parts of a pixi node the add-on uses. */
@@ -74,6 +75,15 @@ export function kitOf(viewport: AtlasViewport): Kit | null {
 
 /** Each animation's bytes as an address the canvas can take (read once, kept while the add-on runs). */
 const blobs = new Map<string, Promise<string | null>>();
+
+/** The players' view of where the DM aims: its id, and the effect drawn for it (the area, drawn, see-through). */
+const AIM = 'sfx-aim';
+export type AimLook = 'outline' | 'filled' | 'animation';
+const aimOf = (e: Effect, look: AimLook): Effect => {
+  const { file, light: _l, ...rest } = e; void _l;
+  if (look === 'animation' && file) return { ...rest, file, id: AIM, lasting: true, alpha: 0.8 };
+  return { ...rest, id: AIM, lasting: true, ...(look === 'outline' ? { outline: true } : { alpha: 0.45 }) };
+};
 function blobUrl(read: (path: string) => Promise<ArrayBuffer | null>, path: string): Promise<string | null> {
   let p = blobs.get(path);
   if (!p) {
@@ -106,6 +116,19 @@ function drawnCanvas(e: Effect, w: number, h: number): HTMLCanvasElement {
   const c1 = e.colour, c2 = e.colour2 ?? e.colour;
   g.translate(cw / 2, ch / 2); g.scale(k, k);
   const glow = Math.max(w, h) * 0.03;
+  if (e.outline) {
+    // its edge, dashed, in its outer colour, over a faint wash of its inner one
+    g.beginPath();
+    if (e.shape === 'radius' || e.shape === 'emanation') g.arc(0, 0, Math.min(w, h) / 2, 0, Math.PI * 2);
+    else if (e.shape === 'cone') { g.moveTo(-w / 2, 0); g.lineTo(w / 2, -h / 2); g.lineTo(w / 2, h / 2); g.closePath(); }
+    else g.rect(-w / 2, -h / 2, w, h);
+    g.fillStyle = rgba(c1, 0.16); g.fill();
+    const lw = Math.max(3 / k, Math.max(w, h) * 0.012);
+    g.setLineDash([lw * 3, lw * 2]); g.lineJoin = 'round';
+    g.strokeStyle = 'rgba(0,0,0,0.55)'; g.lineWidth = lw * 1.8; g.stroke();     // a dark edge under it: seen on any floor
+    g.strokeStyle = rgba(c2, 1); g.lineWidth = lw; g.stroke();
+    return c;
+  }
   if (e.shape === 'radius' || e.shape === 'emanation') {
     const r = Math.min(w, h) / 2;
     const rg = g.createRadialGradient(0, 0, 0, 0, 0, r);
@@ -219,7 +242,12 @@ export class PixiPainter {
         probe.label = 'sfx-dm-probe';
         const remove = call<() => void>(this.renderer, 'addDmScreenOverlay', probe);
         if (typeof remove === 'function') { this.probe = probe; this.unprobe = remove; }
-        (root as unknown as { onRender: (() => void) | null }).onRender = () => this.cutOut(!this.probe || this.probe.visible !== false);
+        (root as unknown as { onRender: (() => void) | null }).onRender = () => {
+          const dm = !this.probe || this.probe.visible !== false;
+          this.cutOut(dm);
+          // where the DM is aiming: for the players' frame only (the DM has the aiming preview itself)
+          const aim = this.items.get(AIM); if (aim && this.probe) aim.node.visible = !dm;
+        };
       } catch { masked = false; this.cut = null; }
     }
     root.zIndex = masked ? 95 : -0.5;
@@ -261,10 +289,14 @@ export class PixiPainter {
   }
 
   /** Whether an effect is drawn here (the others are for the overlay: the one being placed). */
-  static wants(e: Effect): boolean { return e.id !== 'preview'; }
+  static wants(e: Effect): boolean { return e.id !== 'preview' && e.id !== AIM; }
 
   /** Draws the effects of map `map` as they are now; `out` are ending (fading). */
-  paint(effects: readonly Effect[], now: number, out: ReadonlySet<string>, map: string): void {
+  /**
+   * `aim`: where the DM is aiming a spell, shown to the players (when that's wanted) as the area's outline,
+   * drawn in its colours, before it is cast.
+   */
+  paint(effects: readonly Effect[], now: number, out: ReadonlySet<string>, map: string, aim: Effect | null = null, aimLook: AimLook = 'outline'): void {
     const root = this.layer(); if (!root) return;
     // the tokens to show through (all, for the DM; not hidden ones, for the players)
     if (this.cut) {
@@ -273,15 +305,16 @@ export class PixiPainter {
     }
     const keep = new Set<string>();
     let animating = false;
-    for (const e of effects) {
-      if (e.map !== map || !PixiPainter.wants(e)) continue;
+    const all = aim && aim.map === map ? [...effects, aimOf(aim, aimLook)] : effects;
+    for (const e of all) {
+      if (e.map !== map || !(PixiPainter.wants(e) || e.id === AIM)) continue;
       const s = this.world.scale(e.map); if (!s) continue;
       const tok = e.token ? this.world.token(e.map, e.token) : null;
       if (e.token && !tok) continue;
-      const look = [e.file ?? '', e.colour, e.colour2 ?? '', e.shape, e.closed ? 1 : 0, e.shape === 'wall' ? JSON.stringify(e.points ?? []) + (e.width ?? '') : ''].join('|');
+      const look = [e.file ?? '', e.colour, e.colour2 ?? '', e.shape, e.closed ? 1 : 0, e.outline ? 'o' : '', e.shape === 'wall' ? JSON.stringify(e.points ?? []) + (e.width ?? '') : ''].join('|');
       let it = this.items.get(e.id);
       if (it && it.look !== look) { this.drop(e.id); it = undefined; }
-      if (!it) { it = this.make(e, look); this.items.set(e.id, it); root.addChild(it.node); }
+      if (!it) { it = this.make(e, look); it.node.label = e.id === AIM ? AIM : 'sfx-effect'; this.items.set(e.id, it); root.addChild(it.node); }
       this.place(it, e, s, tok);
       // fading: in, out, and an instant effect's burst
       let a = e.alpha !== undefined && e.alpha < 1 ? Math.max(0.05, e.alpha) : 1;
@@ -308,7 +341,7 @@ export class PixiPainter {
     if (e.file) {
       const file = e.file;
       const isVideo = /\.(webm|mp4)$/i.test(file);
-      const feet = Number((/(\d+)\s*ft/i.exec(file) ?? [])[1] ?? 0) || 0;
+      const feet = fromFeet(Number((/(\d+)\s*ft/i.exec(file) ?? [])[1] ?? 0) || 0);
       const learn = (w: number, h: number, ms: number) => { if (w > 0 && h > 0) artInfo.set(file, { aspect: w / h, feet, duration: ms }); };
       if (isVideo) {
         const v = createEl('video');

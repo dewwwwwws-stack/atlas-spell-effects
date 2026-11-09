@@ -25,6 +25,8 @@ export interface Effect {
   blocks?: WallBlocks;
   /** Those Atlas walls' ids on the map. */
   wallIds?: string[];
+  /** Drawn as its edge only, dashed, over a faint fill (the players' view of where the DM is aiming). */
+  outline?: boolean;
   /** Centre (radius / cube at a point) or origin (cone, line, cube from the caster). */
   at: Point;
   /** Direction from the origin (radians), for cones, lines and cubes from the caster. */
@@ -149,7 +151,7 @@ export function boxOf(e: Effect, s: Scale, tokenAt?: TokenAt | null, art?: { asp
     }
     case 'line': {
       const len = e.size * ppf;
-      let h = (e.width ?? 5) * ppf;
+      let h = (e.width ?? s.feetPerCell) * ppf;
       if (art && art.aspect > 0) {
         // art made for N feet: its height in feet stays (a 60 ft ray stretched to 100 ft is as thick as before)
         const madeFor = art.feet > 0 ? art.feet : e.size;
@@ -171,7 +173,7 @@ export function wallPoints(e: Effect, tokenAt?: TokenAt | null): Point[] {
 
 /** How thick a wall is drawn (world units): its own thickness, but never too thin to see or grab. */
 export function wallThickness(e: Pick<Effect, 'width'>, s: Scale, art: boolean): number {
-  return Math.max(e.width ?? 1, art ? 5 : 2.5) * pxPerFoot(s);
+  return Math.max(e.width ?? s.feetPerCell / 5, art ? s.feetPerCell : s.feetPerCell / 2) * pxPerFoot(s);
 }
 
 /** A wall's stretches as boxes (centre, length, thickness, turn). */
@@ -266,19 +268,20 @@ export function controlsOf(e: Effect, s: Scale, tokenAt: TokenAt | null, b: Box,
   return { outline: { poly, closed: true }, handles: h, badge: { x: right + 50 * px, y: b.cy, text: size(e.size) } };
 }
 
-/** The size badge's − and +: 5 ft less or more (never under 5 ft; an aura on a creature: from 0). */
-export function stepSize(e: Effect, by: number): void {
-  const min = e.shape === 'emanation' ? 0 : 5;
-  e.size = Math.max(min, Math.round((e.size + by) / 5) * 5);
+/** The size badge's − and +: `by` squares less or more, `step` game units each (never under one square; an aura on a creature: from 0). */
+export function stepSize(e: Effect, by: number, step = 5): void {
+  const min = e.shape === 'emanation' ? 0 : step;
+  e.size = Math.max(min, Math.round((e.size + by * step) / step) * step);
 }
 
 /**
  * A handle dragged to world point `p`: the effect changes (size, length, width, turn, a wall's corner).
- * `snap`: sizes in 5 ft steps, turns in 15° steps, wall corners on grid corners (`corner`).
+ * `snap`: sizes in steps of one square, turns in 15° steps, wall corners on grid corners (`corner`).
  */
 export function dragHandle(e: Effect, id: string, p: Point, s: Scale, tokenAt: TokenAt | null, b: Box, snap: boolean, corner: (p: Point) => Point, px = 0): void {
   const ppf = pxPerFoot(s);
-  const feet = (px: number) => { const f = px / ppf; return Math.max(snap ? 5 : 1, snap ? Math.round(f / 5) * 5 : Math.round(f * 2) / 2); };
+  const sq = s.feetPerCell > 0 ? s.feetPerCell : 5;
+  const feet = (px: number) => { const f = px / ppf; return Math.max(snap ? sq : sq / 5, snap ? Math.round(f / sq) * sq : Math.round(f * 10 / sq) * sq / 10); };
   const turnStep = (a: number) => (snap ? Math.round(a / (Math.PI / 12)) * (Math.PI / 12) : a);
   const tokRot = e.token && e.turn ? tokenAt?.rot ?? 0 : 0;
   const place = placeOf(e, tokenAt);
@@ -311,7 +314,7 @@ export function dragHandle(e: Effect, id: string, p: Point, s: Scale, tokenAt: T
   if (id === 'chev-l' || id === 'chev-r') {
     const half = Math.abs(p.x - b.cx) - 14 * px;
     if (e.shape === 'cube') e.size = feet(2 * half);
-    else if (e.shape === 'emanation') { const f = (half - (tokenAt?.r ?? s.cell / 2)) / ppf; e.size = Math.max(0, snap ? Math.round(f / 5) * 5 : Math.round(f * 2) / 2); }
+    else if (e.shape === 'emanation') { const f = (half - (tokenAt?.r ?? s.cell / 2)) / ppf; e.size = Math.max(0, snap ? Math.round(f / sq) * sq : Math.round(f * 10 / sq) * sq / 10); }
     else e.size = feet(half);
     return;
   }

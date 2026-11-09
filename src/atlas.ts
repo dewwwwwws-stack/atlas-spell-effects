@@ -17,6 +17,8 @@ export interface AtlasWallInput { type: 'solid'; p1: Point; p2: Point; blocks?: 
 export interface AtlasToken {
   x: number; y: number; size?: number; rotation?: number; name?: string; label?: string; offMap?: boolean;
   isHidden?: boolean; side?: string; vision?: { enabled?: boolean }; statblockName?: string;
+  /** The statblock note it is linked to. */
+  statblockPath?: string;
   [field: string]: unknown;
 }
 
@@ -86,7 +88,14 @@ export interface AtlasView extends View {
 export interface PlayersView { view?: { left: number; top: number; right: number; bottom: number }; rotation?: number }
 
 /** The map's measurement, as Atlas's drag ruler reads it. */
-export interface Measurement { unitDistance?: number; unitType?: string }
+export interface Measurement {
+  unitDistance?: number; unitType?: string;
+  /** Game units one rules square spans (the collection's, whatever the scene sets). */
+  ruleDistance?: number;
+  /** The game system's range bands (Daggerheart, Shadowdark), and its cone's angle. */
+  rangeBands?: readonly { name: string; maxSquares: number }[];
+  coneAngle?: number;
+}
 
 /** What the add-on reads of one Atlas map tab. */
 export interface Tab { leaf: WorkspaceLeaf; view: AtlasView; store: AtlasStore; renderer: unknown; viewport: AtlasViewport; canvas: HTMLCanvasElement }
