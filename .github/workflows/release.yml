@@ -1,0 +1,66 @@
+name: Release
+# Every change to main is checked for a new version (package.json's "version"). When there is one, this:
+#   1. sets manifest.json's version (and minAppVersion, from versions.json) to match, and commits it,
+#   2. builds main.js,
+#   3. makes the GitHub release with that version as its tag, main.js, manifest.json and styles.css attached
+#      (as Obsidian needs), and release-notes.md as its description.
+# So an update is: upload the changed files, commit. Nothing else.
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: release
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: The version
+        id: v
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/$VERSION" >/dev/null; then
+            echo "Version $VERSION is already released: nothing to do."
+            echo "new=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "new=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Bring manifest.json up to date
+        if: steps.v.outputs.new == 'true'
+        run: |
+          node -e "
+            const fs = require('fs');
+            const v = '${{ steps.v.outputs.version }}';
+            const m = JSON.parse(fs.readFileSync('manifest.json', 'utf8'));
+            const vs = fs.existsSync('versions.json') ? JSON.parse(fs.readFileSync('versions.json', 'utf8')) : {};
+            m.version = v;
+            if (vs[v]) m.minAppVersion = vs[v];
+            fs.writeFileSync('manifest.json', JSON.stringify(m, null, 2) + '\n');
+          "
+          if ! git diff --quiet manifest.json; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "Version ${{ steps.v.outputs.version }}" manifest.json
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
+      - name: Build
+        if: steps.v.outputs.new == 'true'
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+      - name: Release
+        if: steps.v.outputs.new == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V="${{ steps.v.outputs.version }}"
+          if [ -f release-notes.md ]; then NOTES=(--notes-file release-notes.md); else NOTES=(--generate-notes); fi
+          gh release create "$V" main.js manifest.json styles.css --title "$V" --target "$(git rev-parse HEAD)" "${NOTES[@]}"
