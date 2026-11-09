@@ -1,7 +1,7 @@
 /* Atlas Spell Effects */
 
 /* effects on the map */
-.sfx-layer{position:fixed;left:50%;top:50%;pointer-events:none;overflow:hidden;z-index:5}
+.sfx-layer{position:fixed;left:50%;top:50%;pointer-events:none;overflow:hidden;z-index:5;contain:layout paint}
 .sfx{position:absolute;left:0;top:0;pointer-events:none;transform-origin:50% 50%;will-change:transform;transition:opacity 450ms ease;opacity:var(--sfx-alpha,1)}
 .sfx.sfx-out{opacity:0}
 .sfx>video,.sfx>img{width:100%;height:100%;display:block;object-fit:fill}
@@ -18,7 +18,7 @@
 .sfx-cone.sfx-instant .sfx-drawn,.sfx-line.sfx-instant .sfx-drawn{transform-origin:0 50%;animation-name:sfx-sweep}
 @keyframes sfx-burst{0%{transform:scale(.15);opacity:0}18%{opacity:1}55%{transform:scale(1);opacity:.95}100%{transform:scale(1.04);opacity:0}}
 @keyframes sfx-sweep{0%{transform:scaleX(.05);opacity:0}25%{opacity:1}55%{transform:scaleX(1);opacity:.95}100%{transform:scaleX(1);opacity:0}}
-@keyframes sfx-pulse{0%,100%{opacity:.75;filter:brightness(1)}50%{opacity:1;filter:brightness(1.35)}}
+@keyframes sfx-pulse{0%,100%{opacity:.78}50%{opacity:1}}
 .sfx-preview .sfx-drawn{animation:none;opacity:.55;outline:2px dashed var(--c)}
 .sfx.sfx-wall{width:0;height:0;transform:none;overflow:visible}
 .sfx-piece{position:absolute;left:0;top:0;transform-origin:50% 50%}
@@ -30,12 +30,19 @@ svg.sfx-path path{fill:none;stroke:var(--c2);stroke-opacity:.7;stroke-linecap:ro
 svg.sfx-path path.sfx-core{stroke:var(--c);stroke-opacity:.85;filter:none}
 .sfx-preview svg.sfx-path path{stroke-opacity:.45;stroke-dasharray:6 6}
 .sfx-sel{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;z-index:2}
-.sfx-sel svg{position:absolute;left:0;top:0;width:1px;height:1px;overflow:visible}
-.sfx-sel polygon{fill:none;stroke:#fff;stroke-width:1.5;stroke-dasharray:5 4;filter:drop-shadow(0 0 1px #000)}
-.sfx-sel line{stroke:#fff;stroke-width:1.5;filter:drop-shadow(0 0 1px #000)}
-.sfx-handle{position:absolute;left:0;top:0;width:12px;height:12px;margin:-6px 0 0 -6px;background:#fff;border:2px solid #4a8cff;border-radius:2px;box-shadow:0 0 2px #000;pointer-events:auto;touch-action:none}
-.sfx-handle[data-handle=turn]{border-radius:50%;background:#4a8cff;border-color:#fff}
-.sfx-handle[data-handle^=p]{border-radius:50%}
+.sfx-sel>svg{position:absolute;left:0;top:0;width:1px;height:1px;overflow:visible}
+.sfx-outline{fill:none;stroke:var(--interactive-accent,#7f6df2);stroke-width:2.5;stroke-linejoin:round;filter:drop-shadow(0 0 2px rgba(0,0,0,.6))}
+.sfx-ctl{position:absolute;left:0;top:0;width:26px;height:26px;margin:-13px 0 0 -13px;box-sizing:border-box;border-radius:50%;background:#2a2a2a;color:#fff;border:.5px solid rgba(255,255,255,.4);display:flex;align-items:center;justify-content:center;pointer-events:auto;touch-action:none;box-shadow:0 1px 3px rgba(0,0,0,.45)}
+.sfx-ctl:hover{border-color:rgba(255,255,255,.7);background:#333}
+.sfx-ctl>svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+.sfx-ctl.sfx-dot{width:13px;height:13px;margin:-6.5px 0 0 -6.5px;background:var(--interactive-accent,#7f6df2);border:2px solid #fff}
+.sfx-sizebadge{position:absolute;left:0;top:0;margin-top:-17px;display:flex;align-items:center;gap:4px;pointer-events:auto}
+.sfx-size{white-space:nowrap;min-width:30px;height:30px;padding:0 9px;box-sizing:border-box;border-radius:15px;background:#2a2a2a;color:#fff;border:2px solid rgba(255,255,255,.55);font:600 12px/26px var(--font-interface,system-ui);text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.45)}
+.sfx-steps{display:flex;flex-direction:column;gap:3px}
+.sfx-steps button{width:17px;height:17px;min-height:0;padding:0;box-sizing:border-box;border-radius:50%;background:#2a2a2a;border:.5px solid rgba(255,255,255,.4);font:700 13px/1 system-ui;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,.45)}
+.sfx-steps .sfx-plus{color:#4cd964}
+.sfx-steps .sfx-minus{color:#ff5a5a}
+body.theme-light .sfx-ctl:not(.sfx-dot),body.theme-light .sfx-size,body.theme-light .sfx-steps button{background:#e3e3e3;color:#000;border-color:rgba(0,0,0,.3)}
 
 /* the toolbar */
 .sfx-tool{display:flex;align-items:center}.sfx-tool .sfx-cast{position:relative}

@@ -135,23 +135,35 @@ Lasting effects can give off real Atlas light, or spread Atlas's magical darknes
 
 - The cast window reads it from the spell: Light, Daylight, Moonbeam, Flaming Sphere and the like give light; Darkness, Hunger of Hadar, Maddening Darkness and the like spread darkness. Change it under **Light** (None / Gives light / Magical darkness), with bright and dim feet and a colour for light.
 - Darkness covers the effect's area and grows or shrinks with it.
-- The light moves with the effect: drag it, or let it ride on a token.
+- The light moves with the effect: drag it, or let it ride on a token. A wall glows along each of its stretches,
+  and a line along its whole length.
+- Ordinary lights follow live as you drag. Darkness, and lights over a whole area (walls, lines, cubes), move once
+  you let go: Atlas works those out again in full each time, so moving them live would slow it down.
 - Ending the effect removes its light. If you delete the light in Atlas yourself, the add-on leaves it deleted.
 - The add-on's light changes aren't undo steps, so Ctrl+Z stays for your own edits.
 - Scene lighting must be on in Atlas to see them.
 
-## Picking, stretching and turning
-Click an effect on your map to pick it. A frame with handles appears on your screen only, never on the TV:
-- **Spheres, auras and cubes:** drag a side or corner to resize from the middle. Drag the round handle above to
-  spin it, which turns its animation.
-- **Cones and lines:** drag the far end to make it longer and aim it. The round handle past the end turns it about
-  its point without changing its length. A line's sides make it wider.
-- **Walls:** drag any corner to reshape the wall. Its Atlas walls follow.
-- With snapping on, sizes go in 5 ft steps, turns in 15° steps, and wall corners land on grid corners. Hold Alt
-  for the other way.
-- **Esc** lets go. **Delete** ends the picked effect. Drag the effect itself to move it.
+## Picking and adjusting
+Click an effect on your map to pick it. It shows Atlas's own controls for a picked token, on your screen only (never
+on the TV):
+- an **outline** in your accent colour, round its actual shape;
+- the round **rotate** button: drag it to turn the effect (a cone or line turns about its point, keeping its length);
+- **‹ ›**: drag them to change the size (a cone or line has › at its far end, for its length);
+- the **size** in feet, with **+** and **−** for 5 ft more or less;
+- on a wall, a **dot on each corner**: drag one to reshape the wall (its Atlas walls and lights follow).
 
-Handles work on effects attached to a token too, such as a beholder's antimagic cone. It stays attached.
+With snapping on, sizes go in 5 ft steps, turns in 15° steps, and wall corners land on grid corners. Hold Alt for the
+other way. Drag the effect itself to move it. **Esc** lets go, and **Delete** ends what's picked. Effects on a token
+(a beholder's antimagic cone) keep their token.
+
+**Several at once:** drag Atlas's selection box (or lasso) across the map and the effects inside it are picked along
+with the tokens. Shift-click adds or removes one. Drag one of them and they all move. Delete ends them all.
+
+## Undo and redo
+**Ctrl+Z** undoes casting, ending, moving, resizing, turning and editing effects, and **Ctrl+Y** or **Ctrl+Shift+Z**
+redoes. It's interleaved with Atlas's own history: whichever was done last is undone first, whether that's an effect
+or something in Atlas. Atlas's Undo and Redo buttons work the same way. Everything changed in the double-click editor,
+from opening it to closing it, is one step.
 
 ## Inner and outer colours
 Effects drawn without an animation have an **Inner** colour (the heart) and an **Outer** colour (the edge and glow),
@@ -166,9 +178,11 @@ Set a spell up as you like it, then press **Save as preset…** in the cast wind
 - in Ctrl+P → **Cast a preset…**.
 
 ## Casting from Atlas statblocks
-In Atlas's statblocks (Ctrl / ⌘ + hover a token, or a statblock note), the names of spells this add-on can cast
-are underlined. That means spells with an area or saved defaults, matched by name to your spells and presets.
-Only the spell list and Spellcasting text count, so "dim light" in a description isn't a link.
+In Atlas's statblocks (Ctrl / ⌘ + hover a token, the side panel, or a statblock note), the names of spells this
+add-on can cast are highlighted. That means spells with an area or saved defaults, matched by name to your spells and presets.
+Only spell lists, Spellcasting text, spell cards (*Casting Time… Range… Components…*), and spell names in bold or
+italics count, so "dim light" in a description isn't a link. A statblock opened from a token (Ctrl / ⌘ + hover) knows
+its creature. In the side panel, the token selected on the map is the caster.
 - **Click** a name to cast it straight away with its saved defaults or presets. If the statblock was opened from a
   token on the map, that creature is the caster: an aura lands on it at once, and a cone or line starts from it,
   so you just aim.

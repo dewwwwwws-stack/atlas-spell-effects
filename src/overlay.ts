@@ -1,7 +1,7 @@
 // Draws effects over a map: the DM's Atlas view and the player window each get a layer laid exactly over the
 // map canvas (turned with the TV), and every effect is an element placed in it from its box in the world.
 // Animations are the vault's files (video or image); without one, the add-on draws the shape itself.
-import { boxOf, wallPieces, wallPoints, wallThickness, type Handle, type Point, type Box, type Effect, type Scale, type TokenAt } from './geometry';
+import { boxOf, wallPieces, wallPoints, wallThickness, type Controls, type Point, type Box, type Effect, type Scale, type TokenAt } from './geometry';
 
 export interface Mapping {
   /** A world point in the layer's pixels. */
@@ -28,6 +28,12 @@ export interface World {
   /** The vault file's address for a video or image element. */
   url(path: string): string | null;
 }
+
+/** A style written only when it changed. */
+export function setVar(el: HTMLElement | SVGElement, prop: string, value: string): void { if (el.style.getPropertyValue(prop) !== value) el.style.setProperty(prop, value); }
+
+/** Where each element was last put (so an unchanged one isn't written again). */
+const placed = new WeakMap<HTMLElement, string>();
 
 /** What is known of an animation once loaded (shared by every surface). */
 export const artInfo = new Map<string, { aspect: number; feet: number; duration: number }>();
@@ -60,7 +66,7 @@ export class Painter {
         if (!el) { const made = this.make(e, layer); if (!made) continue; el = made; this.els.set(e.id, el); }
         if (e.shape === 'wall') { if (e.file && e.id !== 'preview') this.placeWall(el, e, wallPieces(e, s, tok, true), m, s, info, wallPoints(e, tok)); else this.drawWall(el, e, s, tok, m); }
         else this.place(el, boxOf(e, s, tok, info ? { aspect: info.aspect, feet: info.feet } : null), m, s);
-        el.classList.toggle('sfx-out', out.has(e.id));
+        if (el.classList.contains('sfx-out') !== out.has(e.id)) el.classList.toggle('sfx-out', out.has(e.id));
         keep.add(e.id);
       }
     }
@@ -135,9 +141,9 @@ export class Painter {
     const d = pts.map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ') + (e.closed && pts.length > 2 ? ' Z' : '');
     const [path, core] = [...svg.children] as SVGPathElement[];
     const w = wallThickness(e, s, false) * m.scale;
-    path!.setAttribute('d', d); path!.style.strokeWidth = `${w}px`;
-    core!.setAttribute('d', d); core!.style.strokeWidth = `${Math.max(1, w * 0.35)}px`;
-    el.style.setProperty('--u', `${Math.max(4, s.cell * m.scale * 0.5)}px`);
+    if (path!.getAttribute('d') !== d) { path!.setAttribute('d', d); core!.setAttribute('d', d); }
+    setVar(path!, 'stroke-width', `${w.toFixed(1)}px`); setVar(core!, 'stroke-width', `${Math.max(1, w * 0.35).toFixed(1)}px`);
+    setVar(el, '--u', `${Math.max(4, s.cell * m.scale * 0.5)}px`);
   }
 
   /**
@@ -180,14 +186,18 @@ export class Painter {
       // the copies, side by side, overlapping
       const wpx = b.w * m.scale;
       const len = repeat > 1 ? wpx / (repeat - (repeat - 1) * OVER) : wpx;
-      [...piece.children].forEach((k, n) => { const ks = (k as HTMLElement).style; ks.left = `${n * (1 - OVER) * len}px`; ks.width = `${len}px`; });
+      [...piece.children].forEach((k, n) => { setVar(k as HTMLElement, 'left', `${(n * (1 - OVER) * len).toFixed(1)}px`); setVar(k as HTMLElement, 'width', `${len.toFixed(1)}px`); });
     });
-    el.style.setProperty('--u', `${Math.max(4, s.cell * m.scale * 0.5)}px`);
+    setVar(el, '--u', `${Math.max(4, s.cell * m.scale * 0.5)}px`);
   }
 
+  /** Where an element goes; written only when it changed (each write makes the browser work out styles again). */
   private place(el: HTMLElement, b: Box, m: Mapping, s: Scale): void {
     const c = m.toLocal(b.cx, b.cy);
     const w = b.w * m.scale, h = b.h * m.scale;
+    const key = `${w.toFixed(1)}|${h.toFixed(1)}|${(c.x - w / 2).toFixed(1)}|${(c.y - h / 2).toFixed(1)}|${b.rot.toFixed(4)}|${(s.cell * m.scale).toFixed(1)}`;
+    if (placed.get(el) === key) return;
+    placed.set(el, key);
     el.style.width = `${w}px`; el.style.height = `${h}px`;
     el.style.transform = `translate(${c.x - w / 2}px, ${c.y - h / 2}px) rotate(${b.rot}rad)`;
     el.style.setProperty('--u', `${Math.max(4, s.cell * m.scale * 0.5)}px`);
@@ -202,37 +212,77 @@ export class Painter {
   }
 }
 
-/** The frame and handles of the effect picked on the map (the DM's view only); none: taken away. */
-export function paintHandles(layer: HTMLElement | null, m: Mapping | null, sel: { frame: Point[]; handles: Handle[] } | null): void {
+/** Lucide's rotate and chevron glyphs, as Atlas's own controls use. */
+const ICON: Record<string, string[]> = {
+  turn: ['M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8', 'M21 3v5h-5'],
+  left: ['m15 18-6-6 6-6'],
+  right: ['m9 18 6-6-6-6'],
+};
+
+/**
+ * The picked effects on the DM's view, as Atlas shows a picked token: an outline in the accent colour, and for
+ * one effect alone its controls (rotate, ‹ › for size, the size badge with − and +, a dot on each wall corner).
+ * Written only when something changed. None: taken away.
+ */
+export function paintHandles(layer: HTMLElement | null, m: Mapping | null, picked: Controls[] | null): void {
   const doc = layer?.ownerDocument;
   let box = layer?.querySelector(':scope > .sfx-sel') as HTMLElement | null;
-  if (!layer || !m || !sel || !doc) { box?.remove(); return; }
-  const NS = 'http://www.w3.org/2000/svg';
-  if (!box) {
-    box = doc.createElement('div'); box.className = 'sfx-sel';
-    const svg = doc.createElementNS(NS, 'svg'); svg.appendChild(doc.createElementNS(NS, 'polygon')); svg.appendChild(doc.createElementNS(NS, 'line'));
-    box.appendChild(svg); layer.prepend(box);                  // first, but drawn over the effects
-  }
-  const svg = box.firstElementChild as SVGSVGElement;
-  const [poly, stalk] = [...svg.children] as SVGElement[];
+  if (!layer || !m || !picked?.length || !doc) { box?.remove(); return; }
   const loc = (p: Point) => m.toLocal(p.x, p.y);
-  poly!.setAttribute('points', sel.frame.map((p) => { const q = loc(p); return `${q.x.toFixed(1)},${q.y.toFixed(1)}`; }).join(' '));
-  // a stalk from the frame to the turn handle
-  const turn = sel.handles.find((h) => h.id === 'turn');
-  if (turn && sel.frame.length === 4) {
-    const t = loc(turn), f = sel.frame;
-    const near = [0, 1, 2, 3].map((i) => { const a = f[i]!, b = f[(i + 1) % 4]!; return loc({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }); }).sort((a, b) => Math.hypot(a.x - t.x, a.y - t.y) - Math.hypot(b.x - t.x, b.y - t.y))[0]!;
-    stalk!.setAttribute('x1', String(near.x)); stalk!.setAttribute('y1', String(near.y)); stalk!.setAttribute('x2', String(t.x)); stalk!.setAttribute('y2', String(t.y));
-  } else stalk!.setAttribute('x1', 'NaN');
-  const els = [...box.querySelectorAll(':scope > .sfx-handle')] as HTMLElement[];
-  while (els.length > sel.handles.length) els.pop()!.remove();
-  sel.handles.forEach((h, i) => {
-    let el = els[i];
-    if (!el) { el = doc.createElement('div'); el.className = 'sfx-handle'; box!.appendChild(el); }
+  const f = (n: number) => n.toFixed(1);
+  const one = picked.length === 1 ? picked[0]! : null;
+  const key = JSON.stringify(picked.map((c) => [c.outline, c.handles.map((h) => [h.id, f(h.x), f(h.y)]), c.badge])) + f(m.scale) + JSON.stringify(loc({ x: 0, y: 0 }));
+  if (box && box.dataset.key === key) return;
+  const NS = 'http://www.w3.org/2000/svg';
+  if (!box) { box = doc.createElement('div'); box.className = 'sfx-sel'; layer.prepend(box); }
+  box.dataset.key = key;
+  box.replaceChildren();
+  // outlines
+  const svg = doc.createElementNS(NS, 'svg');
+  for (const c of picked) {
+    const o = c.outline;
+    let el: SVGElement;
+    if (o.circle) {
+      const q = loc({ x: o.circle.cx, y: o.circle.cy });
+      el = doc.createElementNS(NS, 'circle');
+      el.setAttribute('cx', f(q.x)); el.setAttribute('cy', f(q.y)); el.setAttribute('r', f(o.circle.r * m.scale));
+    } else {
+      el = doc.createElementNS(NS, o.closed ? 'polygon' : 'polyline');
+      el.setAttribute('points', (o.poly ?? []).map((p) => { const q = loc(p); return `${f(q.x)},${f(q.y)}`; }).join(' '));
+    }
+    el.setAttribute('class', 'sfx-outline');
+    svg.appendChild(el);
+  }
+  box.appendChild(svg);
+  if (!one) return;
+  // the controls of one picked effect
+  for (const h of one.handles) {
     const q = loc(h);
+    const el = doc.createElement('div');
+    const dot = h.id.startsWith('p');
+    el.className = dot ? 'sfx-ctl sfx-dot' : 'sfx-ctl';
     el.dataset.handle = h.id; el.style.cursor = h.cursor;
-    el.style.transform = `translate(${q.x}px, ${q.y}px)`;
-  });
+    el.style.transform = `translate(${f(q.x)}px, ${f(q.y)}px)`;
+    if (!dot) {
+      const icon = doc.createElementNS(NS, 'svg'); icon.setAttribute('viewBox', '0 0 24 24');
+      for (const d of ICON[h.id === 'turn' ? 'turn' : h.id === 'chev-l' ? 'left' : 'right']!) { const pth = doc.createElementNS(NS, 'path'); pth.setAttribute('d', d); icon.appendChild(pth); }
+      el.appendChild(icon);
+      el.title = h.id === 'turn' ? 'Drag to turn' : 'Drag to change the size';
+    } else el.title = 'Drag this corner';
+    box.appendChild(el);
+  }
+  if (one.badge) {
+    const q = loc(one.badge);
+    const b = doc.createElement('div'); b.className = 'sfx-sizebadge';
+    b.style.transform = `translate(${f(q.x)}px, ${f(q.y)}px)`;
+    const v = doc.createElement('div'); v.className = 'sfx-size'; v.textContent = one.badge.text; v.title = `${one.badge.text} feet`; b.appendChild(v);
+    const col = doc.createElement('div'); col.className = 'sfx-steps';
+    for (const [cls, by, t] of [['sfx-plus', 5, '+'], ['sfx-minus', -5, '−']] as const) {
+      const btn = doc.createElement('button'); btn.className = cls; btn.dataset.step = String(by); btn.textContent = t; btn.title = by > 0 ? '5 ft more' : '5 ft less'; col.appendChild(btn);
+    }
+    b.appendChild(col);
+    box.appendChild(b);
+  }
 }
 
 /** How long an instant effect lasts: its video's length, or the drawn / image time. */
