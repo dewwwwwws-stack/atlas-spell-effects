@@ -12,6 +12,8 @@ export interface Area {
   size: number;
   /** Line width in feet; a wall's thickness. */
   width?: number;
+  /** A cone's angle at its point, in degrees (missing: the default in the settings). */
+  angle?: number;
   /** A wall that can also be a ring: its diameter in feet. */
   ring?: number;
   /** The wall is made as that ring. */

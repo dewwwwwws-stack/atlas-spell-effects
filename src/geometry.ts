@@ -15,6 +15,8 @@ export interface Effect {
   size: number;
   /** Line width, feet; a wall's thickness. */
   width?: number;
+  /** A cone's angle at its point, degrees (missing: 53.13°, as wide at its end as it is long). */
+  angle?: number;
   /** A wall's corners, from `at` (world units; in the token's own turn when it turns with one). */
   points?: Point[];
   /** The wall closes back on itself (a ring). */
@@ -53,6 +55,11 @@ export interface Effect {
   /** When it was cast (ms). */
   started: number;
 }
+
+/** The usual cone (5e's): as wide at its end as it is long. */
+export const CONE_ANGLE = 53.13;
+/** A cone's width at its far end, from its length and its angle (degrees). */
+export const coneWidth = (len: number, angle?: number): number => 2 * len * Math.tan(((Math.min(170, Math.max(1, angle ?? CONE_ANGLE)) / 2) * Math.PI) / 180);
 
 export interface Box { cx: number; cy: number; w: number; h: number; rot: number }
 
@@ -128,9 +135,9 @@ export function boxOf(e: Effect, s: Scale, tokenAt?: TokenAt | null, art?: { asp
       return { cx: at.x + Math.cos(dir) * off, cy: at.y + Math.sin(dir) * off, w: side, h: side, rot: dir };
     }
     case 'cone': {
-      // the cone's point at the origin, as wide at its end as it is long
+      // the cone's point at the origin, as wide at its end as its angle makes it
       const len = e.size * ppf;
-      return { cx: at.x + Math.cos(dir) * len / 2, cy: at.y + Math.sin(dir) * len / 2, w: len, h: len, rot: dir };
+      return { cx: at.x + Math.cos(dir) * len / 2, cy: at.y + Math.sin(dir) * len / 2, w: len, h: coneWidth(len, e.angle), rot: dir };
     }
     case 'wall': {
       // all of it: its corners and its thickness

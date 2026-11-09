@@ -52,7 +52,7 @@ export function placedLight(e: Effect, light: EffectLight, box: Box, tokenAt?: T
   if (e.shape === 'cone') {
     // from its point, the way it faces (Atlas: degrees, 0 up, 90 right), as wide as a cone (about 53°)
     const deg = ((place.dir ?? 0) * 180) / Math.PI + 90;
-    return { x: place.at.x, y: place.at.y, rotation: ((deg % 360) + 360) % 360, emission: { ...emission, angle: 53 } };
+    return { x: place.at.x, y: place.at.y, rotation: ((deg % 360) + 360) % 360, emission: { ...emission, angle: Math.round(e.angle ?? 53) } };
   }
   if (e.shape === 'line') {
     // a line's light shines from where it starts (Sunbeam's mote in your hand)
@@ -75,6 +75,15 @@ export function placedLights(e: Effect, light: EffectLight, box: Box, tokenAt: T
   if (e.shape !== 'wall' && e.shape !== 'line') return [placedLight(e, light, box, tokenAt, ppf)];
   const one = placedLight({ ...e, shape: 'radius' }, light, box, tokenAt, ppf);
   const along = e.shape === 'wall' ? pieces : [box];
+  // a wall of light is one Atlas light, the shape of the whole wall: one light to work out, not one a piece
+  if (e.shape === 'wall' && light.mode !== 'darkness' && pieces.length) {
+    const band = wallBand(pieces, Math.max(pieces[0]!.h, ppf || 1) / 2);
+    if (band.length >= 3) {
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (const q of band) { x0 = Math.min(x0, q.x); y0 = Math.min(y0, q.y); x1 = Math.max(x1, q.x); y1 = Math.max(y1, q.y); }
+      return [{ x: (x0 + x1) / 2, y: (y0 + y1) / 2, area: band, emission: { ...one.emission, bright: Math.max(0, light.bright), dim: Math.max(light.bright, light.dim, 0) } }];
+    }
+  }
   return along.map((b) => {
     if (light.mode === 'darkness') return { x: b.cx, y: b.cy, emission: { ...one.emission, dim: Math.max(1, Math.round(b.w / 2 / (ppf || 14))) } };
     const c = Math.cos(b.rot), s = Math.sin(b.rot), hw = b.w / 2, hh = Math.max(b.h, ppf || 1) / 2;
@@ -85,3 +94,39 @@ export function placedLights(e: Effect, light: EffectLight, box: Box, tokenAt: T
 
 /** A light as a key: when it changes, Atlas's light is brought up to date. */
 export const lightKey = (p: PlacedLight): string => JSON.stringify([Math.round(p.x), Math.round(p.y), p.rotation === undefined ? null : Math.round(p.rotation), p.area?.map((q) => [Math.round(q.x), Math.round(q.y)]) ?? null, p.emission]);
+
+/**
+ * The outline of a wall `hh` either side of its middle, from its pieces in order. A closed wall's outline goes
+ * round its outside one way and its inside the other, joined by a seam of no width: Atlas fills an outline by
+ * winding, so the middle stays unlit.
+ */
+export function wallBand(pieces: readonly Box[], hh: number): { x: number; y: number }[] {
+  const pts: { x: number; y: number }[] = [];
+  for (const b of pieces) {
+    const dx = Math.cos(b.rot) * b.w / 2, dy = Math.sin(b.rot) * b.w / 2;
+    const a = { x: b.cx - dx, y: b.cy - dy }, z = { x: b.cx + dx, y: b.cy + dy };
+    const last = pts[pts.length - 1];
+    if (!last || Math.hypot(last.x - a.x, last.y - a.y) > 1) pts.push(a);
+    pts.push(z);
+  }
+  const closed = pts.length > 3 && Math.hypot(pts[0]!.x - pts[pts.length - 1]!.x, pts[0]!.y - pts[pts.length - 1]!.y) <= 1;
+  if (closed) pts.pop();
+  const n = pts.length; if (n < 2) return [];
+  const dir = (i: number, j: number) => { const d = Math.hypot(pts[j]!.x - pts[i]!.x, pts[j]!.y - pts[i]!.y) || 1; return { x: (pts[j]!.x - pts[i]!.x) / d, y: (pts[j]!.y - pts[i]!.y) / d }; };
+  const left: { x: number; y: number }[] = [], right: { x: number; y: number }[] = [];
+  for (let i = 0; i < n; i++) {
+    const prev = closed || i > 0 ? dir((i - 1 + n) % n, i) : null;
+    const next = closed || i < n - 1 ? dir(i, (i + 1) % n) : null;
+    const t = prev && next ? { x: prev.x + next.x, y: prev.y + next.y } : (prev ?? next)!;
+    const tl = Math.hypot(t.x, t.y) || 1;
+    const nx = -t.y / tl, ny = t.x / tl;
+    // the corner's mitre: further out the sharper the turn, never more than three times as far
+    const ref = next ?? prev!;
+    const k = Math.min(3, 1 / Math.max(1 / 3, Math.abs(nx * -ref.y + ny * ref.x)));
+    const p = pts[i]!;
+    left.push({ x: p.x + nx * hh * k, y: p.y + ny * hh * k });
+    right.push({ x: p.x - nx * hh * k, y: p.y - ny * hh * k });
+  }
+  if (!closed) return [...left, ...right.reverse()];
+  return [...left, left[0]!, right[0]!, ...right.slice(1).reverse(), right[0]!];
+}

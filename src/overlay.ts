@@ -1,7 +1,9 @@
 // Draws effects over a map: the DM's Atlas view and the player window each get a layer laid exactly over the
 // map canvas (turned with the TV), and every effect is an element placed in it from its box in the world.
 // Animations are the vault's files (video or image); without one, the add-on draws the shape itself.
-import { boxOf, wallPieces, wallPoints, wallThickness, type Controls, type Point, type Box, type Effect, type Scale, type TokenAt } from './geometry';
+import { boxOf, coneWidth, wallPieces, wallPoints, wallThickness, type Controls, type Point, type Box, type Effect, type Scale, type TokenAt } from './geometry';
+import type { Shape } from './areas';
+import { fitOf, type Trim } from './trim';
 
 export interface Mapping {
   /** A world point in the layer's pixels. */
@@ -29,6 +31,8 @@ export interface World {
   token(map: string, id: string): TokenAt | null;
   /** The vault file's address for a video or image element. */
   url(path: string): string | null;
+  /** Where an animation's picture really is in its frame, once it has been looked at. */
+  trim(path: string): Trim | null;
   /** The tokens on a map (for the players: only their own, never hidden ones), to show through lasting effects. */
   tokens(map: string, players: boolean): TokenAt[];
 }
@@ -80,7 +84,7 @@ export class Painter {
         let el = this.els.get(e.id);
         if (!el) { const made = this.make(e, e.lasting && e.id !== 'preview' ? this.under! : layer); if (!made) continue; el = made; this.els.set(e.id, el); }
         if (e.shape === 'wall') { if (e.file && e.id !== 'preview') this.placeWall(el, e, wallPieces(e, s, tok, true), m, s, info, wallPoints(e, tok)); else this.drawWall(el, e, s, tok, m); }
-        else this.place(el, boxOf(e, s, tok, info ? { aspect: info.aspect, feet: info.feet } : null), m, s);
+        else { this.place(el, boxOf(e, s, tok, info ? { aspect: info.aspect, feet: info.feet } : null), m, s); this.fit(el, e); }
         if (el.classList.contains('sfx-out') !== out.has(e.id)) el.classList.toggle('sfx-out', out.has(e.id));
         keep.add(e.id);
       }
@@ -91,8 +95,9 @@ export class Painter {
       const mask = holes.slice(0, 80).map((h) => `radial-gradient(circle ${f(h.r)}px at ${f(h.x)}px ${f(h.y)}px, rgba(0,0,0,.18) ${f(h.r * 0.82)}px, #000 ${f(h.r)}px)`).join(', ');
       if (mask !== this.mask) {
         this.mask = mask;
-        if (mask) { this.under.style.setProperty('mask-image', mask); this.under.style.setProperty('mask-composite', 'intersect'); this.under.style.setProperty('mask-repeat', 'no-repeat'); }
-        else { this.under.style.removeProperty('mask-image'); this.under.style.removeProperty('mask-composite'); this.under.style.removeProperty('mask-repeat'); }
+        // the holes go in a CSS variable; the class (styles.css) puts them to use
+        if (mask) setVar(this.under, '--sfx-holes', mask);
+        this.under.toggleClass('sfx-holes', !!mask);
       }
     }
     void now;
@@ -134,18 +139,7 @@ export class Painter {
       }
       el.appendChild(media);
     } else {
-      if (e.shape === 'cone') {
-        // a cone drawn as a triangle, its colour fading from its point to its far end
-        const NS = 'http://www.w3.org/2000/svg', gid = 'sfx-g-' + Math.random().toString(36).slice(2);
-        const svg = doc.createElementNS(NS, 'svg'); svg.setAttribute('class', 'sfx-drawn'); svg.setAttribute('viewBox', '0 0 100 100'); svg.setAttribute('preserveAspectRatio', 'none');
-        const grad = doc.createElementNS(NS, 'linearGradient'); grad.id = gid;
-        for (const [off, cls] of [['0', 'sfx-cone-near'], ['1', 'sfx-cone-far']]) { const st = doc.createElementNS(NS, 'stop'); st.setAttribute('offset', off!); st.setAttribute('class', cls!); grad.appendChild(st); }
-        const defs = doc.createElementNS(NS, 'defs'); defs.appendChild(grad); svg.appendChild(defs);
-        const tri = doc.createElementNS(NS, 'polygon'); tri.setAttribute('points', '0,50 100,0 100,100'); tri.setAttribute('fill', `url(#${gid})`); svg.appendChild(tri);
-        el.appendChild(svg);
-      } else {
-        const d = doc.createElement('div'); d.className = 'sfx-drawn'; el.appendChild(d);
-      }
+      drawShape(doc, el, e.shape);
     }
   }
 
@@ -227,6 +221,16 @@ export class Painter {
     el.style.setProperty('--u', `${Math.max(4, s.cell * m.scale * 0.5)}px`);
   }
 
+  /** The art laid out so its picture, not its empty frame, fills the area (a cone reaching its full length). */
+  private fit(el: HTMLElement, e: Effect): void {
+    const fo = e.file && e.id !== 'preview' && (e.shape === 'cone' || e.shape === 'line') ? fitOf(this.world.trim(e.file), e.shape) : null;
+    if (fo) {
+      setVar(el, '--fx-l', `${fo.l.toFixed(2)}%`); setVar(el, '--fx-t', `${fo.t.toFixed(2)}%`);
+      setVar(el, '--fx-w', `${fo.w.toFixed(2)}%`); setVar(el, '--fx-h', `${fo.h.toFixed(2)}%`);
+    }
+    if (el.classList.contains('sfx-fit') !== !!fo) el.classList.toggle('sfx-fit', !!fo);
+  }
+
   /** Drops an effect's element, so it is made again (another animation or colour). */
   forget(id: string): void { this.els.get(id)?.remove(); this.els.delete(id); }
 
@@ -234,6 +238,45 @@ export class Painter {
     for (const el of this.els.values()) el.remove();
     this.els.clear();
   }
+}
+
+/**
+ * A drawn effect's shape inside `el` (an element with the classes `sfx sfx-<shape>` and its colours in --c and --c2):
+ * a cone is a triangle, its colour fading from its point, its edge in the outer colour; the rest are styled boxes.
+ */
+export function drawShape(doc: Document, el: HTMLElement, shape: Shape): void {
+  const NS = 'http://www.w3.org/2000/svg';
+  if (shape === 'cone') {
+    const gid = 'sfx-g-' + Math.random().toString(36).slice(2);
+    const svg = doc.createElementNS(NS, 'svg'); svg.setAttribute('class', 'sfx-drawn'); svg.setAttribute('viewBox', '0 0 100 100'); svg.setAttribute('preserveAspectRatio', 'none');
+    const grad = doc.createElementNS(NS, 'linearGradient'); grad.id = gid;
+    for (const [off, cls] of [['0', 'sfx-cone-near'], ['0.55', 'sfx-cone-mid'], ['1', 'sfx-cone-far']]) { const st = doc.createElementNS(NS, 'stop'); st.setAttribute('offset', off!); st.setAttribute('class', cls!); grad.appendChild(st); }
+    const defs = doc.createElementNS(NS, 'defs'); defs.appendChild(grad); svg.appendChild(defs);
+    const tri = doc.createElementNS(NS, 'polygon'); tri.setAttribute('points', '0,50 100,0 100,100'); tri.setAttribute('fill', `url(#${gid})`); tri.setAttribute('class', 'sfx-cone-fill'); svg.appendChild(tri);
+    const edge = doc.createElementNS(NS, 'polygon'); edge.setAttribute('points', '0,50 100,0 100,100'); edge.setAttribute('class', 'sfx-cone-edge'); edge.setAttribute('vector-effect', 'non-scaling-stroke'); svg.appendChild(edge);
+    el.appendChild(svg);
+  } else if (shape === 'wall') {
+    // a sample of a wall (the cast window's tile): a bent stretch, drawn as walls on the map are
+    const svg = doc.createElementNS(NS, 'svg'); svg.setAttribute('class', 'sfx-drawn sfx-path sfx-sample-path'); svg.setAttribute('viewBox', '0 0 100 100');
+    for (const cls of ['', 'sfx-core']) { const p = doc.createElementNS(NS, 'path'); p.setAttribute('d', 'M10 72 L42 36 L64 58 L90 26'); if (cls) p.setAttribute('class', cls); svg.appendChild(p); }
+    el.appendChild(svg);
+  } else {
+    const d = doc.createElement('div'); d.className = 'sfx-drawn'; el.appendChild(d);
+  }
+}
+
+/** A drawn effect as a sample (the cast window's first tile): its shape in its colours, as on the map. */
+export function drawnSample(parent: HTMLElement, shape: Shape, colour: string, colour2: string | undefined, alpha: number | undefined, angle?: number): HTMLElement {
+  const el = parent.ownerDocument.createElement('div');
+  el.className = `sfx sfx-${shape} sfx-lasting sfx-sample`;
+  el.style.setProperty('--c', colour);
+  if (colour2) el.style.setProperty('--c2', colour2);
+  if (alpha !== undefined && alpha < 1) el.style.setProperty('--sfx-alpha', String(Math.max(0.05, alpha)));
+  // a cone as wide as its angle makes it (within the tile)
+  if (shape === 'cone') el.style.setProperty('--sfx-cone-h', `${Math.min(92, 60 * coneWidth(1, angle)).toFixed(1)}%`);
+  drawShape(parent.ownerDocument, el, shape);
+  parent.appendChild(el);
+  return el;
 }
 
 /** Lucide's rotate and chevron glyphs, as Atlas's own controls use. */

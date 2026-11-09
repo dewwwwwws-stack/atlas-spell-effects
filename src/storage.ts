@@ -9,7 +9,7 @@ export const STORAGE_TAG = 'spell-effect';
 export const SHAPES: readonly Shape[] = ['radius', 'emanation', 'cone', 'cube', 'line', 'wall'];
 const BLOCKS: readonly WallBlocks[] = ['none', 'sight', 'movement', 'solid'];
 /** The add-on's properties, without their "effect-" prefix. */
-const KEYS = ['area', 'size', 'width', 'origin', 'lasting', 'attach', 'animation', 'colour', 'colour-outer', 'opacity', 'target', 'ring', 'round', 'walls', 'light', 'bright', 'dim', 'light-colour'] as const;
+const KEYS = ['area', 'size', 'width', 'angle', 'origin', 'lasting', 'attach', 'animation', 'colour', 'colour-outer', 'opacity', 'target', 'ring', 'round', 'walls', 'light', 'bright', 'dim', 'light-colour'] as const;
 type Key = (typeof KEYS)[number];
 export const prop = (k: Key): string => 'effect-' + k;
 
@@ -77,6 +77,7 @@ export function storedFrom(path: string, fm: Record<string, unknown>, resolve: (
     size: target === 'on' && Number(get(fm, 'size')) >= 0 ? Number(get(fm, 'size')) || 0 : numOf(get(fm, 'size'), shape === 'line' || shape === 'wall' ? 30 : 15),
     ...(target ? { target } : {}),
     ...(shape === 'line' ? { width: numOf(get(fm, 'width'), 5) } : shape === 'wall' ? { width: numOf(get(fm, 'width'), 1) } : {}),
+    ...(shape === 'cone' && Number(get(fm, 'angle')) > 0 ? { angle: Number(get(fm, 'angle')) } : {}),
     ...(shape === 'wall' && Number(get(fm, 'ring')) > 0 ? { ring: Number(get(fm, 'ring')) } : {}),
     ...(shape === 'wall' && yes(get(fm, 'round')) ? { round: true } : {}),
     ...(shape === 'wall' && BLOCKS.includes(blocks) ? { blocks } : {}),
@@ -110,6 +111,7 @@ export function writeDefaults(fm: Record<string, unknown>, s: { area: Area; file
   set('area', a.shape);
   set('size', a.size);
   set('width', a.shape === 'line' ? a.width ?? 5 : a.shape === 'wall' ? a.width ?? 1 : undefined);
+  set('angle', a.shape === 'cone' && a.angle ? a.angle : undefined);
   set('origin', a.shape === 'radius' || a.shape === 'cube' ? (a.from === 'caster' ? 'caster' : 'point') : undefined);
   set('ring', a.shape === 'wall' && a.ring ? a.ring : undefined);
   set('round', a.shape === 'wall' && a.round ? true : undefined);

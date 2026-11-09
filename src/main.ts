@@ -5,6 +5,7 @@
 import { Plugin, Modal, Menu, Notice, PluginSettingTab, Setting, setIcon, TFile, type App, type WorkspaceLeaf } from 'obsidian';
 import { BaseReader, basesReady } from './bases';
 import { jb2aFiles, fetchJb2a, fetchAll } from './jb2a';
+import { measureArt, type Trim } from './trim';
 import { FolderSuggest, BaseSuggest } from './suggest';
 import { SpellNames, StatblockLinker, type SpellLink } from './statblocks';
 import { areaOf, targetOf, describe, type Area, type Shape, type SpellEntry, type WallBlocks } from './areas';
@@ -13,8 +14,8 @@ import { isStored, storedFrom, writeDefaults, baseFile, noteName, type StoredSpe
 import { looksLikeSpell, spellFromNote } from './notes';
 import { lightOf, placedLights, lightKey, LIGHT_COLOUR, type EffectLight } from './lights';
 
-import { boxOf, dirTo, hitEffect, snapCorner, placeOf, pxPerFoot, attachTo, detach, wallPieces, wallPoints, ringPoints, pathLength, within, controlsOf, stepSize, dragHandle, aims, type Box, type Effect, type Point, type Scale, type TokenAt } from './geometry';
-import { Painter, artInfo, instantMs, FADE_MS, paintHandles, type Surface, type World, type Mapping } from './overlay';
+import { boxOf, dirTo, hitEffect, snapCorner, placeOf, pxPerFoot, attachTo, detach, wallPieces, wallPoints, ringPoints, pathLength, within, controlsOf, stepSize, dragHandle, aims, CONE_ANGLE, type Box, type Effect, type Point, type Scale, type TokenAt } from './geometry';
+import { Painter, artInfo, instantMs, FADE_MS, paintHandles, drawnSample, type Surface, type World, type Mapping } from './overlay';
 
 const ATLAS_VIEW = 'atlas-vtt';
 const PLAYER_VIEW = 'atlas-vtt-local-player';
@@ -27,7 +28,7 @@ const uid = () => 'fx' + Date.now().toString(36) + Math.random().toString(36).sl
 
 /** A preset: a spell (or an effect of your own) as you like to cast it, under a name of its own. */
 export interface Preset { id: string; name: string; of: string; area: Area; file?: string; colour: string; colour2?: string; alpha?: number; attach?: boolean; light?: EffectLight | null }
-interface Remembered { target?: 'on' | 'bolt'; colour2?: string; alpha?: number; file?: string; colour?: string; shape?: Shape; size?: number; width?: number; from?: 'caster' | 'point'; lasting?: boolean; light?: EffectLight | null; ring?: number; round?: boolean; blocks?: WallBlocks }
+interface Remembered { angle?: number; target?: 'on' | 'bolt'; colour2?: string; alpha?: number; file?: string; colour?: string; shape?: Shape; size?: number; width?: number; from?: 'caster' | 'point'; lasting?: boolean; light?: EffectLight | null; ring?: number; round?: boolean; blocks?: WallBlocks }
 interface Settings {
   folders: string;                 // vault folders with effect files, comma-separated; '' = any folder named like JB2A or "Spell Effects"
   remember: Record<string, Remembered>;
@@ -40,8 +41,10 @@ interface Settings {
   jb2aOffer: boolean;              // offer every JB2A animation (downloaded when first used)
   orphanLights: { map: string; id: string; wall?: boolean }[];   // lights of ended effects on maps that weren't open: removed when they are
   noteSpells: boolean;             // offer the vault's spell notes (notes whose properties say they are spells)
+  artTrim: Record<string, Trim | 0>;   // where each animation's picture is in its frame (0: looked, nothing to trim)
+  coneAngle: number;               // a cone's angle at its point when a spell doesn't say (5e: 53.13°, as wide as it is long)
 }
-const DEFAULTS: Settings = { folders: '', remember: {}, lasting: [], snap: true, storage: 'Spell Storage', bases: [], presets: [], jb2aFolder: 'JB2A_DnD5e', jb2aOffer: true, noteSpells: true, orphanLights: [] };
+const DEFAULTS: Settings = { folders: '', remember: {}, lasting: [], snap: true, storage: 'Spell Storage', bases: [], presets: [], jb2aFolder: 'JB2A_DnD5e', jb2aOffer: true, noteSpells: true, orphanLights: [], coneAngle: CONE_ANGLE, artTrim: {} };
 
 /** A spell to pick in the cast window: one with saved defaults, or a spell note (from a Base or found in the vault). */
 export interface Choice { key: string; name: string; source: 'stored' | 'note'; entry?: SpellEntry; stored?: StoredSpell; notePath?: string }
@@ -414,9 +417,17 @@ export default class AtlasSpellEffects extends Plugin {
     const here = this.lastingHere();
     if (here.length) {
       menu.addSeparator();
-      for (const fx of here) menu.addItem((i: any) => i.setTitle(`End ${fx.name}`).setIcon('x').onClick(() => this.end(fx.id)));
+      // each told apart from the others (pointing at one outlines it on the map)
+      for (const fx of here) menu.addItem((i: any) => {
+        const l = this.labelOf(fx, here);
+        i.setTitle(`End ${l.name} (${l.detail})`).setIcon('x').onClick(() => { this.showOnMap(null); this.end(fx.id); });
+        const dom: HTMLElement | undefined = i.dom;
+        dom?.addEventListener('mouseenter', () => this.showOnMap(fx)); dom?.addEventListener('mouseleave', () => this.showOnMap(null));
+      });
       if (here.length > 1) menu.addItem((i: any) => i.setTitle('End them all').setIcon('trash-2').onClick(() => this.endAllHere()));
+      menu.addItem((i: any) => i.setTitle('Lasting effects…').setIcon('list').onClick(() => new EndModal(this.app, this).open()));
     }
+    (menu as any).onHide?.(() => this.showOnMap(null));
     menu.showAtMouseEvent(e);
   }
 
@@ -755,8 +766,34 @@ export default class AtlasSpellEffects extends Plugin {
     return [...out];
   }
 
+  /** Animations looked at, or being looked at, for where their picture is (see trim.ts). */
+  private trimming = new Set<string>();
+  private trimQueue: string[] = [];
+  /** Where an animation's picture is in its frame: known, or looked at soon (one at a time). */
+  trimOf(path: string): Trim | null {
+    const known = this.settings.artTrim[path];
+    if (known !== undefined) return known || null;
+    if (!this.trimming.has(path)) {
+      this.trimming.add(path); this.trimQueue.push(path);
+      if (this.trimQueue.length === 1) void this.nextTrim();
+    }
+    return null;
+  }
+  private async nextTrim(): Promise<void> {
+    const path = this.trimQueue[0]; if (!path) return;
+    let got: Trim | null = null;
+    const f = this.app.vault.getAbstractFileByPath(path);
+    if (f instanceof TFile) { try { got = await measureArt(await this.app.vault.readBinary(f), path); } catch { got = null; } }
+    this.settings.artTrim[path] = got ?? 0;
+    this.saveSoon();
+    this.wake();
+    this.trimQueue.shift();
+    if (this.trimQueue.length) void this.nextTrim();
+  }
+
   private world(): World {
     return {
+      trim: (path) => this.trimOf(path),
       scale: (map) => { const t = this.atlasTabs().find((x) => this.mapOf(x) === map); return t ? this.scaleOf(t) : null; },
       token: (map, id) => { const t = this.atlasTabs().find((x) => this.mapOf(x) === map); return t ? this.tokenOf(t, id) : null; },
       url: (path) => { const f = this.app.vault.getAbstractFileByPath(path); return f instanceof TFile ? this.app.vault.getResourcePath(f) : null; },
@@ -929,6 +966,7 @@ export default class AtlasSpellEffects extends Plugin {
     for (const [k, p] of this.painters) if (!live.has(k)) { p.stop(); this.painters.delete(k); }
     this.paintSelection();
     this.syncLights();
+    this.hideMarkers();
     this.syncWalls();
   }
 
@@ -1015,14 +1053,15 @@ export default class AtlasSpellEffects extends Plugin {
           } else if (now - (this.lightAt.get(e.id) ?? 0) < 33) { this.wake(); continue; }
           // only what changed: a light that moves keeps its look
           const was = this.lightWritten.get(e.id) ?? [];
-          this.untracked(t, () => inputs.forEach((input, n) => {
+          const changes = inputs.map((input, n) => {
             const w = was[n];
             const change: Record<string, unknown> = { x: input.x, y: input.y };
             if (!w || JSON.stringify(w.rotation) !== JSON.stringify(input.rotation)) change['rotation'] = input.rotation;
             if (!w || JSON.stringify(w.area) !== JSON.stringify(input.area)) change['area'] = input.area;
             if (!w || JSON.stringify(w.emission) !== JSON.stringify(input.emission)) change['emission'] = input.emission;
-            st.updateLight(ids[n], change);
-          }));
+            return { id: ids[n]!, change };
+          });
+          this.untracked(t, () => this.updateLights(t, changes));
         } else if (ids.length && !have.length && this.lightKeys.has(e.id)) {
           continue;                                              // removed in Atlas (deleted or undone): left so
         } else {
@@ -1047,6 +1086,51 @@ export default class AtlasSpellEffects extends Plugin {
     }
     if (saved) this.saveSoon();
   }
+  /**
+   * Several of Atlas's lights changed at once: one change to its map, so Atlas works its lighting out once, not
+   * once a light. (Atlas's store takes a change as a draft to edit; a store that doesn't is written light by light.)
+   */
+  private updateLights(t: Tab, changes: { id: string; change: Record<string, unknown> }[]): void {
+    const st = t.store.getState();
+    if (changes.length < 2 || typeof t.store.setState !== 'function') { for (const c of changes) st.updateLight(c.id, c.change); return; }
+    t.store.setState((d: any) => {
+      for (const { id, change } of changes) {
+        const l = d?.objects?.lights?.[id]; if (!l) continue;
+        for (const [k, v] of Object.entries(change)) { if (v === undefined) delete l[k]; else l[k] = v; }
+      }
+    });
+  }
+
+  /** Atlas's markers for the lights of spells are hidden: the spell is what shows where it is. */
+  private markerLayers = new WeakMap<object, any>();
+  hideMarkers(): void {
+    for (const t of this.atlasTabs()) {
+      let layer = this.markerLayers.get(t.viewport);
+      if (!layer || layer.destroyed || !layer.parent) {
+        // looked for not long ago and not there: looked for again in a while
+        if (typeof layer === 'number' && Date.now() - layer < 2000) continue;
+        layer = null;
+        const look = (c: any, depth: number): any => {
+          for (const ch of c?.children ?? []) { if (ch?.label === 'light-markers') return ch; if (depth > 0) { const f = look(ch, depth - 1); if (f) return f; } }
+          return null;
+        };
+        layer = look(t.viewport, 3) ?? look(t.viewport?.parent, 3);
+        if (!layer) { this.markerLayers.set(t.viewport, Date.now()); continue; }
+        this.markerLayers.set(t.viewport, layer);
+      }
+      const lights = t.store.getState()?.objects?.lights ?? {};
+      const ours = new Set<string>();
+      const map = this.mapOf(t);
+      for (const e of this.effects) if (e.map === map) for (const id of e.lightIds ?? []) { const l = lights[id]; if (l) ours.add(`${Math.round(l.x)},${Math.round(l.y)}`); }
+      for (const m of layer.children ?? []) {
+        const p = m?.position; if (!p) continue;
+        const mine = ours.has(`${Math.round(p.x)},${Math.round(p.y)}`);
+        if (mine && m.visible) { m.visible = false; m.sfxHidden = true; }
+        else if (!mine && m.sfxHidden) { m.visible = true; m.sfxHidden = false; }
+      }
+    }
+  }
+
   /** A light whose effect is moving: where it is now, and since when (it is written once it stays put). */
   private lightMoving = new Map<string, { key: string; since: number }>();
   /** What was last written for each light. */
@@ -1154,7 +1238,7 @@ export default class AtlasSpellEffects extends Plugin {
     let alt = false;
     const effectAt = (p: Point, id: string): Effect | null => {
       const map = this.mapOf(tab); const sc = this.scaleOf(tab);
-      const base = { id, map, name: pending.name, shape: a.shape, size: a.size, ...(a.width ? { width: a.width } : {}), colour: pending.colour, ...(pending.colour2 ? { colour2: pending.colour2 } : {}), ...(pending.alpha ? { alpha: pending.alpha } : {}), lasting: a.lasting, started: Date.now(), ...(pending.file ? { file: pending.file } : {}), ...(pending.light && id !== 'preview' ? { light: { ...pending.light } } : {}) };
+      const base = { id, map, name: pending.name, shape: a.shape, size: a.size, ...(a.width ? { width: a.width } : {}), ...(a.shape === 'cone' ? { angle: a.angle ?? this.settings.coneAngle } : {}), colour: pending.colour, ...(pending.colour2 ? { colour2: pending.colour2 } : {}), ...(pending.alpha ? { alpha: pending.alpha } : {}), lasting: a.lasting, started: Date.now(), ...(pending.file ? { file: pending.file } : {}), ...(pending.light && id !== 'preview' ? { light: { ...pending.light } } : {}) };
       const c = this.placing?.caster;
       if (needsCaster && !c) {
         // before the caster is chosen: show the area on whatever is under the pointer
@@ -1508,6 +1592,48 @@ export default class AtlasSpellEffects extends Plugin {
     new Notice(`Atlas Spell Effects: ended ${n} lasting effect${n === 1 ? '' : 's'}`);
   }
 
+  /**
+   * How to tell an effect from others: its name (numbered when several share it, oldest first) and what sets it
+   * apart: its size, whom it is on or which token it is nearest, how long ago it was cast.
+   */
+  labelOf(fx: Effect, among: Effect[]): { name: string; detail: string } {
+    const same = among.filter((e) => e.name === fx.name).sort((a, b) => a.started - b.started);
+    const name = same.length > 1 ? `${fx.name} #${same.indexOf(fx) + 1}` : fx.name;
+    const t = this.atlasTabs().find((x) => this.mapOf(x) === fx.map);
+    const bits: string[] = [fx.shape === 'wall' ? 'wall' : describe({ shape: fx.shape, size: fx.size, ...(fx.width ? { width: fx.width } : {}), from: 'point', lasting: true })];
+    if (t) {
+      if (fx.token) bits.push(`on ${this.tokenName(t, fx.token)}`);
+      else {
+        // the nearest token, and how far: "10 ft from Bandit"
+        const b = this.boxFor(fx, t); const ppf = pxPerFoot(this.scaleOf(t));
+        let best: { id: string; d: number } | null = null;
+        for (const id of Object.keys(t.store.getState()?.objects?.tokens ?? {})) {
+          const tok = this.tokenOf(t, id); if (!tok) continue;
+          const d = Math.max(0, Math.hypot(tok.x - b.cx, tok.y - b.cy) - tok.r);
+          if (!best || d < best.d) best = { id, d };
+        }
+        if (best) { const ft = Math.round(best.d / ppf / 5) * 5; bits.push(ft <= 5 ? `by ${this.tokenName(t, best.id)}` : `${ft} ft from ${this.tokenName(t, best.id)}`); }
+      }
+    }
+    const min = Math.round((Date.now() - fx.started) / 60000);
+    bits.push(min < 1 ? 'just now' : min < 60 ? `${min} min ago` : `${Math.round(min / 60)} h ago`);
+    return { name, detail: bits.join(' · ') };
+  }
+
+  /** Outlines an effect on its map while the pointer is over its name (a menu or the end window); `null`: as it was. */
+  private shownBefore: { ids: string[]; tab: Tab } | null | undefined;
+  showOnMap(fx: Effect | null): void {
+    if (fx) {
+      const t = this.atlasTabs().find((x) => this.mapOf(x) === fx.map); if (!t) return;
+      if (this.shownBefore === undefined) this.shownBefore = this.selected;
+      this.selected = { ids: [fx.id], tab: t };
+    } else if (this.shownBefore !== undefined) {
+      this.selected = this.shownBefore && this.shownBefore.ids.some((id) => this.effects.some((e) => e.id === id)) ? this.shownBefore : null;
+      this.shownBefore = undefined;
+    }
+    this.wake();
+  }
+
   lastingHere(): Effect[] { const t = this.atlasTab(); const map = t ? this.mapOf(t) : ''; return this.effects.filter((e) => e.lasting && e.map === map); }
 }
 
@@ -1518,22 +1644,28 @@ const SHAPE_LABEL: Record<Shape, string> = { radius: 'Sphere', emanation: 'Aroun
 /** What the animation-and-colour picker shows, and how it hands back a choice. */
 interface LookCtx {
   app: App; plugin: AtlasSpellEffects; name: string; shape: Shape; size: number; file: string | undefined; colour: string; fileQuery: string;
-  colour2?: string | undefined; alpha?: number | undefined;
+  colour2?: string | undefined; alpha?: number | undefined; angle?: number | undefined;
   set(change: { file?: string | undefined; colour?: string; colour2?: string | undefined; alpha?: number | undefined; fileQuery?: string }, rerender: boolean): void;
 }
 
-/** The animation (pictures to pick from, a search for any) and its colour: shared by the cast and edit windows. */
-function lookPicker(pane: HTMLElement, c: LookCtx): void {
+/**
+ * The animation (pictures to pick from, a search for any) in `anim`, and its colour and opacity in `colour`:
+ * shared by the cast and edit windows. The first picture is always the drawn effect, in its shape and colours.
+ */
+function lookPicker(anim: HTMLElement, colourEl: HTMLElement, c: LookCtx): void {
   const P = c.plugin;
-  const anim = pane.createDiv();
-  const ah = anim.createDiv({ cls: 'sfx-fields sfx-flush' });
-  ah.createDiv({ cls: 'sfx-label sfx-flush', text: P.files.length ? 'Animation' : 'Animation (no effect files found yet: drawn)' });
+  const ah = anim.createDiv({ cls: 'sfx-section-head' });
+  ah.createSpan({ cls: 'sfx-label', text: 'Animation' });
   const fq = ah.createEl('input', { type: 'search', placeholder: 'Search all animations…', value: c.fileQuery, cls: 'sfx-push' });
   fq.onchange = () => c.set({ fileQuery: fq.value }, true);
   const tiles = anim.createDiv({ cls: 'sfx-grid' });
-  const drawn = tiles.createDiv({ cls: 'sfx-tile' + (!c.file ? ' is-on' : '') });
-  const dt = drawn.createDiv({ cls: 'sfx-thumb' }); const dot = dt.createDiv({ cls: 'sfx-drawn-tile' }); dot.style.setProperty('--c', c.colour); if (c.colour2) dot.style.setProperty('--c2', c.colour2);
-  drawn.createSpan({ text: 'Drawn, in a colour' });
+  // first: drawn by the add-on, as it will look
+  const drawn = tiles.createDiv({ cls: 'sfx-tile sfx-tile-drawn' + (!c.file ? ' is-on' : '') });
+  drawn.title = 'Drawn by the add-on in your colours: no animation file';
+  const dt = drawn.createDiv({ cls: 'sfx-thumb' });
+  const sample = drawnSample(dt, c.shape, c.colour, c.colour2, c.alpha, c.angle);
+  dt.createSpan({ cls: 'sfx-badge', text: 'Custom' });
+  drawn.createSpan({ cls: 'sfx-tile-name', text: 'Drawn' });
   drawn.onclick = () => c.set({ file: undefined }, true);
   const cur = c.file ? P.files.find((x) => x.path === c.file) : undefined;
   const found = c.fileQuery ? search(c.fileQuery, P.files, 36).map((file) => ({ file })) : matchesFor(c.name, c.shape, P.files, 23);
@@ -1543,42 +1675,52 @@ function lookPicker(pane: HTMLElement, c: LookCtx): void {
     t.title = m.file.path;
     const tf = c.app.vault.getAbstractFileByPath(m.file.path);
     const url = tf instanceof TFile ? c.app.vault.getResourcePath(tf) : '';
+    const th = t.createDiv({ cls: 'sfx-thumb' });
     if (m.file.remote) {
       // not downloaded yet: JB2A's still preview, and a mark that it comes when used
       t.title = m.file.path + '\nFrom JB2A: downloaded when you use it';
-      const th = t.createDiv({ cls: 'sfx-thumb' });
       if (m.file.thumb) { const i = th.createEl('img'); i.src = m.file.thumb; i.loading = 'lazy'; i.onerror = () => i.remove(); }
-      t.createSpan({ cls: 'sfx-dl', text: '⤓' });
+      const dl = th.createSpan({ cls: 'sfx-dl' }); setIcon(dl, 'download');
     } else if (m.file.video) {
-      const v = t.createEl('video'); v.muted = true; v.loop = true; v.preload = 'metadata'; v.src = url + '#t=0.6';
+      const v = th.createEl('video'); v.muted = true; v.loop = true; v.preload = 'metadata'; v.src = url + '#t=0.6';
       t.onmouseenter = () => { void v.play()?.catch?.(() => undefined); }; t.onmouseleave = () => v.pause();
-    } else { const i = t.createEl('img'); i.src = url; }
-    t.createSpan({ text: m.file.name.replace(/_\d+x\d+$/, '').replace(/_/g, ' ') });
+    } else { const i = th.createEl('img'); i.src = url; }
+    t.createSpan({ cls: 'sfx-tile-name', text: m.file.name.replace(/_\d+x\d+$/, '').replace(/_/g, ' ') });
     t.onclick = () => c.set({ file: m.file.path }, true);
   }
-  const col = pane.createDiv();
-  col.createDiv({ cls: 'sfx-label', text: 'Colour' });
-  const sw = col.createDiv({ cls: 'sfx-swatches' });
+  if (!found.length && c.fileQuery) anim.createDiv({ cls: 'sfx-empty', text: 'No animation by that name.' });
+
+  // colour and opacity
+  const row = colourEl.createDiv({ cls: 'sfx-fields sfx-flush sfx-colours' });
   if (cur) {
+    row.createSpan({ cls: 'sfx-label sfx-flush', text: 'Colour' });
+    const sw = row.createDiv({ cls: 'sfx-swatches' });
     const cols = coloursOf(cur, P.files, c.size);
     for (const k of cols) { const b = sw.createEl('button', { text: k.colour, cls: k.file.path === c.file ? 'is-on' : '' }); b.onclick = () => c.set({ file: k.file.path }, true); }
-    if (cols.length <= 1) sw.createSpan({ cls: 'sfx-chip', text: 'this animation comes in one colour' });
+    if (cols.length <= 1) sw.createSpan({ cls: 'sfx-muted', text: 'This animation comes in one colour' });
   } else {
-    // drawn: a colour at its heart and one at its edge
-    sw.createSpan({ text: 'Inner' });
+    // drawn: a colour at its heart and one at its edge (or one colour for both)
+    const sw = row.createDiv({ cls: 'sfx-swatches' });
+    sw.createSpan({ cls: 'sfx-label sfx-flush', text: 'Inner' });
     const k = sw.createEl('input', { type: 'color', value: c.colour }); k.title = 'The colour at its heart';
-    k.oninput = () => { dot.style.setProperty('--c', k.value); c.set({ colour: k.value }, false); };
-    sw.createSpan({ text: 'Outer' });
+    sw.createSpan({ cls: 'sfx-label sfx-flush', text: 'Outer' });
     const k2 = sw.createEl('input', { type: 'color', value: c.colour2 ?? c.colour }); k2.title = 'The colour at its edge';
-    k2.oninput = () => { c.set({ colour2: k2.value }, false); };
-    if (c.colour2) { const same = sw.createEl('button', { text: 'Same as inner' }); same.onclick = () => c.set({ colour2: undefined }, true); }
+    k2.disabled = !c.colour2;
+    const ml = sw.createEl('label', { cls: 'sfx-toggle' }); const match = ml.createEl('input', { type: 'checkbox' }); match.checked = !c.colour2; ml.appendText('Outer matches inner');
+    k.oninput = () => { sample.style.setProperty('--c', k.value); if (match.checked) { k2.value = k.value; } c.set({ colour: k.value }, false); };
+    k2.oninput = () => { sample.style.setProperty('--c2', k2.value); c.set({ colour2: k2.value }, false); };
+    match.onchange = () => {
+      k2.disabled = match.checked;
+      if (match.checked) { k2.value = k.value; sample.style.removeProperty('--c2'); c.set({ colour2: undefined }, false); }
+      else { sample.style.setProperty('--c2', k2.value); c.set({ colour2: k2.value }, false); }
+    };
   }
   // how see-through, drawn or animated
-  const op = col.createDiv({ cls: 'sfx-fields' });
-  op.createSpan({ text: 'Opacity' });
+  const op = row.createDiv({ cls: 'sfx-opacity' });
+  op.createSpan({ cls: 'sfx-label sfx-flush', text: 'Opacity' });
   const a = op.createEl('input', { type: 'range', value: String(Math.round((c.alpha ?? 1) * 100)) }); a.min = '10'; a.max = '100'; a.step = '5';
-  const av = op.createSpan({ text: `${Math.round((c.alpha ?? 1) * 100)}%` });
-  a.oninput = () => { av.setText(`${a.value}%`); const v = Number(a.value) / 100; c.set({ alpha: v >= 1 ? undefined : v }, false); };
+  const av = op.createSpan({ cls: 'sfx-num', text: `${Math.round((c.alpha ?? 1) * 100)}%` });
+  a.oninput = () => { av.setText(`${a.value}%`); const v = Number(a.value) / 100; sample.style.setProperty('--sfx-alpha', String(Math.max(0.05, v))); c.set({ alpha: v >= 1 ? undefined : v }, false); };
 }
 
 /** What a wall's real Atlas walls stop: nothing (drawn only), sight, movement, or everything. */
@@ -1662,9 +1804,11 @@ class EditModal extends Modal {
     const head = pane.createDiv({ cls: 'sfx-head' });
     const name = head.createEl('input', { type: 'text', value: fx.name }); name.oninput = () => { fx.name = name.value || 'Effect'; this.changed(); };
     head.createSpan({ cls: 'sfx-chip', text: SHAPE_LABEL[fx.shape] });
+    const body = pane.createDiv({ cls: 'sfx-body' });
+    const bottom = pane.createDiv({ cls: 'sfx-bottom' });
 
     // size and turn
-    const sz = pane.createDiv(); sz.createDiv({ cls: 'sfx-label', text: 'Size' });
+    const sz = body.createDiv(); sz.createDiv({ cls: 'sfx-label', text: 'Size' });
     const f = sz.createDiv({ cls: 'sfx-fields sfx-flush' });
     if (fx.shape === 'wall') {
       const sc = P.scaleOf(t);
@@ -1698,6 +1842,10 @@ class EditModal extends Modal {
       f.createSpan({ text: 'Width' }); const w = f.createEl('input', { type: 'number', value: String(fx.width ?? 5) });
       w.oninput = () => { const v = Number(w.value); if (v > 0) { fx.width = v; this.changed(); } }; f.createSpan({ text: 'ft' });
     }
+    if (fx.shape === 'cone') {
+      f.createSpan({ text: 'Angle' }); const an = f.createEl('input', { type: 'number', value: String(Math.round((fx.angle ?? CONE_ANGLE) * 100) / 100) }); an.min = '1'; an.max = '170';
+      an.oninput = () => { const v = Number(an.value); if (v >= 1 && v <= 170) { fx.angle = v; this.changed(); } }; f.createSpan({ text: '°' });
+    }
     if (fx.shape !== 'wall') {
       const tok = fx.token ? P.tokenOf(t, fx.token) : null;
       // aimed ones turn about their origin; spheres, auras and cubes at a point spin their animation
@@ -1714,7 +1862,7 @@ class EditModal extends Modal {
     last.onchange = () => { fx.lasting = last.checked; if (fx.lasting) fx.started = Date.now(); this.changed(true); };
 
     // its token
-    const at = pane.createDiv(); at.createDiv({ cls: 'sfx-label', text: 'Token' });
+    const at = body.createDiv(); at.createDiv({ cls: 'sfx-label', text: 'Token' });
     const af = at.createDiv({ cls: 'sfx-fields sfx-flush' });
     if (fx.token) {
       af.createSpan({ text: `Attached to ${P.tokenName(t, fx.token)}: it moves with them` });
@@ -1734,16 +1882,16 @@ class EditModal extends Modal {
       };
     }
 
-    if (fx.shape === 'wall') wallsPicker(pane, fx.blocks, fx.lasting, (b) => { if (b === 'none') delete fx.blocks; else fx.blocks = b; this.changed(true); });
+    if (fx.shape === 'wall') wallsPicker(body, fx.blocks, fx.lasting, (b) => { if (b === 'none') delete fx.blocks; else fx.blocks = b; this.changed(true); });
 
     // light or darkness
-    lightPicker(pane, fx.light ?? null, fx.lasting, (l) => {
+    lightPicker(body, fx.light ?? null, fx.lasting, (l) => {
       if (l) fx.light = l; else delete fx.light;
       this.changed(true);
     });
 
     // look
-    lookPicker(pane, { app: this.app, plugin: P, name: fx.name, shape: fx.shape, size: fx.size, file: fx.file, colour: fx.colour, colour2: fx.colour2, alpha: fx.alpha, fileQuery: this.fileQuery,
+    lookPicker(body.createDiv(), bottom, { app: this.app, plugin: P, name: fx.name, shape: fx.shape, angle: fx.angle, size: fx.size, file: fx.file, colour: fx.colour, colour2: fx.colour2, alpha: fx.alpha, fileQuery: this.fileQuery,
       set: (c, re) => {
         if ('colour2' in c) { if (c.colour2) fx.colour2 = c.colour2; else delete fx.colour2; P.refresh(fx.id); }
         if ('alpha' in c) { if (c.alpha !== undefined) fx.alpha = c.alpha; else delete fx.alpha; P.refresh(fx.id); }
@@ -1754,7 +1902,7 @@ class EditModal extends Modal {
       } });
 
     // snapping, end, done
-    const foot = pane.createDiv({ cls: 'sfx-foot' });
+    const foot = bottom.createDiv({ cls: 'sfx-foot' });
     const sl = foot.createEl('label', { cls: 'sfx-toggle sfx-saved' }); const snap = sl.createEl('input', { type: 'checkbox' }); snap.checked = P.settings.snap; sl.appendText('Snap to grid');
     snap.onchange = () => { void P.toggleSnap(); this.render(); };
     const end = foot.createEl('button', { text: 'End effect', cls: 'mod-warning' }); end.onclick = () => { this.plugin.commit(this.before); this.ended = true; P.end(fx.id); this.close(); };
@@ -1779,10 +1927,13 @@ class CastModal extends Modal {
   private query = '';
   private fileQuery = '';
   private saved = '';
+  private listScroll = 0;
+  /** The list's groups that are folded shut. */
+  private folded = new Set<string>();
   constructor(app: App, private readonly plugin: AtlasSpellEffects) { super(app); }
 
   onOpen(): void {
-    this.modalEl.addClass('sfx-modal');
+    this.modalEl.addClass('sfx-modal'); this.modalEl.addClass('sfx-cast');
     this.titleEl.setText('Cast a spell effect');
     if (this.choice || this.preset) { this.render(); return; }      // opened with a spell already picked
     const last = this.plugin.last;
@@ -1814,7 +1965,7 @@ class CastModal extends Modal {
       const r = entry ? P.settings.remember[entry.key] : undefined;
       const a = entry ? areaOf(entry) ?? targetOf(entry) : null;
       this.name = c.name;
-      this.area = { shape: r?.shape ?? a?.shape ?? 'radius', size: r?.size ?? a?.size ?? 20, ...((r?.width ?? a?.width) ? { width: r?.width ?? a?.width } : {}), from: r?.from ?? a?.from ?? 'point', lasting: r?.lasting ?? a?.lasting ?? false,
+      this.area = { shape: r?.shape ?? a?.shape ?? 'radius', size: r?.size ?? a?.size ?? 20, ...((r?.width ?? a?.width) ? { width: r?.width ?? a?.width } : {}), ...(r?.angle ? { angle: r.angle } : {}), from: r?.from ?? a?.from ?? 'point', lasting: r?.lasting ?? a?.lasting ?? false,
         ...((r?.ring ?? a?.ring) ? { ring: r?.ring ?? a?.ring } : {}), ...(r?.round ? { round: true } : {}), ...((r?.blocks ?? a?.blocks) ? { blocks: r?.blocks ?? a?.blocks } : {}), ...((r ? r.target : a?.target) ? { target: (r ? r.target : a?.target)! } : {}) };
       if (this.area.target === 'on' && !r) this.area.size = a?.size ?? 0;
       this.file = r ? r.file : matchesFor(c.name, this.area.shape, P.files, 1)[0]?.file.path;
@@ -1831,13 +1982,20 @@ class CastModal extends Modal {
   private render(): void {
     const el = this.contentEl; el.empty();
     const grid = el.createDiv({ cls: 'sfx-castwin' });
-    this.renderSide(grid.createDiv({ cls: 'sfx-side' }));
+    const sideEl = grid.createDiv({ cls: 'sfx-side' });
+    this.renderSide(sideEl);
     this.renderPane(grid.createDiv({ cls: 'sfx-pane' }));
+    // the list keeps its place when the window is drawn again
+    const list = sideEl.querySelector('.sfx-list');
+    if (list) { list.scrollTop = this.listScroll; list.addEventListener('scroll', () => { this.listScroll = list.scrollTop; }); }
   }
 
   private renderSide(side: HTMLElement): void {
     const P = this.plugin;
-    const q = side.createEl('input', { type: 'search', placeholder: 'Search spells…', value: this.query });
+    side.createDiv({ cls: 'sfx-side-title', text: 'Cast a spell effect' });
+    const sb = side.createDiv({ cls: 'sfx-search' });
+    setIcon(sb.createSpan({ cls: 'sfx-search-icon' }), 'search');
+    const q = sb.createEl('input', { type: 'search', placeholder: 'Search spells…', value: this.query });
     const list = side.createDiv({ cls: 'sfx-list' });
     const fill = () => {
       list.empty();
@@ -1846,30 +2004,33 @@ class CastModal extends Modal {
       const stored = all.filter((c) => c.source === 'stored');
       // without a search: the spells you stored, then the ones whose text names an area
       const rest = all.filter((c) => c.source !== 'stored' && (words.length || (c.entry && areaOf(c.entry)))).slice(0, 80);
-      const item = (c: Choice) => {
-        const it = list.createDiv({ cls: 'sfx-item' + (!this.preset && this.choice?.key === c.key ? ' is-on' : '') });
-        if (c.source === 'stored') it.createSpan({ cls: 'sfx-star', text: '★' });
-        it.createSpan({ cls: 'sfx-name', text: c.name });
-        const a = c.stored ? c.stored.area : c.entry ? areaOf(c.entry) : null;
-        it.createEl('small', { text: a ? describe(a).replace(' around the caster', a.shape === 'emanation' ? ' around' : '') : c.source === 'note' ? 'note' : '' });
-        it.onclick = () => { void this.pick(c); };
+      // a group: a header that folds it (Atlas's library sections), then its rows
+      const group = (name: string, count: number): HTMLElement | null => {
+        const shut = this.folded.has(name) && !words.length;
+        const h = list.createDiv({ cls: 'sfx-group' + (shut ? ' is-shut' : '') });
+        setIcon(h.createSpan({ cls: 'sfx-chev' }), 'chevron-down');
+        h.createSpan({ text: name });
+        h.createSpan({ cls: 'sfx-count', text: String(count) });
+        h.onclick = () => { if (this.folded.has(name)) this.folded.delete(name); else this.folded.add(name); fill(); };
+        return shut ? null : list.createDiv({ cls: 'sfx-rows' });
+      };
+      const row = (into: HTMLElement, cls: string, icon: string, name: string, note: string, on: boolean, click: () => void) => {
+        const it = into.createDiv({ cls: 'sfx-item ' + cls + (on ? ' is-on' : '') });
+        setIcon(it.createSpan({ cls: 'sfx-star' }), icon);
+        it.createSpan({ cls: 'sfx-name', text: name });
+        it.createEl('small', { text: note });
+        it.onclick = click;
       };
       const presets = P.settings.presets.filter((pr) => words.every((w) => pr.name.toLowerCase().includes(w)));
-      if (presets.length) {
-        list.createDiv({ cls: 'sfx-group', text: 'Presets' });
-        for (const pr of presets) {
-          const it = list.createDiv({ cls: 'sfx-item sfx-preset' + (this.preset?.id === pr.id ? ' is-on' : '') });
-          it.createSpan({ cls: 'sfx-star', text: '⚡' });
-          it.createSpan({ cls: 'sfx-name', text: pr.name });
-          it.createEl('small', { text: describe(pr.area) });
-          it.onclick = () => this.pickPreset(pr);
-        }
-      }
-      if (stored.length) { list.createDiv({ cls: 'sfx-group', text: 'Saved effects' }); stored.forEach(item); }
-      if (rest.length) { list.createDiv({ cls: 'sfx-group', text: words.length ? 'Other spells' : 'Spells with an area' }); rest.forEach(item); }
-      const custom = list.createDiv({ cls: 'sfx-item' + (this.choice === null && !this.preset ? ' is-on' : '') });
-      custom.createSpan({ cls: 'sfx-name', text: '+ An effect of your own' });
-      custom.onclick = () => { void this.pick(null); };
+      if (presets.length) { const g = group('Presets', presets.length); if (g) for (const pr of presets) row(g, 'sfx-preset', 'zap', pr.name, describe(pr.area), this.preset?.id === pr.id, () => this.pickPreset(pr)); }
+      const item = (g: HTMLElement, c: Choice) => {
+        const a = c.stored ? c.stored.area : c.entry ? areaOf(c.entry) : null;
+        row(g, c.source === 'stored' ? 'sfx-saved-row' : '', c.source === 'stored' ? 'star' : 'wand-2', c.name, a ? describe(a).replace(' around the caster', a.shape === 'emanation' ? ' around' : '') : c.source === 'note' ? 'note' : '', !this.preset && this.choice?.key === c.key, () => { void this.pick(c); });
+      };
+      if (stored.length) { const g = group('Saved effects', stored.length); if (g) for (const c of stored) item(g, c); }
+      if (rest.length) { const g = group(words.length ? 'Other spells' : 'Spells with an area', rest.length); if (g) for (const c of rest) item(g, c); }
+      const own = list.createDiv({ cls: 'sfx-rows' });
+      row(own, 'sfx-own', 'plus', 'An effect of your own', '', this.choice === null && !this.preset, () => { void this.pick(null); });
       if (!all.length && words.length) list.createDiv({ cls: 'sfx-empty', text: 'No spell by that name.' });
     };
     q.oninput = () => { this.query = q.value; fill(); };
@@ -1883,13 +2044,16 @@ class CastModal extends Modal {
     const head = pane.createDiv({ cls: 'sfx-head' });
     const img = this.choice?.stored?.image ? this.app.vault.getAbstractFileByPath(this.choice.stored.image) : null;
     if (img instanceof TFile) { const i = head.createEl('img', { cls: 'sfx-card' }); i.src = this.app.vault.getResourcePath(img); }
-    const ht = head.createDiv();
+    const ht = head.createDiv({ cls: 'sfx-head-text' });
     if (this.choice || this.preset) ht.createEl('h3', { text: this.name });
     else { const n = ht.createEl('input', { type: 'text', value: this.name, placeholder: 'Name' }); n.oninput = () => { this.name = n.value || 'Effect'; }; }
-    ht.createSpan({ cls: 'sfx-chip', text: this.preset ? `⚡ preset: ${this.preset.name}` : this.choice?.source === 'stored' ? '★ saved defaults' : this.choice?.source === 'note' ? 'spell note' : 'your own effect' });
+    ht.createSpan({ cls: 'sfx-chip', text: this.preset ? `Preset: ${this.preset.name}` : this.choice?.source === 'stored' ? 'Saved defaults' : this.choice?.source === 'note' ? 'Spell note' : 'Your own effect' });
 
+    // the settings scroll; the colour and the buttons stay in view below them
+    const body = pane.createDiv({ cls: 'sfx-body' });
+    const bottom = pane.createDiv({ cls: 'sfx-bottom' });
     // area
-    const area = pane.createDiv();
+    const area = body.createDiv();
     area.createDiv({ cls: 'sfx-label', text: 'Area' });
     const seg = area.createDiv({ cls: 'sfx-seg' });
     for (const k of ['radius', 'emanation', 'cone', 'cube', 'line', 'wall'] as Shape[]) {
@@ -1926,6 +2090,13 @@ class CastModal extends Modal {
     if (this.area.shape === 'line') {
       lab('Width'); const w = f.createEl('input', { type: 'number', value: String(this.area.width ?? 5) }); w.onchange = () => { this.area.width = Math.max(1, Number(w.value) || 5); }; lab('ft');
     }
+    if (this.area.shape === 'cone') {
+      lab('Angle');
+      const an = f.createEl('input', { type: 'number', value: String(Math.round((this.area.angle ?? P.settings.coneAngle) * 100) / 100) }); an.min = '1'; an.max = '170'; an.step = '1';
+      an.title = 'The cone’s angle at its point. The default (in the settings) suits your game: 53° is 5e’s (as wide as it is long), 90° Pathfinder’s';
+      an.onchange = () => { const v = Number(an.value); if (v >= 1 && v <= 170) this.area.angle = v; else { delete this.area.angle; an.value = String(P.settings.coneAngle); } this.render(); };
+      lab('°');
+    }
     if (this.area.shape === 'radius' || this.area.shape === 'cube') {
       const o = f.createDiv({ cls: 'sfx-seg' });
       for (const [k, t] of [['point', 'At a point'], ['caster', 'From the caster']] as const) {
@@ -1948,10 +2119,10 @@ class CastModal extends Modal {
       toggle('Follows the caster', this.attach, (v) => { this.attach = v; }, 'It moves with the caster’s token (a beholder’s eye, a breath that stays)');
     }
 
-    if (this.area.shape === 'wall') wallsPicker(pane, this.area.blocks, this.area.lasting, (b) => { this.area.blocks = b; this.render(); });
-    lightPicker(pane, this.light, this.area.lasting, (l) => { this.light = l; this.render(); });
+    if (this.area.shape === 'wall') wallsPicker(body, this.area.blocks, this.area.lasting, (b) => { this.area.blocks = b; this.render(); });
+    lightPicker(body, this.light, this.area.lasting, (l) => { this.light = l; this.render(); });
 
-    lookPicker(pane, { app: this.app, plugin: P, name: this.name === 'Effect' ? '' : this.name, shape: this.area.shape, size: this.area.size, file: this.file, colour: this.colour, colour2: this.colour2, alpha: this.alpha, fileQuery: this.fileQuery,
+    lookPicker(body.createDiv(), bottom, { app: this.app, plugin: P, name: this.name === 'Effect' ? '' : this.name, shape: this.area.shape, angle: this.area.angle ?? P.settings.coneAngle, size: this.area.size, file: this.file, colour: this.colour, colour2: this.colour2, alpha: this.alpha, fileQuery: this.fileQuery,
       set: (c, re) => {
         if ('file' in c) this.file = c.file;
         if (c.colour !== undefined) this.colour = c.colour;
@@ -1962,7 +2133,7 @@ class CastModal extends Modal {
       } });
 
     // go
-    const foot = pane.createDiv({ cls: 'sfx-foot' });
+    const foot = bottom.createDiv({ cls: 'sfx-foot' });
     foot.createSpan({ cls: 'sfx-saved', text: this.saved });
     const sl = foot.createEl('label', { cls: 'sfx-toggle' }); const snap = sl.createEl('input', { type: 'checkbox' }); snap.checked = P.settings.snap; sl.appendText('Snap to grid');
     snap.onchange = () => { void P.toggleSnap(); };
@@ -2017,7 +2188,7 @@ class CastModal extends Modal {
       if (!(await P.ensureFile(this.file))) this.file = undefined;
       P.indexVault();
       const key = this.choice?.entry?.key ?? this.choice?.key ?? 'effect';
-      if (this.choice && !this.choice.stored) P.remember(key, { ...(this.file ? { file: this.file } : {}), colour: this.colour, ...(this.colour2 ? { colour2: this.colour2 } : {}), ...(this.alpha ? { alpha: this.alpha } : {}), shape: this.area.shape, size: this.area.size, ...(this.area.width ? { width: this.area.width } : {}), from: this.area.from, lasting: this.area.lasting, light: this.light, ...(this.area.ring ? { ring: this.area.ring } : {}), ...(this.area.round ? { round: true } : {}), ...(this.area.blocks ? { blocks: this.area.blocks } : {}), ...(this.area.target ? { target: this.area.target } : {}) });
+      if (this.choice && !this.choice.stored) P.remember(key, { ...(this.file ? { file: this.file } : {}), colour: this.colour, ...(this.colour2 ? { colour2: this.colour2 } : {}), ...(this.alpha ? { alpha: this.alpha } : {}), shape: this.area.shape, size: this.area.size, ...(this.area.width ? { width: this.area.width } : {}), ...(this.area.angle ? { angle: this.area.angle } : {}), from: this.area.from, lasting: this.area.lasting, light: this.light, ...(this.area.ring ? { ring: this.area.ring } : {}), ...(this.area.round ? { round: true } : {}), ...(this.area.blocks ? { blocks: this.area.blocks } : {}), ...(this.area.target ? { target: this.area.target } : {}) });
       return { name: this.name, key: this.preset ? 'preset:' + this.preset.id : key, area: { ...this.area }, ...(this.file ? { file: this.file } : {}), colour: this.colour, ...(this.colour2 ? { colour2: this.colour2 } : {}), ...(this.alpha ? { alpha: this.alpha } : {}), ...(this.attach ? { attach: true } : {}), ...(this.light ? { light: { ...this.light } } : {}) };
   }
   onClose(): void { this.contentEl.empty(); }
@@ -2063,24 +2234,33 @@ class PresetPicker extends Modal {
 class EndModal extends Modal {
   constructor(app: App, private readonly plugin: AtlasSpellEffects) { super(app); }
   onOpen(): void {
-    this.modalEl.addClass('sfx-modal');
+    this.modalEl.addClass('sfx-modal'); this.modalEl.addClass('sfx-endwin');
     this.titleEl.setText('Lasting effects on this map');
     this.render();
   }
   private render(): void {
+    const P = this.plugin;
     const el = this.contentEl; el.empty();
-    const list = this.plugin.lastingHere();
-    if (!list.length) { el.createDiv({ cls: 'sfx-muted', text: 'None on this map.' }); return; }
-    const box = el.createDiv({ cls: 'sfx-list' });
+    const list = P.lastingHere().sort((a, b) => a.name.localeCompare(b.name) || a.started - b.started);
+    if (!list.length) { el.createDiv({ cls: 'sfx-empty', text: 'None on this map.' }); return; }
+    el.createDiv({ cls: 'sfx-muted', text: 'Point at one to see it outlined on the map.' });
+    const box = el.createDiv({ cls: 'sfx-list sfx-endlist' });
     for (const e of list) {
-      const it = box.createDiv({ cls: 'sfx-item' });
-      it.createSpan({ text: `${e.name} (${e.size} ft ${e.shape === 'emanation' ? 'around' : e.shape})` });
-      const b = it.createEl('button', { text: 'End' }); b.onclick = () => { this.plugin.end(e.id); this.render(); };
+      const l = P.labelOf(e, list);
+      const it = box.createDiv({ cls: 'sfx-item sfx-end-row' });
+      setIcon(it.createSpan({ cls: 'sfx-star' }), e.shape === 'cone' ? 'triangle' : e.shape === 'line' ? 'minus' : e.shape === 'cube' ? 'square' : e.shape === 'wall' ? 'brick-wall' : 'circle');
+      const tx = it.createDiv({ cls: 'sfx-name' });
+      tx.createDiv({ cls: 'sfx-end-name', text: l.name });
+      tx.createDiv({ cls: 'sfx-end-detail', text: l.detail });
+      it.onmouseenter = () => P.showOnMap(e); it.onmouseleave = () => P.showOnMap(null);
+      const b = it.createEl('button', { text: 'End' });
+      b.onclick = (ev) => { ev.stopPropagation(); P.showOnMap(null); P.end(e.id); this.render(); };
     }
     const foot = el.createDiv({ cls: 'sfx-foot' });
-    const all = foot.createEl('button', { text: 'End them all' }); all.onclick = () => { this.plugin.endAllHere(); this.render(); };
+    const all = foot.createEl('button', { text: 'End them all', cls: 'mod-warning' }); all.onclick = () => { P.showOnMap(null); P.endAllHere(); this.render(); };
+    const done = foot.createEl('button', { text: 'Done' }); done.onclick = () => this.close();
   }
-  onClose(): void { this.contentEl.empty(); }
+  onClose(): void { this.plugin.showOnMap(null); this.contentEl.empty(); }
 }
 
 /** "Download everything": what it fetches, before it starts. */
@@ -2167,5 +2347,11 @@ class EffectSettings extends PluginSettingTab {
     new Setting(el).setName('On the map').setHeading();
     new Setting(el).setName('Snap to grid').setDesc('Spheres, cubes and wall corners land on the nearest grid corner, as the rules place them (Alt: the other way, once).')
       .addToggle((t: any) => t.setValue(s.snap).onChange(async (v: boolean) => { s.snap = v; await p.save(); }));
+    new Setting(el).setName('Cone angle').setDesc('A cone’s angle at its point when its spell doesn’t say: 53° for D&D 5e (as wide at its end as it is long), 90° for Pathfinder. Each spell or preset can have its own in the cast window.')
+      .addText((t: any) => {
+        t.setValue(String(Math.round(s.coneAngle * 100) / 100));
+        t.inputEl.type = 'number'; t.inputEl.min = '1'; t.inputEl.max = '170';
+        t.onChange(async (v: string) => { const n = Number(v); if (n >= 1 && n <= 170) { s.coneAngle = n; await p.save(); } });
+      });
   }
 }
