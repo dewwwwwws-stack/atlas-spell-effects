@@ -1,0 +1,100 @@
+/* Atlas Spell Effects */
+
+/* effects on the map */
+.sfx-layer{position:fixed;left:50%;top:50%;pointer-events:none;overflow:hidden;z-index:5}
+.sfx{position:absolute;left:0;top:0;pointer-events:none;transform-origin:50% 50%;will-change:transform;transition:opacity 450ms ease}
+.sfx.sfx-out{opacity:0 !important}
+.sfx>video,.sfx>img{width:100%;height:100%;display:block;object-fit:fill}
+.sfx-drawn{width:100%;height:100%;position:relative}
+.sfx{--c2:var(--c)}
+.sfx-radius .sfx-drawn,.sfx-emanation .sfx-drawn{border-radius:50%;background:radial-gradient(circle,color-mix(in srgb,var(--c) 42%,transparent) 0%,color-mix(in srgb,var(--c) 32%,transparent) 45%,color-mix(in srgb,var(--c2) 42%,transparent) 72%,color-mix(in srgb,var(--c2) 75%,transparent) 100%);box-shadow:0 0 calc(var(--u)*0.6) var(--c2),inset 0 0 calc(var(--u)*0.9) var(--c2)}
+.sfx-cube .sfx-drawn{background:radial-gradient(farthest-side,color-mix(in srgb,var(--c) 55%,transparent),color-mix(in srgb,var(--c2) 45%,transparent) 80%,color-mix(in srgb,var(--c2) 70%,transparent));box-shadow:0 0 calc(var(--u)*0.5) var(--c2),inset 0 0 calc(var(--u)*0.6) var(--c2)}
+.sfx-line .sfx-drawn{border-radius:calc(var(--u)*0.4);background:linear-gradient(0deg,color-mix(in srgb,var(--c2) 55%,transparent),color-mix(in srgb,var(--c) 85%,transparent) 50%,color-mix(in srgb,var(--c2) 55%,transparent));box-shadow:0 0 calc(var(--u)*0.5) var(--c2)}
+.sfx-cone .sfx-drawn{clip-path:polygon(0 50%,100% 0,100% 100%);background:linear-gradient(90deg,color-mix(in srgb,var(--c) 85%,transparent),color-mix(in srgb,var(--c2) 30%,transparent))}
+.sfx-instant .sfx-drawn{animation:sfx-burst 1800ms ease-out forwards}
+.sfx-lasting .sfx-drawn{animation:sfx-pulse 2.4s ease-in-out infinite}
+.sfx-cone.sfx-instant .sfx-drawn,.sfx-line.sfx-instant .sfx-drawn{transform-origin:0 50%;animation-name:sfx-sweep}
+@keyframes sfx-burst{0%{transform:scale(.15);opacity:0}18%{opacity:1}55%{transform:scale(1);opacity:.95}100%{transform:scale(1.04);opacity:0}}
+@keyframes sfx-sweep{0%{transform:scaleX(.05);opacity:0}25%{opacity:1}55%{transform:scaleX(1);opacity:.95}100%{transform:scaleX(1);opacity:0}}
+@keyframes sfx-pulse{0%,100%{opacity:.75;filter:brightness(1)}50%{opacity:1;filter:brightness(1.35)}}
+.sfx-preview .sfx-drawn{animation:none;opacity:.55;outline:2px dashed var(--c)}
+.sfx.sfx-wall{width:0;height:0;transform:none;overflow:visible}
+.sfx-piece{position:absolute;left:0;top:0;transform-origin:50% 50%}
+.sfx-piece>video,.sfx-piece>img{position:absolute;top:0;left:0;height:100%;display:block;object-fit:fill}
+.sfx-wall .sfx-drawn{border-radius:calc(var(--u)*0.3);background:linear-gradient(0deg,color-mix(in srgb,var(--c) 45%,transparent),color-mix(in srgb,var(--c) 85%,transparent) 50%,color-mix(in srgb,var(--c) 45%,transparent));box-shadow:0 0 calc(var(--u)*0.5) var(--c)}
+.sfx-wall.sfx-preview .sfx-drawn{outline:none}
+svg.sfx-path{position:absolute;left:0;top:0;width:1px;height:1px;overflow:visible;border-radius:0;background:none;box-shadow:none}
+svg.sfx-path path{fill:none;stroke:var(--c2);stroke-opacity:.7;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 0 calc(var(--u)*0.35) var(--c2))}
+svg.sfx-path path.sfx-core{stroke:var(--c);stroke-opacity:.85;filter:none}
+.sfx-preview svg.sfx-path path{stroke-opacity:.45;stroke-dasharray:6 6}
+.sfx-sel{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;z-index:2}
+.sfx-sel svg{position:absolute;left:0;top:0;width:1px;height:1px;overflow:visible}
+.sfx-sel polygon{fill:none;stroke:#fff;stroke-width:1.5;stroke-dasharray:5 4;filter:drop-shadow(0 0 1px #000)}
+.sfx-sel line{stroke:#fff;stroke-width:1.5;filter:drop-shadow(0 0 1px #000)}
+.sfx-handle{position:absolute;left:0;top:0;width:12px;height:12px;margin:-6px 0 0 -6px;background:#fff;border:2px solid #4a8cff;border-radius:2px;box-shadow:0 0 2px #000;pointer-events:auto;touch-action:none}
+.sfx-handle[data-handle=turn]{border-radius:50%;background:#4a8cff;border-color:#fff}
+.sfx-handle[data-handle^=p]{border-radius:50%}
+
+/* the toolbar */
+.sfx-tool{display:flex;align-items:center}.sfx-tool .sfx-cast{position:relative}
+.atlas-main-toolbar.is-editing .sfx-tool{display:none}
+.sfx-tool .sfx-badge{position:absolute;top:1px;right:1px;min-width:14px;height:14px;padding:0 3px;border-radius:7px;background:var(--interactive-accent);color:var(--text-on-accent);font-size:9px;line-height:14px;text-align:center;pointer-events:none}
+.sfx-tool .sfx-badge:empty{display:none}
+
+/* the windows */
+.sfx-modal{width:min(940px,94vw)}.sfx-modal.sfx-edit{width:min(660px,94vw)}.sfx-modal .modal-content{padding-top:4px}
+.sfx-castwin{display:grid;grid-template-columns:minmax(220px,280px) 1fr;gap:18px;min-height:440px}
+@media (max-width:700px){.sfx-castwin{grid-template-columns:1fr}}
+.sfx-side{display:flex;flex-direction:column;gap:8px;min-width:0}
+.sfx-side input[type=search]{width:100%}
+.sfx-list{flex:1;overflow:auto;max-height:52vh;border:1px solid var(--background-modifier-border);border-radius:var(--radius-m);background:var(--background-secondary)}
+.sfx-group{padding:6px 10px 2px;font-size:var(--font-ui-smaller);text-transform:uppercase;letter-spacing:.06em;color:var(--text-faint)}
+.sfx-item{display:flex;align-items:center;gap:8px;padding:5px 10px;cursor:pointer;border-radius:var(--radius-s);margin:1px 4px}
+.sfx-item:hover{background:var(--background-modifier-hover)}.sfx-item.is-on{background:var(--interactive-accent);color:var(--text-on-accent)}
+.sfx-item .sfx-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sfx-item small{color:var(--text-muted);font-size:var(--font-ui-smaller);white-space:nowrap}.sfx-item.is-on small{color:var(--text-on-accent);opacity:.85}
+.sfx-item .sfx-star{color:var(--color-yellow)}.sfx-item.is-on .sfx-star{color:inherit}
+.sfx-pane{display:flex;flex-direction:column;gap:14px;min-width:0}
+.sfx-head{display:flex;gap:12px;align-items:center}.sfx-head h3{margin:0;font-size:1.25em}
+.sfx-head .sfx-card{width:64px;height:64px;object-fit:cover;border-radius:var(--radius-m);border:1px solid var(--background-modifier-border)}
+.sfx-chip{font-size:var(--font-ui-smaller);padding:1px 8px;border-radius:999px;background:var(--background-modifier-hover);color:var(--text-muted)}
+.sfx-label{font-size:var(--font-ui-smaller);color:var(--text-muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em}
+.sfx-seg{display:inline-flex;border:1px solid var(--background-modifier-border);border-radius:var(--radius-m);overflow:hidden;flex-wrap:wrap}
+.sfx-seg button{border:0;border-radius:0;box-shadow:none;background:transparent;padding:4px 10px;height:auto;font-size:var(--font-ui-small)}
+.sfx-seg button+button{border-left:1px solid var(--background-modifier-border)}
+.sfx-seg button.is-on{background:var(--interactive-accent);color:var(--text-on-accent)}
+.sfx-fields{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px;font-size:var(--font-ui-small)}
+.sfx-fields input[type=number]{width:64px}
+.sfx-toggle{display:inline-flex;gap:6px;align-items:center;cursor:pointer}
+.sfx-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px;max-height:30vh;overflow:auto;padding:2px}
+.sfx-tile{border:2px solid transparent;border-radius:var(--radius-m);background:var(--background-secondary);cursor:pointer;overflow:hidden;display:flex;flex-direction:column}
+.sfx-tile:hover{border-color:var(--background-modifier-border-hover)}.sfx-tile.is-on{border-color:var(--interactive-accent)}
+.sfx-tile .sfx-thumb{height:72px;background:#111 center/contain no-repeat;display:flex;align-items:center;justify-content:center}
+.sfx-tile video,.sfx-tile img{width:100%;height:72px;object-fit:contain;display:block;background:#111}
+.sfx-tile{position:relative}.sfx-tile .sfx-dl{position:absolute;top:3px;right:4px;font-size:11px;padding:0 5px;border-radius:999px;background:rgba(0,0,0,.6);color:#fff}
+.sfx-tile span{font-size:10px;padding:3px 5px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sfx-drawn-tile{width:46px;height:46px;border-radius:50%;background:radial-gradient(circle,color-mix(in srgb,var(--c) 40%,transparent) 0%,transparent 45%,var(--c2,var(--c)) 100%);box-shadow:0 0 12px var(--c2,var(--c))}
+.sfx-swatches{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.sfx-swatches button{height:auto;padding:3px 10px;font-size:var(--font-ui-smaller);border-radius:999px}
+.sfx-swatches button.is-on{background:var(--interactive-accent);color:var(--text-on-accent)}
+.sfx-foot{display:flex;gap:8px;align-items:center;justify-content:flex-end;border-top:1px solid var(--background-modifier-border);padding-top:12px;margin-top:4px}
+.sfx-foot .sfx-saved{margin-right:auto;font-size:var(--font-ui-smaller);color:var(--text-muted)}
+.sfx-empty{color:var(--text-muted);padding:10px}
+.sfx-chip.sfx-warn{color:var(--text-warning)}
+
+/* spells in Atlas statblocks */
+::highlight(sfx-spell){text-decoration:underline dotted 1.5px;text-underline-offset:2px;text-decoration-color:var(--interactive-accent,#7f6df2);color:var(--text-accent,#a48bff)}
+body.sfx-sb-over .atlas-statblock *,body.sfx-sb-over .atlas-sb-sheet *{cursor:pointer !important}
+.sfx-sb-tip{position:fixed;z-index:9999;pointer-events:none;background:rgba(0,0,0,.85);color:#fff;font:500 12px/1.3 var(--font-interface,system-ui);padding:4px 9px;border-radius:999px;white-space:nowrap;transform:translate(10px,14px)}
+
+/* the add-on's own bits, as classes */
+.sfx-hint{position:absolute;left:50%;top:12px;transform:translateX(-50%);z-index:50;background:rgba(0,0,0,.78);color:#fff;padding:6px 14px;border-radius:999px;font:500 13px/1.3 var(--font-interface,system-ui);pointer-events:none;white-space:nowrap}
+.sfx-tool.sfx-floating{position:absolute;right:16px;top:16px;z-index:40;display:flex;padding:4px;background:var(--background-primary);border:1px solid var(--background-modifier-border);border-radius:12px}
+.sfx-relative{position:relative}
+.sfx-base-query{position:fixed;left:-10000px;top:0;width:400px;height:300px;overflow:hidden;pointer-events:none}
+canvas.sfx-cursor-move{cursor:move}
+.sfx-fields.sfx-flush{margin-top:0}
+.sfx-label.sfx-flush{margin-bottom:0}
+.sfx-push{margin-left:auto}
+.sfx-hidden{display:none}
+.sfx-wide{width:100%}
