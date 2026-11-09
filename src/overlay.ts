@@ -97,7 +97,7 @@ export class Painter {
         this.mask = mask;
         // the holes go in a CSS variable; the class (styles.css) puts them to use
         if (mask) setVar(this.under, '--sfx-holes', mask);
-        this.under.toggleClass('sfx-holes', !!mask);
+        if (this.under.classList.contains('sfx-holes') !== !!mask) this.under.classList.toggle('sfx-holes', !!mask);
       }
     }
     void now;

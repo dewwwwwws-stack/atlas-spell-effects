@@ -75,14 +75,12 @@ export function placedLights(e: Effect, light: EffectLight, box: Box, tokenAt: T
   if (e.shape !== 'wall' && e.shape !== 'line') return [placedLight(e, light, box, tokenAt, ppf)];
   const one = placedLight({ ...e, shape: 'radius' }, light, box, tokenAt, ppf);
   const along = e.shape === 'wall' ? pieces : [box];
-  // a wall of light is one Atlas light, the shape of the whole wall: one light to work out, not one a piece
+  // a wall of light: point lights along it, about every 10 ft. Atlas moves point lights cheaply (as it does its
+  // own torches), where a light over an area is worked out again in full at every change.
   if (e.shape === 'wall' && light.mode !== 'darkness' && pieces.length) {
-    const band = wallBand(pieces, Math.max(pieces[0]!.h, ppf || 1) / 2);
-    if (band.length >= 3) {
-      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-      for (const q of band) { x0 = Math.min(x0, q.x); y0 = Math.min(y0, q.y); x1 = Math.max(x1, q.x); y1 = Math.max(y1, q.y); }
-      return [{ x: (x0 + x1) / 2, y: (y0 + y1) / 2, area: band, emission: { ...one.emission, bright: Math.max(0, light.bright), dim: Math.max(light.bright, light.dim, 0) } }];
-    }
+    const ft = ppf || 14;
+    const pts = alongWall(pieces, 10 * ft);
+    return pts.map((q) => ({ x: q.x, y: q.y, emission: { ...one.emission, bright: Math.max(0, light.bright), dim: Math.max(light.bright, light.dim, 1) } }));
   }
   return along.map((b) => {
     if (light.mode === 'darkness') return { x: b.cx, y: b.cy, emission: { ...one.emission, dim: Math.max(1, Math.round(b.w / 2 / (ppf || 14))) } };
@@ -129,4 +127,31 @@ export function wallBand(pieces: readonly Box[], hh: number): { x: number; y: nu
   }
   if (!closed) return [...left, ...right.reverse()];
   return [...left, left[0]!, right[0]!, ...right.slice(1).reverse(), right[0]!];
+}
+
+/** A ring wall's outline in two halves, each a plain band (no seam): for a ring's light, as two Atlas lights. */
+export function ringHalves(pieces: readonly Box[], hh: number): { x: number; y: number }[][] {
+  const n = pieces.length; if (n < 4) return [wallBand(pieces, hh)];
+  const h = Math.ceil(n / 2);
+  return [wallBand(pieces.slice(0, h), hh), wallBand(pieces.slice(h), hh)];
+}
+
+/**
+ * Points along a wall (its pieces in order) about `step` apart: both ends of an open wall, evenly round a closed
+ * one. At most 24.
+ */
+export function alongWall(pieces: readonly Box[], step: number): { x: number; y: number }[] {
+  const segs = pieces.map((b) => { const dx = Math.cos(b.rot) * b.w / 2, dy = Math.sin(b.rot) * b.w / 2; return { a: { x: b.cx - dx, y: b.cy - dy }, z: { x: b.cx + dx, y: b.cy + dy }, len: b.w }; });
+  const total = segs.reduce((t, s) => t + s.len, 0);
+  if (!segs.length || total <= 0) return segs.length ? [segs[0]!.a] : [];
+  const first = segs[0]!, last = segs[segs.length - 1]!;
+  const closed = segs.length > 2 && Math.hypot(first.a.x - last.z.x, first.a.y - last.z.y) <= 1;
+  const n = Math.min(24, Math.max(closed ? 3 : 2, Math.round(total / Math.max(1, step)) + (closed ? 0 : 1)));
+  const gap = closed ? total / n : total / (n - 1);
+  const at = (d: number) => {
+    let left = Math.min(d, total);
+    for (const s of segs) { if (left <= s.len || s === last) { const k = s.len ? Math.min(1, left / s.len) : 0; return { x: s.a.x + (s.z.x - s.a.x) * k, y: s.a.y + (s.z.y - s.a.y) * k }; } left -= s.len; }
+    return last.z;
+  };
+  return Array.from({ length: n }, (_, i) => at(i * gap));
 }

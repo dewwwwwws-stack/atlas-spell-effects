@@ -854,9 +854,10 @@ export default class AtlasSpellEffects extends Plugin {
       layer: () => {
         const c = doc.getElementById(PLAYER_CANVAS) as HTMLCanvasElement | null; if (!c || !live()) return null;
         let el = doc.body.querySelector(':scope > .sfx-layer') as HTMLElement | null;
-        if (!el) { el = doc.createElement('div'); el.className = 'sfx-layer'; doc.body.appendChild(el); }
+        // plain DOM only here: the player window may not have Obsidian's element helpers
+        if (!el) { el = doc.createElement('div'); el.className = 'sfx-layer sfx-tv'; doc.body.appendChild(el); }
         const k = `${c.offsetWidth}|${c.offsetHeight}`;
-        if (el.dataset.at !== k) { el.dataset.at = k; el.setCssStyles({ width: c.offsetWidth + 'px', height: c.offsetHeight + 'px', transform: 'translate(-50%,-50%) rotate(var(--atlas-tv-rotation,0deg))' }); }
+        if (el.dataset.at !== k) { el.dataset.at = k; el.style.width = `${c.offsetWidth}px`; el.style.height = `${c.offsetHeight}px`; }
         return el;
       },
       mapping: (): Mapping | null => {
@@ -889,7 +890,8 @@ export default class AtlasSpellEffects extends Plugin {
       this.frame();
       const busy = !!this.placing || !!this.dragging || this.lightMoving.size > 0 || this.effects.some((e) => !e.lasting);
       if (!this.effects.length && !this.placing) { this.clearPainters(); return; }
-      if (busy || this.still < 20) this.loop = requestAnimationFrame(step);
+      // one loop only: a wake() during the frame has already asked for the next one
+      if (!this.loop && (busy || this.still < 20)) this.loop = requestAnimationFrame(step);
     };
     this.loop = requestAnimationFrame(step);
   }
@@ -956,18 +958,31 @@ export default class AtlasSpellEffects extends Plugin {
     for (const t of this.atlasTabs()) {
       let p = this.painters.get(t.view); if (!p) { p = new Painter(this.tabSurface(t), world); this.painters.set(t.view, p); }
       const pl = this.placing;
-      p.paint(this.effects, now, out, pl && pl.tab.view === t.view ? pl.preview : null); live.add(t.view);
+      const pp = p; this.safely('drawing', () => pp.paint(this.effects, now, out, pl && pl.tab.view === t.view ? pl.preview : null)); live.add(t.view);
     }
     for (const l of this.app.workspace.getLeavesOfType(PLAYER_VIEW)) {
       const doc = (l.view as any)?.containerEl?.ownerDocument as Document | undefined; if (!doc) continue;
       let p = this.painters.get(doc); if (!p) { p = new Painter(this.playerSurface(doc), world); this.painters.set(doc, p); }
-      p.paint(this.effects, now, out, null); live.add(doc);
+      const pp = p; this.safely('drawing on the TV', () => pp.paint(this.effects, now, out, null)); live.add(doc);
     }
     for (const [k, p] of this.painters) if (!live.has(k)) { p.stop(); this.painters.delete(k); }
-    this.paintSelection();
-    this.syncLights();
-    this.hideMarkers();
-    this.syncWalls();
+    // each on its own: one going wrong never stops the others (lights and walls are kept in step whatever happens)
+    this.safely('selection', () => this.paintSelection());
+    this.safely('lights', () => this.syncLights());
+    this.safely('markers', () => this.hideMarkers());
+    this.safely('walls', () => this.syncWalls());
+  }
+
+  /** Runs one part of a frame; a failure is reported once (in the console) instead of stopping the rest. */
+  private failed = new Set<string>();
+  private safely(what: string, f: () => void): void {
+    try { f(); }
+    catch (e) {
+      if (this.failed.has(what)) return;
+      this.failed.add(what);
+      console.error(`Atlas Spell Effects: ${what} went wrong`, e);
+      new Notice(`Atlas Spell Effects: ${what} went wrong (${e instanceof Error ? e.message : String(e)}). The rest carries on.`, 12000);
+    }
   }
 
   /** The picked effects' outlines (and one alone's controls), on the DM's view of their map. */
