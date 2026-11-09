@@ -18,6 +18,8 @@ export interface Surface {
   mapping(): Mapping | null;
   /** Whether this surface shows the map `map` now. */
   shows(map: string): boolean;
+  /** The players' view: only tokens the players have show through lasting effects. */
+  players?: boolean;
 }
 
 /** What the painter needs to know of the world for an effect, now. */
@@ -27,6 +29,8 @@ export interface World {
   token(map: string, id: string): TokenAt | null;
   /** The vault file's address for a video or image element. */
   url(path: string): string | null;
+  /** The tokens on a map (for the players: only their own, never hidden ones), to show through lasting effects. */
+  tokens(map: string, players: boolean): TokenAt[];
 }
 
 /** A style written only when it changed. */
@@ -47,6 +51,8 @@ export const FADE_MS = 450;
 /** One surface's elements, by effect id. */
 export class Painter {
   private els = new Map<string, HTMLElement>();
+  private under: HTMLElement | null = null;
+  private mask = '';
   constructor(readonly surface: Surface, private readonly world: World) {}
 
   /** Draws `effects` as they are now (`now`, ms); `out` are ending (fading). */
@@ -54,8 +60,17 @@ export class Painter {
     const layer = this.surface.layer();
     const m = layer ? this.surface.mapping() : null;
     const keep = new Set<string>();
+    const holes: { x: number; y: number; r: number }[] = [];
     if (layer && m) {
       const all = preview ? [...effects, preview] : effects;
+      // lasting effects sit together under the tokens' holes: what stays on the map never hides who stands in it
+      if (!this.under || this.under.parentElement !== layer) { this.under?.remove(); this.under = this.surface.doc.createElement('div'); this.under.className = 'sfx-under'; layer.prepend(this.under); this.mask = ''; }
+      const maps = new Set<string>();
+      for (const e of effects) if (e.lasting && this.surface.shows(e.map)) maps.add(e.map);
+      for (const map of maps) for (const t of this.world.tokens(map, !!this.surface.players)) {
+        const q = m.toLocal(t.x, t.y); const r = t.r * m.scale;
+        if (r > 1 && q.x > -r && q.y > -r && q.x < layer.clientWidth + r && q.y < layer.clientHeight + r) holes.push({ x: q.x, y: q.y, r });
+      }
       for (const e of all) {
         if (!this.surface.shows(e.map)) continue;
         const s = this.world.scale(e.map); if (!s) continue;
@@ -63,7 +78,7 @@ export class Painter {
         if (e.token && !tok) continue;                               // its token is gone (or on another level)
         const info = e.file ? artInfo.get(e.file) : undefined;
         let el = this.els.get(e.id);
-        if (!el) { const made = this.make(e, layer); if (!made) continue; el = made; this.els.set(e.id, el); }
+        if (!el) { const made = this.make(e, e.lasting && e.id !== 'preview' ? this.under! : layer); if (!made) continue; el = made; this.els.set(e.id, el); }
         if (e.shape === 'wall') { if (e.file && e.id !== 'preview') this.placeWall(el, e, wallPieces(e, s, tok, true), m, s, info, wallPoints(e, tok)); else this.drawWall(el, e, s, tok, m); }
         else this.place(el, boxOf(e, s, tok, info ? { aspect: info.aspect, feet: info.feet } : null), m, s);
         if (el.classList.contains('sfx-out') !== out.has(e.id)) el.classList.toggle('sfx-out', out.has(e.id));
@@ -71,6 +86,15 @@ export class Painter {
       }
     }
     for (const [id, el] of this.els) if (!keep.has(id)) { el.remove(); this.els.delete(id); }
+    if (this.under) {
+      const f = (n: number) => n.toFixed(1);
+      const mask = holes.slice(0, 80).map((h) => `radial-gradient(circle ${f(h.r)}px at ${f(h.x)}px ${f(h.y)}px, rgba(0,0,0,.18) ${f(h.r * 0.82)}px, #000 ${f(h.r)}px)`).join(', ');
+      if (mask !== this.mask) {
+        this.mask = mask;
+        if (mask) { this.under.style.setProperty('mask-image', mask); this.under.style.setProperty('mask-composite', 'intersect'); this.under.style.setProperty('mask-repeat', 'no-repeat'); }
+        else { this.under.style.removeProperty('mask-image'); this.under.style.removeProperty('mask-composite'); this.under.style.removeProperty('mask-repeat'); }
+      }
+    }
     void now;
   }
 

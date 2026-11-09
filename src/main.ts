@@ -760,6 +760,17 @@ export default class AtlasSpellEffects extends Plugin {
       scale: (map) => { const t = this.atlasTabs().find((x) => this.mapOf(x) === map); return t ? this.scaleOf(t) : null; },
       token: (map, id) => { const t = this.atlasTabs().find((x) => this.mapOf(x) === map); return t ? this.tokenOf(t, id) : null; },
       url: (path) => { const f = this.app.vault.getAbstractFileByPath(path); return f instanceof TFile ? this.app.vault.getResourcePath(f) : null; },
+      tokens: (map, players) => {
+        const t = this.atlasTabs().find((x) => this.mapOf(x) === map); if (!t) return [];
+        const all = t.store.getState()?.objects?.tokens ?? {};
+        const out: TokenAt[] = [];
+        for (const [id, tok] of Object.entries<any>(all)) {
+          // the players see through to their own tokens only (Atlas's sides: unset, a token that sees is theirs)
+          if (players && (tok?.isHidden || !(tok?.side === 'players' || (!tok?.side && tok?.vision?.enabled)))) continue;
+          const at = this.tokenOf(t, id); if (at) out.push(at);
+        }
+        return out;
+      },
     };
   }
 
@@ -821,6 +832,7 @@ export default class AtlasSpellEffects extends Plugin {
         return { toLocal: (x, y) => ({ x: ((x - v.left) / vw * bw - bw / 2) * s + boxW / 2, y: ((y - v.top) / vh * bh - bh / 2) * s + boxH / 2 }), scale: bw / vw * s };
       },
       shows: (map) => { const l = live(); return !!l && plugin.mapOf(l.t) === map; },
+      players: true,
     };
   }
 
@@ -990,10 +1002,10 @@ export default class AtlasSpellEffects extends Plugin {
         const have = ids.filter((id) => lights[id]);
         if (ids.length && have.length === ids.length && ids.length === inputs.length) {
           if (this.lightKeys.get(e.id) === key) { this.lightMoving.delete(e.id); continue; }
-          // A point light moves live, as Atlas's own do: only its place is written, and Atlas traces a moving
-          // light cheaply until it rests. Darkness and a light over a whole area (a line, a cube, a wall) are
-          // worked out again in full by Atlas at every change, so those are written once they stand still a moment.
-          const heavy = pls.some((pl) => !!pl.emission.darkness || !!pl.area);
+          // A point light (darkness too) moves live, as Atlas's own do: only its place is written, and Atlas
+          // traces a moving light cheaply until it rests. A light over a whole area (a line, a cube, a wall) is
+          // worked out again in full by Atlas at every change, so it is written once it stands still a moment.
+          const heavy = pls.some((pl) => !!pl.area);
           if (heavy) {
             if (this.dragging?.id === e.id) { this.wake(); continue; }
             const mv = this.lightMoving.get(e.id);
