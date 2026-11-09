@@ -38,7 +38,7 @@ const numOf = (v: unknown, d: number) => { const n = Number(v); return Number.is
 export const linkOf = (v: unknown): string => {
   const s = Array.isArray(v) ? String(v[0] ?? '') : typeof v === 'string' ? v : '';
   const m = /!?\[\[([^\]|#]+)(?:[#|][^\]]*)?\]\]/.exec(s);
-  return (m ? m[1]! : s).trim();
+  return (m ? m[1] : s).trim();
 };
 
 type FM = Record<string, unknown> | null | undefined;

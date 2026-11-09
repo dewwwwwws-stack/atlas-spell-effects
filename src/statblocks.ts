@@ -26,7 +26,7 @@ export class SpellNames {
     this.re.lastIndex = 0;
     for (let m: RegExpExecArray | null; (m = this.re.exec(text)); ) {
       // the name itself (after the character before it, which isn't part of it)
-      const start = m.index + m[1]!.length, name = m[2]!;
+      const start = m.index + m[1].length, name = m[2];
       const link = this.byName.get(norm(name));
       if (link) out.push({ start, end: start + name.length, link });
       if (name.length === 0) this.re.lastIndex++;
@@ -36,13 +36,17 @@ export class SpellNames {
 }
 
 /** Text that is about spellcasting (not a spell's name that is also a word, as "light" in "dim light"). */
-export const SPELL_TEXT = /spellcast|\bspells?\b|at will|\/day|cantrips?|\(\d+ slots?\)|\d+(st|nd|rd|th)[- ]level|spell save dc|casting time|\bcomponents?\b|\bconc(entration)?\b|\britual\b/i;
+export const SPELL_TEXT = /spellcast|\bcasts?\b|\bspells?\b|at will|\/day|cantrips?|\(\d+ slots?\)|\d+(st|nd|rd|th)[- ]level|spell save dc|casting time|\bcomponents?\b|\bconc(entration)?\b|\britual\b/i;
 
 const STATBLOCK = '.atlas-statblock, .atlas-sb-sheet, .atlas-statblock-preview-window, [class*="statblock"]';
 const LIST = '.atlas-sb-spell-list, .atlas-sb-spell-header, .atlas-sb-spells-block';
 const HL = 'sfx-spell';
 
 type Hit = { node: Text; start: number; end: number; link: SpellLink };
+/** The CSS Custom Highlight API (Chromium's; not in every DOM typing yet). */
+interface HighlightWindow { Highlight?: new (...ranges: Range[]) => object; CSS?: { highlights?: { set(name: string, h: object): void; delete(name: string): void } } }
+/** Where a point falls in the text (the two names browsers give it). */
+interface CaretDocument { caretRangeFromPoint?(x: number, y: number): Range | null; caretPositionFromPoint?(x: number, y: number): { offsetNode: Node; offset: number } | null }
 
 /** Watches one document's Atlas statblocks. */
 export class StatblockLinker {
@@ -78,7 +82,7 @@ export class StatblockLinker {
   stop(): void {
     this.obs?.disconnect(); this.obs = null;
     for (const f of this.off.splice(0)) f();
-    (this.doc.defaultView as any)?.CSS?.highlights?.delete?.(HL);
+    (this.doc.defaultView as (Window & HighlightWindow) | null)?.CSS?.highlights?.delete(HL);
     this.tip?.remove(); this.tip = null;
     this.doc.body.classList.remove('sfx-sb-over');
     window.clearTimeout(this.timer);
@@ -100,11 +104,13 @@ export class StatblockLinker {
         const spelly = /\bspells?\b|cantrips?|spellcasting/i.test(sb.textContent ?? '');
         const walker = this.doc.createTreeWalker(sb, NodeFilter.SHOW_TEXT);
         const about = new Map<Element, boolean>();
+        const display = new Map<Element, string>();
         for (let n = walker.nextNode() as Text | null; n; n = walker.nextNode() as Text | null) {
           const text = n.data; if (text.trim().length < 3) continue;
           const host = n.parentElement; if (!host || host.closest('input, textarea, [contenteditable=true]')) continue;
-          // a spell list, or a paragraph about spellcasting
-          const unit = host.closest(`${LIST}, p, li, td`) ?? host;
+          // a spell list, or a paragraph about spellcasting: the block the name is in (Atlas sets a trait's text in
+          // spans and links, inside a block of its own)
+          const unit = host.closest(LIST) ?? this.blockOf(host, sb, display);
           let ok = about.get(unit);
           if (ok === undefined) {
             // a spell list, text about spellcasting, or a name set in bold or italics in a statblock that has spells
@@ -117,7 +123,7 @@ export class StatblockLinker {
       }
     }
     this.hits = hits;
-    const w = this.doc.defaultView as any;
+    const w = this.doc.defaultView as (Window & HighlightWindow) | null;
     const H = w?.Highlight, reg = w?.CSS?.highlights;
     if (H && reg) {
       const ranges = hits.map((h) => { const r = this.doc.createRange(); r.setStart(h.node, h.start); r.setEnd(h.node, h.end); return r; });
@@ -125,12 +131,26 @@ export class StatblockLinker {
     }
   }
 
+  /** The nearest element round `el` that is a block of text (not a span or link in a line), within `root`. */
+  private blockOf(el: Element, root: Element, seen: Map<Element, string>): Element {
+    const view = this.doc.defaultView;
+    let at: Element | null = el;
+    for (let i = 0; at && i < 10; i++, at = at.parentElement) {
+      if (at.matches('p, li, td, dd, blockquote, h1, h2, h3, h4, h5, h6')) return at;
+      let d = seen.get(at);
+      if (d === undefined) { d = view ? view.getComputedStyle(at).display : 'block'; seen.set(at, d); }
+      if (!d.startsWith('inline') && d !== 'contents' && d !== 'none') return at;
+      if (at === root) return at;
+    }
+    return el;
+  }
+
   /** The spell name under the pointer, if any. */
   private at(e: MouseEvent): Hit | null {
     if (!this.hits.length) return null;
     const t = e.target as Element | null;
     if (!t?.closest?.(STATBLOCK)) return null;
-    const d = this.doc as any;
+    const d = this.doc as Document & CaretDocument;
     let node: Node | null = null, off = 0;
     if (d.caretRangeFromPoint) { const r = d.caretRangeFromPoint(e.clientX, e.clientY); if (r) { node = r.startContainer; off = r.startOffset; } }
     else if (d.caretPositionFromPoint) { const p = d.caretPositionFromPoint(e.clientX, e.clientY); if (p) { node = p.offsetNode; off = p.offset; } }

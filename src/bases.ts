@@ -15,7 +15,7 @@ const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v =
 /** Registers the add-on's (hidden-use) Bases view; true once Bases can run it (Obsidian 1.10+, Bases on). */
 export function basesReady(plugin?: Plugin): boolean {
   if (plugin) owner = plugin;
-  if (ready || !owner || typeof (owner as any).registerBasesView !== 'function') return ready;
+  if (ready || !owner || typeof (owner as unknown as Record<string, unknown>)['registerBasesView'] !== 'function') return ready;
   if (!requireApiVersion('1.10.0')) return false;
   class SpellQueryView extends BasesView {
     type = VIEW;

@@ -63,7 +63,7 @@ export function areaOf(spell: SpellEntry): Area | null {
   const wall = /\bwall\b[^.]*?up to (\d+) feet long|\b(ten|six|five|four|three|two|\d+) (\d+)-foot(?:-by-\d+-foot|-square) panels/i.exec(text);
   if (wall) {
     const words: Record<string, number> = { two: 2, three: 3, four: 4, five: 5, six: 6, ten: 10 };
-    const length = wall[1] ? num(wall[1]) : (words[wall[2]!.toLowerCase()] ?? num(wall[2])) * num(wall[3]);
+    const length = wall[1] ? num(wall[1]) : (words[wall[2].toLowerCase()] ?? num(wall[2])) * num(wall[3]);
     const thick = /(\d+) (?:feet|foot) thick/i.exec(text);
     const inches = /(\d+) inch(?:es)? thick/i.exec(text);
     const ring = /ring(?:ed wall)? up to (\d+) feet in diameter|circle that has an? (\d+)-foot diameter/i.exec(text);
@@ -73,11 +73,11 @@ export function areaOf(spell: SpellEntry): Area | null {
     found.push({ at: wall.index, area: { shape: 'wall', size: length, width: thick ? num(thick[1]) : inches ? Math.max(0.1, num(inches[1]) / 12) : 1, ...(ring ? { ring: num(ring[1] ?? ring[2]) } : {}), blocks, from: 'point', lasting: last } });
   }
   found.sort((x, y) => x.at - y.at);
-  if (found.length && found[0]!.area.size > 0) return found[0]!.area;
+  if (found.length && found[0].area.size > 0) return found[0].area;
   let m: RegExpExecArray | null;
   // the sheet's own short form when the text has none: "S:15-ft rad", "S:15ft cone", "S:15ft cube", "S:60-ft line"
   if ((m = /^S:(\d+)-?ft\s*(rad|cone|cube|line)/i.exec(range))) {
-    const k = m[2]!.toLowerCase();
+    const k = m[2].toLowerCase();
     const shape: Shape = k === 'rad' ? 'emanation' : (k as Shape);
     return { shape, size: num(m[1]), ...(shape === 'line' ? { width: 5 } : {}), from: 'caster', lasting: last };
   }

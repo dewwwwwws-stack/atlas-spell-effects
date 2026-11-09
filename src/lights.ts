@@ -21,8 +21,8 @@ export function withLook<T extends Record<string, unknown>>(emission: T, look: R
 }
 
 /**
- * What changed in Atlas's light editor, from what was last written (`wrote`) to what Atlas has now: its range
- * and colour go to the spell's own settings, the rest to its look. A cone's angle and darkness's reach stay the
+ * What changed in Atlas's light editor, from what was last written (`wrote`) to what Atlas has now: its colour
+ * goes to the spell's own settings, the rest (its range too) to its look, which wins over the spell's own. A cone's angle and darkness's reach stay the
  * effect's (they follow its shape). False: nothing changed.
  */
 export function adoptLook(light: EffectLight, wrote: Record<string, unknown>, now: Record<string, unknown>, cone: boolean): boolean {
@@ -31,8 +31,8 @@ export function adoptLook(light: EffectLight, wrote: Record<string, unknown>, no
   for (const k of new Set([...Object.keys(wrote), ...Object.keys(now)])) {
     if (JSON.stringify(wrote[k]) === JSON.stringify(now[k])) continue;
     if (k === 'darkness' || (cone && k === 'angle')) continue;
-    if (k === 'bright' || k === 'dim') { if (light.mode !== 'darkness' && typeof now[k] === 'number') { light[k] = now[k] as number; changed = true; } continue; }
-    if (k === 'color' && typeof now[k] === 'string') { light.colour = now[k] as string; changed = true; continue; }
+    if ((k === 'bright' || k === 'dim') && light.mode === 'darkness') continue;
+    if (k === 'color' && typeof now[k] === 'string') { light.colour = now[k]; changed = true; continue; }
     look[k] = now[k] === undefined ? null : now[k];
     changed = true;
   }
@@ -77,14 +77,18 @@ export interface PlacedLight {
 export function placedLight(e: Effect, light: EffectLight, box: Box, tokenAt?: TokenAt | null, ppf = 0): PlacedLight {
   const dark = light.mode === 'darkness';
   const darkFeet = ppf > 0 && (e.shape === 'radius' || e.shape === 'emanation') ? Math.round(box.w / 2 / ppf) : e.shape === 'cube' && ppf > 0 ? Math.round(box.w / 2 / ppf) : light.dim;
+  // a light fills its whole area in bright light (more, if the spell says so): a sphere to its edge, a cone to its far corners
+  const coneReach = e.shape === 'cone' ? e.size / Math.cos(((Math.min(170, Math.max(1, e.angle ?? 53.13)) / 2) * Math.PI) / 180) : 0;
+  const fill = e.shape === 'radius' || e.shape === 'emanation' ? darkFeet : e.shape === 'cone' ? Math.min(coneReach, e.size * 3) : 0;
+  const bright = Math.max(0, Math.min(light.bright, light.dim), Math.round(fill));
   const emission: PlacedLight['emission'] = dark
     ? { bright: 0, dim: Math.max(1, darkFeet), color: light.colour || DARKNESS_COLOUR, intensity: 1, animation: 'none', sourceRadius: 1, darkness: true, kind: 'darkness' }
-    : { bright: Math.max(0, Math.min(light.bright, light.dim)), dim: Math.max(light.bright, light.dim, 1), color: light.colour || LIGHT_COLOUR, intensity: 1, animation: 'magic', sourceRadius: 1, kind: 'magical' };
+    : { bright, dim: Math.max(light.bright, light.dim, bright, 1), color: light.colour || LIGHT_COLOUR, intensity: 1, animation: 'magic', sourceRadius: 1, kind: 'magical' };
   const place = placeOf(e, tokenAt);
   if (e.shape === 'cone') {
     // from its point, the way it faces (Atlas: degrees, 0 up, 90 right), as wide as a cone (about 53°)
     const deg = ((place.dir ?? 0) * 180) / Math.PI + 90;
-    return { x: place.at.x, y: place.at.y, rotation: ((deg % 360) + 360) % 360, emission: { ...emission, angle: Math.round(e.angle ?? 53) } };
+    return { x: place.at.x, y: place.at.y, rotation: ((deg % 360) + 360) % 360, emission: { ...emission, angle: Math.round(e.angle ?? 53.13) } };
   }
   if (e.shape === 'line') {
     // a line's light shines from where it starts (Sunbeam's mote in your hand)
@@ -144,10 +148,10 @@ export function wallBand(pieces: readonly Box[], hh: number): { x: number; y: nu
     if (!last || Math.hypot(last.x - a.x, last.y - a.y) > 1) pts.push(a);
     pts.push(z);
   }
-  const closed = pts.length > 3 && Math.hypot(pts[0]!.x - pts[pts.length - 1]!.x, pts[0]!.y - pts[pts.length - 1]!.y) <= 1;
+  const closed = pts.length > 3 && Math.hypot(pts[0].x - pts[pts.length - 1].x, pts[0].y - pts[pts.length - 1].y) <= 1;
   if (closed) pts.pop();
   const n = pts.length; if (n < 2) return [];
-  const dir = (i: number, j: number) => { const d = Math.hypot(pts[j]!.x - pts[i]!.x, pts[j]!.y - pts[i]!.y) || 1; return { x: (pts[j]!.x - pts[i]!.x) / d, y: (pts[j]!.y - pts[i]!.y) / d }; };
+  const dir = (i: number, j: number) => { const d = Math.hypot(pts[j].x - pts[i].x, pts[j].y - pts[i].y) || 1; return { x: (pts[j].x - pts[i].x) / d, y: (pts[j].y - pts[i].y) / d }; };
   const left: { x: number; y: number }[] = [], right: { x: number; y: number }[] = [];
   for (let i = 0; i < n; i++) {
     const prev = closed || i > 0 ? dir((i - 1 + n) % n, i) : null;
@@ -158,12 +162,12 @@ export function wallBand(pieces: readonly Box[], hh: number): { x: number; y: nu
     // the corner's mitre: further out the sharper the turn, never more than three times as far
     const ref = next ?? prev!;
     const k = Math.min(3, 1 / Math.max(1 / 3, Math.abs(nx * -ref.y + ny * ref.x)));
-    const p = pts[i]!;
+    const p = pts[i];
     left.push({ x: p.x + nx * hh * k, y: p.y + ny * hh * k });
     right.push({ x: p.x - nx * hh * k, y: p.y - ny * hh * k });
   }
   if (!closed) return [...left, ...right.reverse()];
-  return [...left, left[0]!, right[0]!, ...right.slice(1).reverse(), right[0]!];
+  return [...left, left[0], right[0], ...right.slice(1).reverse(), right[0]];
 }
 
 /** A ring wall's outline in two halves, each a plain band (no seam): for a ring's light, as two Atlas lights. */
@@ -180,8 +184,8 @@ export function ringHalves(pieces: readonly Box[], hh: number): { x: number; y: 
 export function alongWall(pieces: readonly Box[], step: number): { x: number; y: number }[] {
   const segs = pieces.map((b) => { const dx = Math.cos(b.rot) * b.w / 2, dy = Math.sin(b.rot) * b.w / 2; return { a: { x: b.cx - dx, y: b.cy - dy }, z: { x: b.cx + dx, y: b.cy + dy }, len: b.w }; });
   const total = segs.reduce((t, s) => t + s.len, 0);
-  if (!segs.length || total <= 0) return segs.length ? [segs[0]!.a] : [];
-  const first = segs[0]!, last = segs[segs.length - 1]!;
+  if (!segs.length || total <= 0) return segs.length ? [segs[0].a] : [];
+  const first = segs[0], last = segs[segs.length - 1];
   const closed = segs.length > 2 && Math.hypot(first.a.x - last.z.x, first.a.y - last.z.y) <= 1;
   const n = Math.min(24, Math.max(closed ? 3 : 2, Math.round(total / Math.max(1, step)) + (closed ? 0 : 1)));
   const gap = closed ? total / n : total / (n - 1);

@@ -181,7 +181,7 @@ export function wallPieces(e: Effect, s: Scale, tokenAt?: TokenAt | null, art = 
   const out: Box[] = [];
   const n = e.closed && pts.length > 2 ? pts.length : pts.length - 1;
   for (let i = 0; i < n; i++) {
-    const a = pts[i]!, b = pts[(i + 1) % pts.length]!;
+    const a = pts[i], b = pts[(i + 1) % pts.length];
     const len = Math.hypot(b.x - a.x, b.y - a.y);
     if (len < 0.5) continue;
     out.push({ cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, w: len, h: th, rot: Math.atan2(b.y - a.y, b.x - a.x) });
@@ -196,7 +196,7 @@ export function ringPoints(diameter: number, s: Scale, n = 16): Point[] {
 }
 
 /** A path's length (world units). */
-export const pathLength = (pts: readonly Point[]): number => pts.slice(1).reduce((t, p, i) => t + Math.hypot(p.x - pts[i]!.x, p.y - pts[i]!.y), 0);
+export const pathLength = (pts: readonly Point[]): number => pts.slice(1).reduce((t, p, i) => t + Math.hypot(p.x - pts[i].x, p.y - pts[i].y), 0);
 
 /** `next` cut short so the path from `pts` stays within `max` world units. */
 export function within(pts: readonly Point[], next: Point, max: number): Point {

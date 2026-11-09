@@ -22,7 +22,7 @@ export function jb2aFiles(): Jb2aFile[] {
     for (const n of names) {
       const [file, flag] = n.split('|');
       const rel = `${dir}/${file}`;
-      const stem = file!.replace(/\.[^.]+$/, '').replace(/_\d+x\d+$/, '');
+      const stem = file.replace(/\.[^.]+$/, '').replace(/_\d+x\d+$/, '');
       if (indexFile(rel)) out.push({ rel, thumb: flag === 't' ? raw(`${dir}/${stem}_Thumb.webp`) : null });   // only what the add-on can play
     }
   }
@@ -61,7 +61,7 @@ export async function writeCredit(app: App, root: string): Promise<void> {
 export async function fetchJb2a(app: App, root: string, rel: string): Promise<string> {
   const path = `${root}/${rel}`;
   if (app.vault.getAbstractFileByPath(path) instanceof TFile) return path;
-  const res = await requestUrl({ url: raw(rel), method: 'GET', throw: false } as any);
+  const res = await requestUrl({ url: raw(rel), method: 'GET', throw: false });
   if (res.status !== 200 || !res.arrayBuffer || res.arrayBuffer.byteLength < 64) throw new Error(`JB2A said ${res.status} for ${rel.split('/').pop()}`);
   await folderFor(app, path);
   if (!app.vault.getAbstractFileByPath(path)) await app.vault.createBinary(path, res.arrayBuffer);

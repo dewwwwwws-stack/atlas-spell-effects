@@ -24,13 +24,13 @@ export function looksLikeSpell(fm: FM, bodyTags: readonly string[] = []): boolea
 function lineValue(body: string, label: string): string {
   const re = new RegExp(`^[\\s>*_\\-|]*\\**${label}\\**\\s*[:|]\\**\\s*\\**\\s*([^\\n|]+)`, 'im');
   const m = re.exec(body);
-  return m ? m[1]!.replace(/\*+/g, '').trim() : '';
+  return m ? m[1].replace(/\*+/g, '').trim() : '';
 }
 
 /** The spell a note describes. */
 export function spellFromNote(path: string, fm: FM, body: string): SpellEntry {
   const base = path.split('/').pop()!.replace(/\.md$/i, '');
-  const name = str(fm?.['name'] ?? fm?.['title'] ?? fm?.['aliases']).split(',')[0]!.trim() || base;
+  const name = str(fm?.['name'] ?? fm?.['title'] ?? fm?.['aliases']).split(',')[0].trim() || base;
   // the text without the properties block
   const text = body.replace(/^---\n[\s\S]*?\n---\n?/, '');
   const level = Number(fm?.['level'] ?? fm?.['spell-level']);

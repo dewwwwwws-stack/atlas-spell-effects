@@ -68,7 +68,7 @@ export class Painter {
     if (layer && m) {
       const all = preview ? [...effects, preview] : effects;
       // lasting effects sit together under the tokens' holes: what stays on the map never hides who stands in it
-      if (!this.under || this.under.parentElement !== layer) { this.under?.remove(); this.under = this.surface.doc.createElement('div'); this.under.className = 'sfx-under'; layer.prepend(this.under); this.mask = ''; }
+      if (!this.under || this.under.parentElement !== layer) { this.under?.remove(); this.under = layer.createDiv({ cls: 'sfx-under' }); layer.prepend(this.under); this.mask = ''; }
       const maps = new Set<string>();
       for (const e of effects) if (e.lasting && this.surface.shows(e.map)) maps.add(e.map);
       for (const map of maps) for (const t of this.world.tokens(map, !!this.surface.players)) {
@@ -82,7 +82,7 @@ export class Painter {
         if (e.token && !tok) continue;                               // its token is gone (or on another level)
         const info = e.file ? artInfo.get(e.file) : undefined;
         let el = this.els.get(e.id);
-        if (!el) { const made = this.make(e, e.lasting && e.id !== 'preview' ? this.under! : layer); if (!made) continue; el = made; this.els.set(e.id, el); }
+        if (!el) { const made = this.make(e, e.lasting && e.id !== 'preview' ? this.under : layer); if (!made) continue; el = made; this.els.set(e.id, el); }
         if (e.shape === 'wall') { if (e.file && e.id !== 'preview') this.placeWall(el, e, wallPieces(e, s, tok, true), m, s, info, wallPoints(e, tok)); else this.drawWall(el, e, s, tok, m); }
         else { this.place(el, boxOf(e, s, tok, info ? { aspect: info.aspect, feet: info.feet } : null), m, s); this.fit(el, e); }
         if (el.classList.contains('sfx-out') !== out.has(e.id)) el.classList.toggle('sfx-out', out.has(e.id));
@@ -103,9 +103,7 @@ export class Painter {
   }
 
   private make(e: Effect, layer: HTMLElement): HTMLElement | null {
-    const doc = this.surface.doc;
-    const el = doc.createElement('div');
-    el.className = `sfx sfx-${e.shape} ${e.lasting ? 'sfx-lasting' : 'sfx-instant'}${e.id === 'preview' ? ' sfx-preview' : ''}`;
+    const el = layer.createDiv({ cls: `sfx sfx-${e.shape} ${e.lasting ? 'sfx-lasting' : 'sfx-instant'}${e.id === 'preview' ? ' sfx-preview' : ''}` });
     el.style.setProperty('--c', e.colour || '#ff8a2a');
     if (e.colour2) el.style.setProperty('--c2', e.colour2);
     if (e.alpha !== undefined && e.alpha < 1) el.style.setProperty('--sfx-alpha', String(Math.max(0.05, e.alpha)));
@@ -122,7 +120,7 @@ export class Painter {
     if (url && e.file) {
       const file = e.file;
       const video = /\.(webm|mp4)$/i.test(file);
-      const media = doc.createElement(video ? 'video' : 'img') as HTMLVideoElement | HTMLImageElement;
+      const media: HTMLVideoElement | HTMLImageElement = video ? el.createEl('video') : el.createEl('img');
       const feet = Number((/(\d+)\s*ft/i.exec(file) ?? [])[1] ?? 0) || 0;
       const learn = (w: number, h: number, duration: number) => { if (w > 0 && h > 0) artInfo.set(file, { aspect: w / h, feet, duration }); };
       if (video) {
@@ -148,7 +146,7 @@ export class Painter {
     let svg = el.firstElementChild as SVGSVGElement | null;
     if (!svg || svg.tagName.toLowerCase() !== 'svg') {
       el.replaceChildren();
-      svg = this.surface.doc.createElementNS(NS, 'svg') as SVGSVGElement;
+      svg = this.surface.doc.createElementNS(NS, 'svg');
       svg.setAttribute('class', 'sfx-drawn sfx-path');
       svg.appendChild(this.surface.doc.createElementNS(NS, 'path'));
       const core = this.surface.doc.createElementNS(NS, 'path'); core.setAttribute('class', 'sfx-core'); svg.appendChild(core);
@@ -158,8 +156,8 @@ export class Painter {
     const d = pts.map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ') + (e.closed && pts.length > 2 ? ' Z' : '');
     const [path, core] = [...svg.children] as SVGPathElement[];
     const w = wallThickness(e, s, false) * m.scale;
-    if (path!.getAttribute('d') !== d) { path!.setAttribute('d', d); core!.setAttribute('d', d); }
-    setVar(path!, 'stroke-width', `${w.toFixed(1)}px`); setVar(core!, 'stroke-width', `${Math.max(1, w * 0.35).toFixed(1)}px`);
+    if (path.getAttribute('d') !== d) { path.setAttribute('d', d); core.setAttribute('d', d); }
+    setVar(path, 'stroke-width', `${w.toFixed(1)}px`); setVar(core, 'stroke-width', `${Math.max(1, w * 0.35).toFixed(1)}px`);
     setVar(el, '--u', `${Math.max(4, s.cell * m.scale * 0.5)}px`);
   }
 
@@ -171,11 +169,10 @@ export class Painter {
    * art, once, round the whole ring.
    */
   private placeWall(el: HTMLElement, e: Effect, pieces: Box[], m: Mapping, s: Scale, info?: { aspect: number }, pts?: Point[]): void {
-    const doc = this.surface.doc;
     const ringArt = !!e.closed && !!e.file && /(ring|circle|sphere)/i.test(e.file) && !!pts && pts.length > 2;
     if (ringArt) {
-      const cx = pts!.reduce((t, p) => t + p.x, 0) / pts!.length, cy = pts!.reduce((t, p) => t + p.y, 0) / pts!.length;
-      const r = Math.max(...pts!.map((p) => Math.hypot(p.x - cx, p.y - cy)));
+      const cx = pts.reduce((t, p) => t + p.x, 0) / pts.length, cy = pts.reduce((t, p) => t + p.y, 0) / pts.length;
+      const r = Math.max(...pts.map((p) => Math.hypot(p.x - cx, p.y - cy)));
       const d = 2 * r + (pieces[0]?.h ?? 0);
       pieces = [{ cx, cy, w: d, h: d, rot: 0 }];
     }
@@ -183,7 +180,7 @@ export class Painter {
     const last = pieces.length - 1;
     pieces.forEach((b0, i) => {
       let piece = el.children[i] as HTMLElement | undefined;
-      if (!piece) { piece = doc.createElement('div'); piece.className = 'sfx-piece'; el.appendChild(piece); }
+      if (!piece) piece = el.createDiv({ cls: 'sfx-piece' });
       let b = b0;
       if (!ringArt) {
         // past the corners: a little at each join (not at a wall's two free ends)
@@ -273,7 +270,7 @@ export function drawShape(doc: Document, el: HTMLElement, shape: Shape): void {
     const gid = 'sfx-g-' + Math.random().toString(36).slice(2);
     const svg = doc.createElementNS(NS, 'svg'); svg.setAttribute('class', 'sfx-drawn'); svg.setAttribute('viewBox', '0 0 100 100'); svg.setAttribute('preserveAspectRatio', 'none');
     const grad = doc.createElementNS(NS, 'linearGradient'); grad.id = gid;
-    for (const [off, cls] of [['0', 'sfx-cone-near'], ['0.55', 'sfx-cone-mid'], ['1', 'sfx-cone-far']]) { const st = doc.createElementNS(NS, 'stop'); st.setAttribute('offset', off!); st.setAttribute('class', cls!); grad.appendChild(st); }
+    for (const [off, cls] of [['0', 'sfx-cone-near'], ['0.55', 'sfx-cone-mid'], ['1', 'sfx-cone-far']]) { const st = doc.createElementNS(NS, 'stop'); st.setAttribute('offset', off); st.setAttribute('class', cls); grad.appendChild(st); }
     const defs = doc.createElementNS(NS, 'defs'); defs.appendChild(grad); svg.appendChild(defs);
     const tri = doc.createElementNS(NS, 'polygon'); tri.setAttribute('points', '0,50 100,0 100,100'); tri.setAttribute('fill', `url(#${gid})`); tri.setAttribute('class', 'sfx-cone-fill'); svg.appendChild(tri);
     const edge = doc.createElementNS(NS, 'polygon'); edge.setAttribute('points', '0,50 100,0 100,100'); edge.setAttribute('class', 'sfx-cone-edge'); edge.setAttribute('vector-effect', 'non-scaling-stroke'); svg.appendChild(edge);
@@ -284,14 +281,13 @@ export function drawShape(doc: Document, el: HTMLElement, shape: Shape): void {
     for (const cls of ['', 'sfx-core']) { const p = doc.createElementNS(NS, 'path'); p.setAttribute('d', 'M10 72 L42 36 L64 58 L90 26'); if (cls) p.setAttribute('class', cls); svg.appendChild(p); }
     el.appendChild(svg);
   } else {
-    const d = doc.createElement('div'); d.className = 'sfx-drawn'; el.appendChild(d);
+    el.createDiv({ cls: 'sfx-drawn' });
   }
 }
 
 /** A drawn effect as a sample (the cast window's first tile): its shape in its colours, as on the map. */
 export function drawnSample(parent: HTMLElement, shape: Shape, colour: string, colour2: string | undefined, alpha: number | undefined, angle?: number): HTMLElement {
-  const el = parent.ownerDocument.createElement('div');
-  el.className = `sfx sfx-${shape} sfx-lasting sfx-sample`;
+  const el = parent.createDiv({ cls: `sfx sfx-${shape} sfx-lasting sfx-sample` });
   el.style.setProperty('--c', colour);
   if (colour2) el.style.setProperty('--c2', colour2);
   if (alpha !== undefined && alpha < 1) el.style.setProperty('--sfx-alpha', String(Math.max(0.05, alpha)));
@@ -320,11 +316,11 @@ export function paintHandles(layer: HTMLElement | null, m: Mapping | null, picke
   if (!layer || !m || !picked?.length || !doc) { box?.remove(); return; }
   const loc = (p: Point) => m.toLocal(p.x, p.y);
   const f = (n: number) => n.toFixed(1);
-  const one = picked.length === 1 ? picked[0]! : null;
+  const one = picked.length === 1 ? picked[0] : null;
   const key = JSON.stringify(picked.map((c) => [c.outline, c.handles.map((h) => [h.id, f(h.x), f(h.y)]), c.badge])) + f(m.scale) + JSON.stringify(loc({ x: 0, y: 0 }));
   if (box && box.dataset.key === key) return;
   const NS = 'http://www.w3.org/2000/svg';
-  if (!box) { box = doc.createElement('div'); box.className = 'sfx-sel'; layer.prepend(box); }
+  if (!box) { box = layer.createDiv({ cls: 'sfx-sel' }); layer.prepend(box); }
   box.dataset.key = key;
   box.replaceChildren();
   // outlines
@@ -348,14 +344,13 @@ export function paintHandles(layer: HTMLElement | null, m: Mapping | null, picke
   // the controls of one picked effect
   for (const h of one.handles) {
     const q = loc(h);
-    const el = doc.createElement('div');
     const dot = h.id.startsWith('p');
-    el.className = dot ? 'sfx-ctl sfx-dot' : 'sfx-ctl';
+    const el = box.createDiv({ cls: dot ? 'sfx-ctl sfx-dot' : 'sfx-ctl' });
     el.dataset.handle = h.id; el.style.cursor = h.cursor;
     el.style.transform = `translate(${f(q.x)}px, ${f(q.y)}px)`;
     if (!dot) {
       const icon = doc.createElementNS(NS, 'svg'); icon.setAttribute('viewBox', '0 0 24 24');
-      for (const d of ICON[h.id === 'turn' ? 'turn' : h.id === 'chev-l' ? 'left' : 'right']!) { const pth = doc.createElementNS(NS, 'path'); pth.setAttribute('d', d); icon.appendChild(pth); }
+      for (const d of ICON[h.id === 'turn' ? 'turn' : h.id === 'chev-l' ? 'left' : 'right']) { const pth = doc.createElementNS(NS, 'path'); pth.setAttribute('d', d); icon.appendChild(pth); }
       el.appendChild(icon);
       el.title = h.id === 'turn' ? 'Drag to turn' : 'Drag to change the size';
     } else el.title = 'Drag this corner';
@@ -363,12 +358,12 @@ export function paintHandles(layer: HTMLElement | null, m: Mapping | null, picke
   }
   if (one.badge) {
     const q = loc(one.badge);
-    const b = doc.createElement('div'); b.className = 'sfx-sizebadge';
+    const b = box.createDiv({ cls: 'sfx-sizebadge' });
     b.style.transform = `translate(${f(q.x)}px, ${f(q.y)}px)`;
-    const v = doc.createElement('div'); v.className = 'sfx-size'; v.textContent = one.badge.text; v.title = `${one.badge.text} feet`; b.appendChild(v);
-    const col = doc.createElement('div'); col.className = 'sfx-steps';
+    const v = b.createDiv({ cls: 'sfx-size', text: one.badge.text }); v.title = `${one.badge.text} feet`;
+    const col = b.createDiv({ cls: 'sfx-steps' });
     for (const [cls, by, t] of [['sfx-plus', 5, '+'], ['sfx-minus', -5, '−']] as const) {
-      const btn = doc.createElement('button'); btn.className = cls; btn.dataset.step = String(by); btn.textContent = t; btn.title = by > 0 ? '5 ft more' : '5 ft less'; col.appendChild(btn);
+      const btn = col.createEl('button', { cls, text: t }); btn.dataset.step = String(by); btn.title = by > 0 ? '5 ft more' : '5 ft less';
     }
     b.appendChild(col);
     box.appendChild(b);
