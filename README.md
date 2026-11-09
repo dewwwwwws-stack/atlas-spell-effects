@@ -21,7 +21,7 @@ Settings → Community plugins → Browse → search **Spell Effects** → Insta
   preview picture shows in the cast window, or when you press *Download everything*. Turn *Offer every JB2A
   animation* off in the settings and it fetches nothing at all. No tracking, no accounts, nothing sent anywhere.
 - **Your vault:** it saves downloaded animations, and a JB2A credit and licence note, in the JB2A folder
-  (`JB2A_DnD5e`). *Save* writes `effect-…` properties onto that spell's note (and *Forget saved* takes them off
+  (`JB2A_DnD5e`). *Save* writes `effect-…` properties onto that spell's note (and *Delete* takes them off
   again). A spell of your own (*Save as new…*) gets a note, and a Base, in its own folder (*Spell Storage*);
   *Delete* puts that note in Obsidian's bin. It never deletes or changes anything else.
 - **Atlas:** it reads the open map (grid, tokens, view) and adds lights and walls for lasting effects when you ask
@@ -89,11 +89,11 @@ Set a spell up as you like it in the cast window (its area, animation, colours, 
 - **Save as new…** keeps it as a spell of its own under a new name ("Big blue Fireball", "Darkness (small)"). It
   gets a note in the folder for them (*Spell Storage* unless you change it), with a Base of its own. Use it for a
   second version of a spell, or for an effect that isn't a spell at all.
-- **In ✨ menu** puts a saved spell in the menu of the map's ✨ button, to cast in one click. It's also in Ctrl+P →
+- The **star** at the top of the cast window puts a saved spell in the menu of the map's ✨ button, to cast in one click. It's also in Ctrl+P →
   **Cast a saved spell…**.
-- **Delete** (a spell of your own) puts its note in Obsidian's bin. On one of your spell pages the button says
-  **Forget saved**: it takes the `effect-…` properties off and leaves the rest of the note alone, so the spell is cast
-  from its text again.
+- **Delete** (the bin at the top of the cast window) asks "Are you sure?" first. A spell of your own goes to Obsidian's bin, note and all. On one of your
+  spell pages, only the `effect-…` properties come off and the rest of the note stays, so the spell is cast from its
+  text again.
 
 Saved spells are listed first in the cast window, under **Saved spells** (★). Presets from versions before 1.4
 become saved spells of their own automatically, still in ✨'s menu.
@@ -136,11 +136,11 @@ properties the next time you save them.
    - Esc or right-click stops.
 - "Follows the caster" on a cone or line keeps it on the caster's token as it moves (a beholder's antimagic eye).
 - Instant spells play once and go. Lasting ones stay until ended, also after you restart Obsidian.
-- ✨'s arrow: **Cast <spell> again**, your saved spells ticked *In ✨ menu*, **Players see where I aim**, **End** each
+- ✨'s arrow: **Cast <spell> again**, your starred saved spells, **Spell AoE player preview**, **End** each
   lasting effect, **End them all**.
-- **Players see where you aim** (✨'s menu, or the settings; off unless you turn it on): while you place a spell,
-  the players' screen shows its area, so they can see what it will cover before you cast it. Choose how in the
-  settings: **Outline** (its edge, dashed, over a faint wash of its colour), **Filled**, or **Animation** (the
+- **Spell AoE player preview** (✨'s menu, or the settings; off unless you turn it on): while you place a spell,
+  the players' screen shows its area, so they can see what it will cover before you cast it. Choose its look in
+  the settings (*Player preview style*): **Outline** (its edge, dashed, over a faint wash of its colour), **Filled**, or **Animation** (the
   spell's own, a little see-through).
 
 ## Moving and changing effects
@@ -233,7 +233,7 @@ found in:
   or `[[Shield]]`.
 
 Other text doesn't count, so "dim light" in a description, or a trait called *Light Sensitivity*, isn't a link.
-A spell whose text names no area can be cast too: on its caster when its range is Self (Shield), otherwise on a
+A spell whose text names no area can be cast too: on its caster when its range is Self (Shield, *On a creature*), otherwise on a
 square at a point within range (Mage Hand).
 
 **Who's casting.** The add-on finds the creature casting it from the statblock:
@@ -270,7 +270,7 @@ Only spells the add-on knows (your spell notes, see *Spells: your Bases*) are cl
 
 ## Your game system
 The add-on reads the game system of the map's collection from Atlas (**Settings → Atlas Spell Effects** shows what it
-found), so there's nothing to set up. It works with every system built into Atlas: D&D 5e, Pathfinder 2e,
+found, by name), so there's nothing to set up. It works with every system built into Atlas: D&D 5e, Pathfinder 2e,
 Daggerheart, Shadowdark, Old-School Essentials, Cairn, Call of Cthulhu, Cyberpunk RED and Draw Steel, and with your
 own.
 - **Units:** sizes and ranges are in your game's own unit, as Atlas's rulers and lights are: feet, yards (Call of
@@ -294,15 +294,18 @@ system.
 Spells with no area are cast by clicking their targets. Click the spell (in a statblock or the cast window's
 **Place on the map**), then click each target token. Keep clicking for more targets, and press Esc, Enter or
 right-click when done.
-- **On a creature** (Hold Person, Bless, Cure Wounds…): the effect plays on each creature you click, the size of
-  its space (or bigger, with "plus N ft"). If the spell lasts, it stays on that creature and moves with it.
+- **On a creature** (Shield, Hold Person, Bless, Cure Wounds…): the effect plays on the creature, round its token
+  and over it, a little bigger than its space (or bigger still, with "reaching N ft past its space"). If the spell
+  lasts, it stays on that creature and moves with it. Choose who it's on: **The caster** (Shield, and any spell
+  with a range of Self: from a statblock it lands on that creature at once, otherwise one click on the caster), or
+  **Each creature you click**.
 - **A bolt at a creature** (Fire Bolt, Ray of Frost, Magic Missile, Disintegrate…): the effect shoots from the
   caster to each creature you click. From a creature's statblock, that creature is the caster. Otherwise, click
   the caster first.
 
 Which kind a spell is gets read from its text (ranged spell attacks, rays, bolts and darts are bolts; spells naming a
-creature or target play on it). Change it in the cast window: *A bolt at creatures* on a Line, *On creatures* on
-an "Around caster" area. It's kept with a saved spell as `effect-target` (`on` or `bolt`).
+creature or target play on it). Change it in the cast window: **On a creature** in the Area row, or *A bolt at creatures* on a Line. It's
+kept with a saved spell as `effect-target` (`self`, `on` or `bolt`).
 
 ## Licence
 The add-on's code: MIT (see `LICENSE`). JB2A's animations are not part of it. They're downloaded from JB2A and

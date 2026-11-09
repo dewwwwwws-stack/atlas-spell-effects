@@ -6,7 +6,7 @@
 // Container, and a Sprite and Texture from a picture on it. When they can't be found, the overlay (overlay.ts)
 // draws effects instead, as before.
 
-import { boxOf, wallPieces, wallPoints, wallThickness, type Box, type Effect, type Point, type Scale, type TokenAt } from './geometry';
+import { boxOf, onCreature, wallPieces, wallPoints, wallThickness, type Box, type Effect, type Point, type Scale, type TokenAt } from './geometry';
 import { artInfo, instantMs, FADE_MS, DRAWN_MS, type World } from './overlay';
 import { fitOf } from './trim';
 import { fromFeet } from './areas';
@@ -228,6 +228,9 @@ export class PixiPainter {
     const box = new this.kit.Container();
     box.label = 'sfx-effects';
     root.addChild(box);
+    // effects on a creature (Shield, Bless): round their token and over it, so not cut out
+    const over = new this.kit.Container();
+    over.label = 'sfx-on-creatures';
     const G = this.kit.Graphics;
     let masked = false;
     if (G) {
@@ -255,13 +258,15 @@ export class PixiPainter {
     const kids = vp.children ?? [];
     const at = kids.findIndex((k) => (k.zIndex ?? 0) > root.zIndex);
     if (at >= 0 && typeof vp.addChildAt === 'function') vp.addChildAt(root, at); else vp.addChild(root);
-    this.root = root; this.box = box;
+    root.addChild(over);
+    this.root = root; this.box = box; this.over = over;
     return box;
   }
 
   /** Whether it can cut the tokens out (so goes over the lighting). */
   get cuts(): boolean { return !!this.kit.Graphics; }
   private box: PNode | null = null;
+  private over: PNode | null = null;
   private cut: PGraphics | null = null;
   private probe: PNode | null = null;
   private unprobe: (() => void) | null = null;
@@ -311,10 +316,10 @@ export class PixiPainter {
       const s = this.world.scale(e.map); if (!s) continue;
       const tok = e.token ? this.world.token(e.map, e.token) : null;
       if (e.token && !tok) continue;
-      const look = [e.file ?? '', e.colour, e.colour2 ?? '', e.shape, e.closed ? 1 : 0, e.outline ? 'o' : '', e.shape === 'wall' ? JSON.stringify(e.points ?? []) + (e.width ?? '') : ''].join('|');
+      const look = [e.file ?? '', e.colour, e.colour2 ?? '', e.shape, e.closed ? 1 : 0, e.outline ? 'o' : '', onCreature(e) ? 'c' : '', e.shape === 'wall' ? JSON.stringify(e.points ?? []) + (e.width ?? '') : ''].join('|');
       let it = this.items.get(e.id);
       if (it && it.look !== look) { this.drop(e.id); it = undefined; }
-      if (!it) { it = this.make(e, look); it.node.label = e.id === AIM ? AIM : 'sfx-effect'; this.items.set(e.id, it); root.addChild(it.node); }
+      if (!it) { it = this.make(e, look); const into = onCreature(e) && this.over ? this.over : root; it.node.label = e.id === AIM ? AIM : 'sfx-effect'; this.items.set(e.id, it); into.addChild(it.node); }
       this.place(it, e, s, tok);
       // fading: in, out, and an instant effect's burst
       let a = e.alpha !== undefined && e.alpha < 1 ? Math.max(0.05, e.alpha) : 1;
@@ -471,6 +476,6 @@ export class PixiPainter {
     for (const id of [...this.items.keys()]) this.drop(id);
     this.unprobe?.(); this.unprobe = null; this.probe = null;
     if (this.root) { this.root.parent?.removeChild(this.root); this.root.destroy({ children: true }); this.root = null; }
-    this.box = null; this.cut = null; this.cutFor = '';
+    this.box = null; this.over = null; this.cut = null; this.cutFor = '';
   }
 }

@@ -25,6 +25,8 @@ export interface Effect {
   blocks?: WallBlocks;
   /** Those Atlas walls' ids on the map. */
   wallIds?: string[];
+  /** On a creature (Shield, Bless): drawn round its token and over it, not under it. */
+  on?: boolean;
   /** Drawn as its edge only, dashed, over a faint fill (the players' view of where the DM is aiming). */
   outline?: boolean;
   /** Centre (radius / cube at a point) or origin (cone, line, cube from the caster). */
@@ -112,6 +114,9 @@ export function detach(e: Effect, tokenAt: TokenAt | null): void {
   delete e.token; delete e.offset; delete e.turn;
 }
 
+/** An effect on a creature: drawn round its token and over it (an aura that would otherwise hide under it). */
+export const onCreature = (e: Effect): boolean => !!e.token && e.shape === 'emanation' && (!!e.on || !(e.size > 0));
+
 export function boxOf(e: Effect, s: Scale, tokenAt?: TokenAt | null, art?: { aspect: number; feet: number } | null): Box {
   const ppf = pxPerFoot(s);
   const place = placeOf(e, tokenAt);
@@ -124,8 +129,10 @@ export function boxOf(e: Effect, s: Scale, tokenAt?: TokenAt | null, art?: { asp
       return { cx: at.x, cy: at.y, w: d, h: d, rot: spin };
     }
     case 'emanation': {
-      // "extends N feet from the creature in every direction": from the token's edge
-      const d = 2 * (e.size * ppf + (tokenAt?.r ?? s.cell / 2));
+      // "extends N feet from the creature in every direction": from the token's edge (an effect on a creature
+      // reaches a little past it, so it shows round it)
+      const r = tokenAt?.r ?? s.cell / 2;
+      const d = 2 * (onCreature(e) ? r + Math.max(e.size * ppf, r * 0.3) : e.size * ppf + r);
       return { cx: at.x, cy: at.y, w: d, h: d, rot: spin };
     }
     case 'cube': {

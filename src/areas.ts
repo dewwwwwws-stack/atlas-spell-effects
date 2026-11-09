@@ -25,6 +25,8 @@ export interface Area {
    * space, plus `size` feet); `bolt`: a line from the caster to it.
    */
   target?: 'on' | 'bolt';
+  /** `on`: only on the caster (Shield, Mage Armor on yourself): no creatures to click. */
+  self?: boolean;
   /** Where it starts: on the caster (cone, line, emanation, a cube "originating from you") or at a point. */
   from: 'caster' | 'point';
   /** Stays on the map until ended (a duration other than instantaneous). */
@@ -228,14 +230,14 @@ export function targetOf(spell: SpellEntry): Area | null {
  */
 export function fallbackArea(spell: SpellEntry): Area {
   const self = /^self/i.test(String(spell.range ?? '').trim());
-  return self ? { shape: 'emanation', size: 0, from: 'caster', lasting: lasting(spell) } : { shape: 'radius', size: square() / 2, from: 'point', lasting: lasting(spell) };
+  return self ? { shape: 'emanation', size: 0, from: 'caster', target: 'on', self: true, lasting: lasting(spell) } : { shape: 'radius', size: square() / 2, from: 'point', lasting: lasting(spell) };
 }
 
 /** How an area reads: "20 ft radius", "15 ft cone", "100 × 5 ft line" (in the game's unit). */
 export function describe(a: Area): string {
   const u = unitLabel(), n = (x: number) => String(Math.round(x * 10) / 10);
   if (a.target === 'bolt') return 'a bolt at each creature you click';
-  if (a.target === 'on') return a.size ? `${n(a.size)} ${u} around each creature you click` : 'on each creature you click';
+  if (a.target === 'on') return a.self ? (a.size ? `${n(a.size)} ${u} around the caster` : 'on the caster') : a.size ? `${n(a.size)} ${u} around each creature you click` : 'on each creature you click';
   switch (a.shape) {
     case 'radius': return `${n(a.size)} ${u} radius${a.from === 'caster' ? ' around the caster' : ''}`;
     case 'emanation': return `${n(a.size)} ${u} around the caster`;

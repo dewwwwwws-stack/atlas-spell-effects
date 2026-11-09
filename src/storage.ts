@@ -73,11 +73,12 @@ export function storedFrom(path: string, fm: Record<string, unknown>, resolve: (
   const origin = String(get(fm, 'origin') ?? '').toLowerCase();
   const blocks = String(get(fm, 'walls') ?? '').toLowerCase() as WallBlocks;
   const tg = String(get(fm, 'target') ?? '').toLowerCase();
-  const target = tg === 'on' && shape === 'emanation' ? 'on' as const : tg === 'bolt' && shape === 'line' ? 'bolt' as const : undefined;
+  const target = (tg === 'on' || tg === 'self') && shape === 'emanation' ? 'on' as const : tg === 'bolt' && shape === 'line' ? 'bolt' as const : undefined;
   const area: Area = {
     shape,
     size: target === 'on' && Number(get(fm, 'size')) >= 0 ? Number(get(fm, 'size')) || 0 : numOf(get(fm, 'size'), fromFeet(shape === 'line' || shape === 'wall' ? 30 : 15)),
     ...(target ? { target } : {}),
+    ...(tg === 'self' && target === 'on' ? { self: true } : {}),
     ...(shape === 'line' ? { width: numOf(get(fm, 'width'), square()) } : shape === 'wall' ? { width: numOf(get(fm, 'width'), fromFeet(1)) } : {}),
     ...(shape === 'cone' && Number(get(fm, 'angle')) > 0 ? { angle: Number(get(fm, 'angle')) } : {}),
     ...(shape === 'wall' && Number(get(fm, 'ring')) > 0 ? { ring: Number(get(fm, 'ring')) } : {}),
@@ -118,7 +119,7 @@ export function writeDefaults(fm: Record<string, unknown>, s: { area: Area; file
   set('ring', a.shape === 'wall' && a.ring ? a.ring : undefined);
   set('round', a.shape === 'wall' && a.round ? true : undefined);
   set('walls', a.shape === 'wall' ? a.blocks ?? 'none' : undefined);
-  set('target', a.target);
+  set('target', a.target === 'on' && a.self ? 'self' : a.target);
   set('lasting', a.lasting);
   set('animation', s.file ? `[[${s.file}]]` : undefined);
   set('colour', s.colour);

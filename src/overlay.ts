@@ -1,7 +1,7 @@
 // Draws effects over a map: the DM's Atlas view and the player window each get a layer laid exactly over the
 // map canvas (turned with the TV), and every effect is an element placed in it from its box in the world.
 // Animations are the vault's files (video or image); without one, the add-on draws the shape itself.
-import { boxOf, coneWidth, wallPieces, wallPoints, wallThickness, type Controls, type Point, type Box, type Effect, type Scale, type TokenAt } from './geometry';
+import { boxOf, onCreature, coneWidth, wallPieces, wallPoints, wallThickness, type Controls, type Point, type Box, type Effect, type Scale, type TokenAt } from './geometry';
 import { fromFeet, unitLabel, type Shape } from './areas';
 import { fitOf, type Trim } from './trim';
 
@@ -86,7 +86,7 @@ export class Painter {
         if (e.token && !tok) continue;                               // its token is gone (or on another level)
         const info = e.file ? artInfo.get(e.file) : undefined;
         let el = this.els.get(e.id);
-        if (!el) { const made = this.make(e, e.lasting && !isPreview(e) ? this.under : layer); if (!made) continue; el = made; this.els.set(e.id, el); }
+        if (!el) { const made = this.make(e, e.lasting && !isPreview(e) && !onCreature(e) ? this.under : layer); if (!made) continue; el = made; this.els.set(e.id, el); }
         if (e.shape === 'wall') { if (e.file && !isPreview(e)) this.placeWall(el, e, wallPieces(e, s, tok, true), m, s, info, wallPoints(e, tok)); else this.drawWall(el, e, s, tok, m); }
         else { this.place(el, boxOf(e, s, tok, info ? { aspect: info.aspect, feet: info.feet } : null), m, s); this.fit(el, e); }
         if (el.classList.contains('sfx-out') !== out.has(e.id)) el.classList.toggle('sfx-out', out.has(e.id));
