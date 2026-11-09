@@ -12,7 +12,7 @@ import { areaOf, targetOf, describe, type Area, type Shape, type SpellEntry, typ
 import { indexFiles, indexFile, matchesFor, coloursOf, search, type EffectFile } from './library';
 import { isStored, storedFrom, writeDefaults, baseFile, noteName, type StoredSpell } from './storage';
 import { looksLikeSpell, spellFromNote } from './notes';
-import { lightOf, placedLights, lightKey, LIGHT_COLOUR, type EffectLight } from './lights';
+import { lightOf, placedLights, adoptLook, lightKey, LIGHT_COLOUR, type EffectLight } from './lights';
 
 import { boxOf, dirTo, hitEffect, snapCorner, placeOf, pxPerFoot, attachTo, detach, wallPieces, wallPoints, ringPoints, pathLength, within, controlsOf, stepSize, dragHandle, aims, CONE_ANGLE, type Box, type Effect, type Point, type Scale, type TokenAt } from './geometry';
 import { Painter, artInfo, instantMs, FADE_MS, paintHandles, drawnSample, type Surface, type World, type Mapping } from './overlay';
@@ -800,11 +800,12 @@ export default class AtlasSpellEffects extends Plugin {
       tokens: (map, players) => {
         const t = this.atlasTabs().find((x) => this.mapOf(x) === map); if (!t) return [];
         const all = t.store.getState()?.objects?.tokens ?? {};
+        const picked = new Set<string>(t.store.getState()?.selectedIds ?? []);
         const out: TokenAt[] = [];
         for (const [id, tok] of Object.entries<any>(all)) {
           // the players see through to their own tokens only (Atlas's sides: unset, a token that sees is theirs)
           if (players && (tok?.isHidden || !(tok?.side === 'players' || (!tok?.side && tok?.vision?.enabled)))) continue;
-          const at = this.tokenOf(t, id); if (at) out.push(at);
+          const at = this.tokenOf(t, id); if (at) out.push(players ? at : { ...at, sel: picked.has(id) });
         }
         return out;
       },
@@ -1048,13 +1049,18 @@ export default class AtlasSpellEffects extends Plugin {
         }
         const tok = e.token ? this.tokenOf(t, e.token) : null;
         if (e.token && !tok) continue;
+        // changed in Atlas's own light editor: kept with the spell (and on all of a wall's lights)
+        const wrote = this.lightWritten.get(e.id)?.[0]?.emission as Record<string, unknown> | undefined;
+        const now0 = ids.length ? lights[ids[0]!]?.emission : undefined;
+        if (wrote && now0 && ids.length === (this.lightWritten.get(e.id)?.length ?? -1) && adoptLook(e.light!, wrote, now0, e.shape === 'cone')) saved = true;
         const sc = this.scaleOf(t);
         const pls = placedLights(e, e.light!, this.boxFor(e, t), tok, pxPerFoot(sc), e.shape === 'wall' ? wallPieces(e, sc, tok, false) : []);
         const key = JSON.stringify(pls.map(lightKey));
         const inputs = pls.map((pl) => ({ x: pl.x, y: pl.y, rotation: pl.rotation, area: pl.area, emission: pl.emission }));
         const have = ids.filter((id) => lights[id]);
         if (ids.length && have.length === ids.length && ids.length === inputs.length) {
-          if (this.lightKeys.get(e.id) === key) { this.lightMoving.delete(e.id); continue; }
+          // unchanged, and Atlas's lights still where they were put (dragged off by hand: put back)
+          if (this.lightKeys.get(e.id) === key && have.every((id, n) => Math.abs(lights[id].x - inputs[n]!.x) < 0.5 && Math.abs(lights[id].y - inputs[n]!.y) < 0.5)) { this.lightMoving.delete(e.id); continue; }
           // A point light (darkness too) moves live, as Atlas's own do: only its place is written, and Atlas
           // traces a moving light cheaply until it rests. A light over a whole area (a line, a cube, a wall) is
           // worked out again in full by Atlas at every change, so it is written once it stands still a moment.
@@ -1635,6 +1641,16 @@ export default class AtlasSpellEffects extends Plugin {
     return { name, detail: bits.join(' · ') };
   }
 
+  /** Opens Atlas's own editor (its popover, with its range rings) on an effect's light. */
+  editAtlasLight(fx: Effect): void {
+    const t = this.atlasTabs().find((x) => this.mapOf(x) === fx.map);
+    const id = fx.lightIds?.find((l) => t?.store.getState()?.objects?.lights?.[l]);
+    if (!t || !id) { new Notice('This spell’s light isn’t on the map yet.'); return; }
+    const st = t.store.getState();
+    if (typeof st.openLightPopover === 'function') st.openLightPopover(id);
+    else new Notice('This version of Atlas can’t open its light editor from here.');
+  }
+
   /** Outlines an effect on its map while the pointer is over its name (a menu or the end window); `null`: as it was. */
   private shownBefore: { ids: string[]; tab: Tab } | null | undefined;
   showOnMap(fx: Effect | null): void {
@@ -1901,9 +1917,22 @@ class EditModal extends Modal {
 
     // light or darkness
     lightPicker(body, fx.light ?? null, fx.lasting, (l) => {
-      if (l) fx.light = l; else delete fx.light;
+      if (l) fx.light = { ...l, ...(fx.light?.look && l.mode === fx.light.mode ? { look: fx.light.look } : {}) }; else delete fx.light;
       this.changed(true);
     });
+    // everything else about the light, in Atlas's own light editor (what is set there stays with the spell)
+    const lbox = body.querySelector<HTMLElement>('.sfx-light:last-of-type') ?? body.querySelector<HTMLElement>('.sfx-light');
+    if (lbox && fx.light && fx.lasting && fx.lightIds?.length) {
+      const row = lbox.createDiv({ cls: 'sfx-fields' });
+      const more = row.createEl('button', { text: 'More light settings…' });
+      more.title = 'Atlas’s own light editor for this spell’s light: colour, beam, intensity, softness, flicker and more';
+      more.onclick = () => { this.close(); P.editAtlasLight(fx); };
+      if (fx.light.look) {
+        row.createSpan({ cls: 'sfx-muted', text: 'Changed in Atlas’s editor' });
+        const reset = row.createEl('button', { text: 'Reset' });
+        reset.onclick = () => { if (fx.light) delete fx.light.look; this.changed(true); this.render(); };
+      }
+    }
 
     // look
     lookPicker(body.createDiv(), bottom, { app: this.app, plugin: P, name: fx.name, shape: fx.shape, angle: fx.angle, size: fx.size, file: fx.file, colour: fx.colour, colour2: fx.colour2, alpha: fx.alpha, fileQuery: this.fileQuery,

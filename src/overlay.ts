@@ -64,7 +64,7 @@ export class Painter {
     const layer = this.surface.layer();
     const m = layer ? this.surface.mapping() : null;
     const keep = new Set<string>();
-    const holes: { x: number; y: number; r: number }[] = [];
+    const holes: { x: number; y: number; r: number; sel: boolean }[] = [];
     if (layer && m) {
       const all = preview ? [...effects, preview] : effects;
       // lasting effects sit together under the tokens' holes: what stays on the map never hides who stands in it
@@ -73,7 +73,7 @@ export class Painter {
       for (const e of effects) if (e.lasting && this.surface.shows(e.map)) maps.add(e.map);
       for (const map of maps) for (const t of this.world.tokens(map, !!this.surface.players)) {
         const q = m.toLocal(t.x, t.y); const r = t.r * m.scale;
-        if (r > 1 && q.x > -r && q.y > -r && q.x < layer.clientWidth + r && q.y < layer.clientHeight + r) holes.push({ x: q.x, y: q.y, r });
+        if (r > 1 && q.x > -r - 80 && q.y > -r - 80 && q.x < layer.clientWidth + r + 80 && q.y < layer.clientHeight + r + 80) holes.push({ x: q.x, y: q.y, r, sel: !!t.sel });
       }
       for (const e of all) {
         if (!this.surface.shows(e.map)) continue;
@@ -91,8 +91,7 @@ export class Painter {
     }
     for (const [id, el] of this.els) if (!keep.has(id)) { el.remove(); this.els.delete(id); }
     if (this.under) {
-      const f = (n: number) => n.toFixed(1);
-      const mask = holes.slice(0, 80).map((h) => `radial-gradient(circle ${f(h.r)}px at ${f(h.x)}px ${f(h.y)}px, rgba(0,0,0,.18) ${f(h.r * 0.82)}px, #000 ${f(h.r)}px)`).join(', ');
+      const mask = holes.length ? holesMask(holes.slice(0, 120), this.surface.layer()?.clientWidth ?? 0, this.surface.layer()?.clientHeight ?? 0) : '';
       if (mask !== this.mask) {
         this.mask = mask;
         // the holes go in a CSS variable; the class (styles.css) puts them to use
@@ -238,6 +237,30 @@ export class Painter {
     for (const el of this.els.values()) el.remove();
     this.els.clear();
   }
+}
+
+/**
+ * The see-through holes for tokens in lasting effects, as a mask (an SVG picture the size of the layer): each
+ * token, the nameplate and bars Atlas draws under it, the counters beside it, and, when it is picked, the ring of
+ * its handles. Atlas draws those at the same size on screen at any zoom, so they are measured in screen pixels.
+ */
+export function holesMask(holes: readonly { x: number; y: number; r: number; sel: boolean }[], w: number, h: number): string {
+  const f = (n: number) => n.toFixed(1);
+  const shapes: string[] = [];
+  for (const t of holes) {
+    const r = t.sel ? t.r + 34 : t.r * 1.06 + 2;
+    shapes.push(`<circle cx='${f(t.x)}' cy='${f(t.y)}' r='${f(r)}'/>`);
+    // nameplate and bars, under it
+    const bw = Math.max(t.r * 1.15, 62), top = t.y + t.r * 0.55, bh = t.r * 0.45 + 54;
+    shapes.push(`<rect x='${f(t.x - bw)}' y='${f(top)}' width='${f(bw * 2)}' height='${f(bh)}' rx='22'/>`);
+    // counters beside it
+    const sw = t.r + 30;
+    shapes.push(`<rect x='${f(t.x - sw)}' y='${f(t.y - t.r * 0.7)}' width='${f(sw * 2)}' height='${f(t.r * 1.4)}' rx='${f(t.r * 0.7)}'/>`);
+  }
+  // white: the effect shows; the holes' grey: it shows faintly (a fifth)
+  const W = Math.max(1, Math.round(w)), H = Math.max(1, Math.round(h));
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='${W}' height='${H}' viewBox='0 0 ${W} ${H}'><defs><filter id='b' x='-10%' y='-10%' width='120%' height='120%'><feGaussianBlur stdDeviation='7'/></filter><mask id='m'><rect width='100%' height='100%' fill='#fff'/><g fill='#333' filter='url(#b)'>${shapes.join('')}</g></mask></defs><rect width='100%' height='100%' fill='#000' mask='url(#m)'/></svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
 }
 
 /**

@@ -6,7 +6,39 @@ import type { Area, SpellEntry } from './areas';
 import { placeOf, type Box, type Effect, type TokenAt } from './geometry';
 
 /** What an effect gives off. Feet: `bright` and `dim` from its centre, or from its outline for a cube or line. */
-export interface EffectLight { mode: 'light' | 'darkness'; bright: number; dim: number; colour?: string }
+export interface EffectLight {
+  mode: 'light' | 'darkness'; bright: number; dim: number; colour?: string;
+  /** What was set in Atlas's own light editor (intensity, flicker, softness, …): kept over the spell's own. */
+  look?: Record<string, unknown>;
+}
+
+/** Atlas's emission, with what was set in its editor over it (a null there: a field taken away). */
+export function withLook<T extends Record<string, unknown>>(emission: T, look: Record<string, unknown> | undefined): T {
+  if (!look) return emission;
+  const out: Record<string, unknown> = { ...emission };
+  for (const [k, v] of Object.entries(look)) { if (v === null) delete out[k]; else out[k] = v; }
+  return out as T;
+}
+
+/**
+ * What changed in Atlas's light editor, from what was last written (`wrote`) to what Atlas has now: its range
+ * and colour go to the spell's own settings, the rest to its look. A cone's angle and darkness's reach stay the
+ * effect's (they follow its shape). False: nothing changed.
+ */
+export function adoptLook(light: EffectLight, wrote: Record<string, unknown>, now: Record<string, unknown>, cone: boolean): boolean {
+  let changed = false;
+  const look: Record<string, unknown> = { ...(light.look ?? {}) };
+  for (const k of new Set([...Object.keys(wrote), ...Object.keys(now)])) {
+    if (JSON.stringify(wrote[k]) === JSON.stringify(now[k])) continue;
+    if (k === 'darkness' || (cone && k === 'angle')) continue;
+    if (k === 'bright' || k === 'dim') { if (light.mode !== 'darkness' && typeof now[k] === 'number') { light[k] = now[k] as number; changed = true; } continue; }
+    if (k === 'color' && typeof now[k] === 'string') { light.colour = now[k] as string; changed = true; continue; }
+    look[k] = now[k] === undefined ? null : now[k];
+    changed = true;
+  }
+  if (changed) { if (Object.keys(look).length) light.look = look; else delete light.look; }
+  return changed;
+}
 
 /** Atlas's own colour for darkness, and a warm magical light. */
 export const DARKNESS_COLOUR = '#8f7cf0';
@@ -72,6 +104,11 @@ export function placedLight(e: Effect, light: EffectLight, box: Box, tokenAt?: T
  * length (an area light each). Darkness on a wall or line: one at the middle of each stretch, as long as it.
  */
 export function placedLights(e: Effect, light: EffectLight, box: Box, tokenAt: TokenAt | null, ppf: number, pieces: Box[] = []): PlacedLight[] {
+  const pls = placedLightsOf(e, light, box, tokenAt, ppf, pieces);
+  return light.look ? pls.map((pl) => ({ ...pl, emission: withLook(pl.emission, light.look) })) : pls;
+}
+
+function placedLightsOf(e: Effect, light: EffectLight, box: Box, tokenAt: TokenAt | null, ppf: number, pieces: Box[] = []): PlacedLight[] {
   if (e.shape !== 'wall' && e.shape !== 'line') return [placedLight(e, light, box, tokenAt, ppf)];
   const one = placedLight({ ...e, shape: 'radius' }, light, box, tokenAt, ppf);
   const along = e.shape === 'wall' ? pieces : [box];
