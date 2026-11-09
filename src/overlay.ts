@@ -35,6 +35,11 @@ export interface World {
   trim(path: string): Trim | null;
   /** The tokens on a map (for the players: only their own, never hidden ones), to show through lasting effects. */
   tokens(map: string, players: boolean): TokenAt[];
+  /**
+   * Whether Atlas draws a token in the frame being drawn now (its sprite is shown): the players' frame leaves out
+   * hidden tokens and those no player sees. Null when it can't tell.
+   */
+  shown?(map: string, id: string): boolean | null;
 }
 
 /** A style written only when it changed. */

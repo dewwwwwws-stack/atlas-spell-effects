@@ -161,8 +161,10 @@ turning goes in 15° steps. Hold **Alt** to do the other for one placing or drag
 centred on it.
 
 ## Good to know
-- Effects are drawn inside Atlas's map: over its lighting (a dark room doesn't hide them), under the tokens and
-  their bars, and under fog of war.
+- Effects are drawn inside Atlas's map, under every token (whatever its size), its bars and handles, and under
+  Atlas's lighting and fog of war, which light and hide them like the floor. A token the players can't see (hidden,
+  or in darkness) leaves no trace. Effects on a creature (Shield) sit just over their token, and only where the
+  players can see that creature.
 - Several Atlas tabs: it casts on the one you used last.
 
 ## Walls

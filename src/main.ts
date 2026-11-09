@@ -923,9 +923,16 @@ export default class AtlasSpellEffects extends Plugin {
           // the players see through to every token Atlas shows them (not hidden ones: a hole would give them away;
           // one out of their sight Atlas's own lighting and fog still hide, under the hole)
           if (players && (tok?.isHidden || tok?.offMap)) continue;
-          const at = this.tokenOf(t, id); if (at) out.push(players ? at : { ...at, sel: picked.has(id), ...(tok.offMap ? { off: true } : {}) });
+          const at = this.tokenOf(t, id); if (at) out.push(players ? { ...at, id } : { ...at, id, sel: picked.has(id), ...(tok.offMap ? { off: true } : {}) });
         }
         return out;
+      },
+      shown: (map, id) => {
+        const t = this.atlasTabs().find((x) => this.mapOf(x) === map); if (!t) return null;
+        const sprites = field(call(t.renderer, 'getTokenRenderer'), 'tokenSprites');
+        const sp = field(sprites, id) as { visible?: boolean; alpha?: number; parent?: unknown } | undefined;
+        if (!sp || typeof sp.visible !== 'boolean') return null;
+        return sp.visible && (sp.alpha ?? 1) > 0;
       },
     };
   }
@@ -1083,7 +1090,6 @@ export default class AtlasSpellEffects extends Plugin {
         let pp = this.pixiPainters.get(t.view);
         // Atlas's canvas went wrong for effects once: drawn over it from then on (as before)
         const giveUp = (e: unknown) => { this.noCanvas.add(t.viewport); this.pixiPainters.get(t.view)?.stop(); this.pixiPainters.delete(t.view); console.error('Atlas Spell Effects: drawing in Atlas’s canvas went wrong; drawing over it instead', e); this.wake(); };
-        if (pp && !pp.cuts && kit.Graphics) { pp.stop(); this.pixiPainters.delete(t.view); pp = undefined; }   // now it can go over the lighting
         if (!pp) { pp = new PixiPainter(kit, t.viewport, t.renderer, world, (path) => this.readFile(path), () => this.wake(), giveUp); this.pixiPainters.set(t.view, pp); }
         const px = pp, map = this.mapOf(t), pl = this.placing;
         const aim = this.settings.showAim && pl && pl.tab.view === t.view ? pl.preview : null;

@@ -22,16 +22,12 @@ interface PNode {
 }
 interface PTexture { destroy(destroySource?: boolean): void }
 interface PSprite extends PNode { texture: PTexture; anchor: { set(x: number, y?: number): void }; width: number; height: number }
-interface PGraphics extends PNode { clear(): PGraphics; circle(x: number, y: number, r: number): PGraphics; fill(style: unknown): PGraphics }
 interface Kit {
   Container: new () => PNode; Sprite: new (texture?: PTexture) => PSprite;
   texture(source: HTMLVideoElement | HTMLImageElement | HTMLCanvasElement): PTexture;
-  /** pixi's Graphics, for the tokens' cut-outs (none found: effects go under the tokens instead). */
-  Graphics: (new () => PGraphics) | null;
 }
 
 const kits = new WeakMap<object, Kit | null>();
-const kitTries = new WeakMap<object, number>();
 
 /** Atlas's pixi classes, found on its map (cached per viewport); null when not found. */
 export function kitOf(viewport: AtlasViewport): Kit | null {
@@ -54,22 +50,11 @@ export function kitOf(viewport: AtlasViewport): Kit | null {
       if (depth > 0) for (const c of (o['children'] as unknown[] | undefined) ?? []) look(c, depth - 1);
     };
     look(viewport, 6);
-    // a Graphics (a token's ring, the selection's frame): its class
-    let G: (new () => PGraphics) | null = null;
-    const lookG = (n: unknown, depth: number): void => {
-      if (G || !n || typeof n !== 'object') return;
-      const o = n as Record<string, unknown>;
-      if (typeof o['circle'] === 'function' && typeof o['fill'] === 'function' && typeof o['clear'] === 'function' && o['context']) { G = (n as { constructor: new () => PGraphics }).constructor; return; }
-      if (depth > 0) for (const c of (o['children'] as unknown[] | undefined) ?? []) lookG(c, depth - 1);
-    };
-    lookG(viewport, 6);
     const f = found as { S: new (t?: PTexture) => PSprite; from: (s: unknown) => PTexture } | null;
-    if (Container && f && typeof new Container().addChild === 'function') kit = { Container, Sprite: f.S, texture: (s) => f.from(s), Graphics: G };
+    if (Container && f && typeof new Container().addChild === 'function') kit = { Container, Sprite: f.S, texture: (s) => f.from(s) };
   } catch { kit = null; }
-  // not found yet (the map still loading): asked again later; without a Graphics yet, a while longer
-  const tries = (kitTries.get(viewport) ?? 0) + 1;
-  kitTries.set(viewport, tries);
-  if (kit && (kit.Graphics || tries > 120)) kits.set(viewport, kit);
+  // not found yet (the map still loading): asked again later
+  if (kit) kits.set(viewport, kit);
   return kit;
 }
 
@@ -214,77 +199,64 @@ export class PixiPainter {
   }
 
   /**
-   * Their layer in the viewport. Over Atlas's lighting (at 90: what is under it is lit, and darkened, like the
-   * floor) and under the tokens' bars and handles (100), with the tokens themselves cut out of it, so they show
-   * through. The players' frame (rendered from this same canvas) leaves hidden tokens out, so no hole gives them away. Without pixi's Graphics: under the tokens (and the
-   * lighting) instead.
+   * Their layer in the viewport: under the tokens (Atlas's tokens are at 0, the map's picture under them), so every
+   * token, whatever its size or shape, stands on top of every spell, and a token Atlas doesn't draw for the players
+   * (hidden, or out of their sight) leaves no trace. Atlas's lighting (at 90) lights the spells as it lights the floor.
+   * Effects on a creature (Shield, Bless) go in a layer of their own just over the tokens (still under their bars,
+   * handles and the lighting), each shown only in a frame where Atlas draws its creature.
    */
   private layer(): PNode | null {
     const vp = this.viewport as unknown as PNode;
     if (this.root && !this.root.destroyed && this.root.parent === vp && this.box) return this.box;
+    const put = (node: PNode, z: number) => {
+      node.zIndex = z;
+      const kids = vp.children ?? [];
+      const at = kids.findIndex((k) => (k.zIndex ?? 0) > z);
+      if (at >= 0 && typeof vp.addChildAt === 'function') vp.addChildAt(node, at); else vp.addChild(node);
+    };
     const root = new this.kit.Container();
     root.label = 'sfx-spell-effects';
     root.eventMode = 'none';
     const box = new this.kit.Container();
     box.label = 'sfx-effects';
     root.addChild(box);
-    // effects on a creature (Shield, Bless): round their token and over it, so not cut out
+    put(root, -0.5);
     const over = new this.kit.Container();
     over.label = 'sfx-on-creatures';
-    const G = this.kit.Graphics;
-    let masked = false;
-    if (G) {
-      try {
-        const g = new G();
-        g.label = 'sfx-token-cutouts';
-        root.addChild(g);
-        (box as unknown as { setMask(o: { mask: PNode; inverse: boolean }): void }).setMask({ mask: g, inverse: true });
-        this.cut = g; masked = true;
-        // which frame is being drawn, the DM's or the players': Atlas hides its DM-only overlays for the players'
-        const probe = new this.kit.Container();
-        probe.label = 'sfx-dm-probe';
-        const remove = call<() => void>(this.renderer, 'addDmScreenOverlay', probe);
-        if (typeof remove === 'function') { this.probe = probe; this.unprobe = remove; }
-        (root as unknown as { onRender: (() => void) | null }).onRender = () => {
-          const dm = !this.probe || this.probe.visible !== false;
-          this.cutOut(dm);
-          // where the DM is aiming: for the players' frame only (the DM has the aiming preview itself)
-          const aim = this.items.get(AIM); if (aim && this.probe) aim.node.visible = !dm;
-        };
-      } catch { masked = false; this.cut = null; }
-    }
-    root.zIndex = masked ? 95 : -0.5;
-    // its place in the order (Atlas sorts its layers by zIndex; added in place too, in case)
-    const kids = vp.children ?? [];
-    const at = kids.findIndex((k) => (k.zIndex ?? 0) > root.zIndex);
-    if (at >= 0 && typeof vp.addChildAt === 'function') vp.addChildAt(root, at); else vp.addChild(root);
-    root.addChild(over);
+    over.eventMode = 'none';
+    put(over, 0.5);
+    // which frame is being drawn, the DM's or the players': Atlas hides its DM-only overlays for the players'
+    try {
+      const probe = new this.kit.Container();
+      probe.label = 'sfx-dm-probe';
+      const remove = call<() => void>(this.renderer, 'addDmScreenOverlay', probe);
+      if (typeof remove === 'function') { this.probe = probe; this.unprobe = remove; }
+    } catch { /* no DM overlays: the aim shows for the DM too */ }
+    const each = () => {
+      const dm = !this.probe || this.probe.visible !== false;
+      // where the DM is aiming: for the players' frame only (the DM has the aiming preview itself)
+      const aim = this.items.get(AIM); if (aim && this.probe) aim.node.visible = !dm;
+    };
+    (root as unknown as { onRender: (() => void) | null }).onRender = each;
+    // an effect on a creature: only where Atlas draws that creature (not over a hidden one, for the players)
+    (over as unknown as { onRender: (() => void) | null }).onRender = () => {
+      for (const [id, tok] of this.onTok) {
+        const it = this.items.get(id); if (!it) continue;
+        const s = this.world.shown ? this.world.shown(this.mapNow, tok) : null;
+        it.node.visible = s !== false;
+      }
+    };
     this.root = root; this.box = box; this.over = over;
     return box;
   }
 
-  /** Whether it can cut the tokens out (so goes over the lighting). */
-  get cuts(): boolean { return !!this.kit.Graphics; }
   private box: PNode | null = null;
   private over: PNode | null = null;
-  private cut: PGraphics | null = null;
   private probe: PNode | null = null;
   private unprobe: (() => void) | null = null;
-  /** The tokens to cut out, for the DM's frame and the players'. */
-  private holes: { dm: TokenAt[]; players: TokenAt[] } = { dm: [], players: [] };
-  private cutFor = '';
-
-  /** Draws the tokens' cut-outs for the frame being drawn (only when they changed). */
-  private cutOut(dm: boolean): void {
-    const g = this.cut; if (!g) return;
-    const list = dm ? this.holes.dm : this.holes.players;
-    const key = (dm ? 'd' : 'p') + list.map((t) => `${Math.round(t.x)},${Math.round(t.y)},${Math.round(t.r)}`).join(';');
-    if (key === this.cutFor) return;
-    this.cutFor = key;
-    g.clear();
-    for (const t of list) g.circle(t.x, t.y, t.r * 1.02);
-    if (list.length) g.fill({ color: 0xffffff });
-  }
+  /** Effects on a creature, by id: their creature's token. */
+  private onTok = new Map<string, string>();
+  private mapNow = '';
 
   /** Atlas only draws its canvas when something on it changes: a new video frame is a change it can't see. */
   private nudge(): void {
@@ -303,11 +275,8 @@ export class PixiPainter {
    */
   paint(effects: readonly Effect[], now: number, out: ReadonlySet<string>, map: string, aim: Effect | null = null, aimLook: AimLook = 'outline'): void {
     const root = this.layer(); if (!root) return;
-    // the tokens to show through (all, for the DM; not hidden ones, for the players)
-    if (this.cut) {
-      this.holes = { dm: this.world.tokens(map, false).filter((t) => !t.off), players: this.world.tokens(map, true) };
-      this.cutOut(true);
-    }
+    this.mapNow = map;
+    this.onTok.clear();
     const keep = new Set<string>();
     let animating = false;
     const all = aim && aim.map === map ? [...effects, aimOf(aim, aimLook)] : effects;
@@ -320,6 +289,7 @@ export class PixiPainter {
       let it = this.items.get(e.id);
       if (it && it.look !== look) { this.drop(e.id); it = undefined; }
       if (!it) { it = this.make(e, look); const into = onCreature(e) && this.over ? this.over : root; it.node.label = e.id === AIM ? AIM : 'sfx-effect'; this.items.set(e.id, it); into.addChild(it.node); }
+      if (onCreature(e) && e.token) this.onTok.set(e.id, e.token);
       this.place(it, e, s, tok);
       // fading: in, out, and an instant effect's burst
       let a = e.alpha !== undefined && e.alpha < 1 ? Math.max(0.05, e.alpha) : 1;
@@ -476,6 +446,7 @@ export class PixiPainter {
     for (const id of [...this.items.keys()]) this.drop(id);
     this.unprobe?.(); this.unprobe = null; this.probe = null;
     if (this.root) { this.root.parent?.removeChild(this.root); this.root.destroy({ children: true }); this.root = null; }
-    this.box = null; this.over = null; this.cut = null; this.cutFor = '';
+    if (this.over) { this.over.parent?.removeChild(this.over); this.over.destroy({ children: true }); }
+    this.box = null; this.over = null; this.onTok.clear();
   }
 }

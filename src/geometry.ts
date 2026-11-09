@@ -77,7 +77,7 @@ export const pxPerFoot = (s: Scale): number => (s.cell > 0 ? s.cell : 70) / (s.f
  * `art` is the animation's own shape where it has one: its width / height, and for a line the feet it was made
  * for (JB2A's "60ft" rays), so a longer line stretches it but keeps its thickness.
  */
-export interface TokenAt { x: number; y: number; r: number; /** The token's rotation, radians (Atlas: degrees, clockwise). */ rot?: number; /** Picked in Atlas (its handles are showing). */ sel?: boolean; /** Off the map (Atlas keeps it aside). */ off?: boolean }
+export interface TokenAt { /** Its id in Atlas. */ id?: string; x: number; y: number; r: number; /** The token's rotation, radians (Atlas: degrees, clockwise). */ rot?: number; /** Picked in Atlas (its handles are showing). */ sel?: boolean; /** Off the map (Atlas keeps it aside). */ off?: boolean }
 
 const turnBy = (p: Point, a: number): Point => ({ x: p.x * Math.cos(a) - p.y * Math.sin(a), y: p.x * Math.sin(a) + p.y * Math.cos(a) });
 
