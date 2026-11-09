@@ -9,7 +9,7 @@ place and at the right size, and follow the players' own view. A bridge until At
 
 ## Needs
 - **Atlas VTT** (tested with 0.12), on desktop.
-- Obsidian 1.8.7 or later. Spell bases need Obsidian 1.10 or later with the Bases core plugin on.
+- Obsidian 1.10 or later. Spell bases need the Bases core plugin on.
 
 ## Install
 Settings → Community plugins → Browse → search **Atlas Spell Effects** → Install → Enable. Then open an Atlas map:
