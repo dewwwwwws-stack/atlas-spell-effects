@@ -805,9 +805,10 @@ export default class AtlasSpellEffects extends Plugin {
         const picked = new Set<string>(t.store.getState()?.selectedIds ?? []);
         const out: TokenAt[] = [];
         for (const [id, tok] of Object.entries(all)) {
-          // the players see through to their own tokens only (Atlas's sides: unset, a token that sees is theirs)
-          if (players && (tok?.isHidden || !(tok?.side === 'players' || (!tok?.side && tok?.vision?.enabled)))) continue;
-          const at = this.tokenOf(t, id); if (at) out.push(players ? at : { ...at, sel: picked.has(id) });
+          // the players see through to every token Atlas shows them (not hidden ones: a hole would give them away;
+          // one out of their sight Atlas's own lighting and fog still hide, under the hole)
+          if (players && (tok?.isHidden || tok?.offMap)) continue;
+          const at = this.tokenOf(t, id); if (at) out.push(players ? at : { ...at, sel: picked.has(id), ...(tok.offMap ? { off: true } : {}) });
         }
         return out;
       },
@@ -967,7 +968,8 @@ export default class AtlasSpellEffects extends Plugin {
         let pp = this.pixiPainters.get(t.view);
         // Atlas's canvas went wrong for effects once: drawn over it from then on (as before)
         const giveUp = (e: unknown) => { this.noCanvas.add(t.viewport); this.pixiPainters.get(t.view)?.stop(); this.pixiPainters.delete(t.view); console.error('Atlas Spell Effects: drawing in Atlas’s canvas went wrong; drawing over it instead', e); this.wake(); };
-        if (!pp) { pp = new PixiPainter(kit, t.viewport, world, (path) => this.readFile(path), () => this.wake(), giveUp); this.pixiPainters.set(t.view, pp); }
+        if (pp && !pp.cuts && kit.Graphics) { pp.stop(); this.pixiPainters.delete(t.view); pp = undefined; }   // now it can go over the lighting
+        if (!pp) { pp = new PixiPainter(kit, t.viewport, t.renderer, world, (path) => this.readFile(path), () => this.wake(), giveUp); this.pixiPainters.set(t.view, pp); }
         const px = pp, map = this.mapOf(t);
         let fine = true;
         try { px.paint(this.effects, now, out, map); } catch (e) { fine = false; giveUp(e); }
@@ -1198,7 +1200,9 @@ export default class AtlasSpellEffects extends Plugin {
       const seen = this.mapSeen.get(map) ?? now;
       for (const e of this.effects) {
         if (e.map !== map) continue;
-        const wants = e.shape === 'wall' && e.lasting && !!e.blocks && e.blocks !== 'none';
+        // a wall that blocks; or magical darkness, which nothing sees into, out of or through (light included)
+        const dark = this.darkEdge(e, t);
+        const wants = dark ? true : e.shape === 'wall' && e.lasting && !!e.blocks && e.blocks !== 'none';
         const have = (e.wallIds ?? []).filter((id) => walls[id]);
         if (!wants) {
           if (e.wallIds) { if (have.length) this.untracked(t, () => st.deleteWalls(have)); delete e.wallIds; this.wallKeys.delete(e.id); saved = true; }
@@ -1207,8 +1211,10 @@ export default class AtlasSpellEffects extends Plugin {
         if (this.dragging?.id === e.id) continue;                   // while it is dragged: once it lands
         const tok = e.token ? this.tokenOf(t, e.token) : null;
         if (e.token && !tok) continue;
-        const pts = wallPoints(e, tok);
-        const key = JSON.stringify([pts.map((p) => [Math.round(p.x), Math.round(p.y)]), !!e.closed, e.blocks]);
+        const pts = dark ?? wallPoints(e, tok);
+        const closed = dark ? true : !!e.closed;
+        const blocks = dark ? 'sight' : e.blocks;
+        const key = JSON.stringify([pts.map((p) => [Math.round(p.x), Math.round(p.y)]), closed, blocks]);
         if (e.wallIds?.length && have.length) {
           if (this.wallKeys.get(e.id) === key) { this.lightMoving.delete('w' + e.id); continue; }
           // moving (on a moving token): made again once it stands still a moment
@@ -1221,12 +1227,12 @@ export default class AtlasSpellEffects extends Plugin {
           continue;                                                  // removed in Atlas (deleted or undone): left so
         } else if (e.wallIds?.length && now - seen < 2500) { this.wake(); continue; }
         const ids: string[] = [];
-        const n = e.closed && pts.length > 2 ? pts.length : pts.length - 1;
+        const n = closed && pts.length > 2 ? pts.length : pts.length - 1;
         this.untracked(t, () => {
           for (let i = 0; i < n; i++) {
             const p1 = pts[i], p2 = pts[(i + 1) % pts.length];
             if (Math.hypot(p2.x - p1.x, p2.y - p1.y) < 0.5) continue;
-            const id = st.addWall({ type: 'solid', p1: { x: p1.x, y: p1.y }, p2: { x: p2.x, y: p2.y }, ...(e.blocks === 'sight' || e.blocks === 'movement' ? { blocks: e.blocks } : {}), chainId: 'sfx-' + e.id });
+            const id = st.addWall({ type: 'solid', p1: { x: p1.x, y: p1.y }, p2: { x: p2.x, y: p2.y }, ...(blocks === 'sight' || blocks === 'movement' ? { blocks } : {}), chainId: 'sfx-' + e.id });
             if (id) ids.push(id);
           }
         });
@@ -1235,6 +1241,26 @@ export default class AtlasSpellEffects extends Plugin {
       }
     }
     if (saved) this.saveSoon();
+  }
+
+  /**
+   * Magical darkness's edge, as corners of a closed ring of sight-blocking Atlas walls (null: not darkness that
+   * lasts). Tokens can't see into it, out of it or across it, and light doesn't pass through it; they can still walk in.
+   */
+  darkEdge(e: Effect, t: Tab): Point[] | null {
+    if (e.id === 'preview' || !e.lasting || e.light?.mode !== 'darkness' || e.shape === 'wall') return null;
+    if (e.token && !this.tokenOf(t, e.token)) return null;
+    const b = this.boxFor(e, t);
+    const turn = (x: number, y: number): Point => ({ x: b.cx + x * Math.cos(b.rot) - y * Math.sin(b.rot), y: b.cy + x * Math.sin(b.rot) + y * Math.cos(b.rot) });
+    const hw = b.w / 2, hh = b.h / 2;
+    if (e.shape === 'radius' || e.shape === 'emanation') {
+      // just outside the circle (the walls' straight pieces stay outside what is dark), one piece per ~5 ft
+      const n = Math.max(12, Math.min(48, Math.round((Math.PI * b.w) / Math.max(1, this.scaleOf(t).cell))));
+      const r = hw / Math.cos(Math.PI / n);
+      return Array.from({ length: n }, (_, i) => ({ x: b.cx + r * Math.cos((2 * Math.PI * i) / n), y: b.cy + r * Math.sin((2 * Math.PI * i) / n) }));
+    }
+    if (e.shape === 'cone') return [turn(-hw, 0), turn(hw, -hh), turn(hw, hh)];
+    return [turn(-hw, -hh), turn(hw, -hh), turn(hw, hh), turn(-hw, hh)];
   }
 
   /** An ended effect's light goes (now, or when its map is next open). */

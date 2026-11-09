@@ -9,7 +9,7 @@
 import { boxOf, wallPieces, wallPoints, wallThickness, type Box, type Effect, type Point, type Scale, type TokenAt } from './geometry';
 import { artInfo, instantMs, FADE_MS, DRAWN_MS, type World } from './overlay';
 import { fitOf } from './trim';
-import type { AtlasViewport } from './atlas';
+import { call, type AtlasViewport } from './atlas';
 
 /** The parts of a pixi node the add-on uses. */
 interface PNode {
@@ -21,9 +21,16 @@ interface PNode {
 }
 interface PTexture { destroy(destroySource?: boolean): void }
 interface PSprite extends PNode { texture: PTexture; anchor: { set(x: number, y?: number): void }; width: number; height: number }
-interface Kit { Container: new () => PNode; Sprite: new (texture?: PTexture) => PSprite; texture(source: HTMLVideoElement | HTMLImageElement | HTMLCanvasElement): PTexture }
+interface PGraphics extends PNode { clear(): PGraphics; circle(x: number, y: number, r: number): PGraphics; fill(style: unknown): PGraphics }
+interface Kit {
+  Container: new () => PNode; Sprite: new (texture?: PTexture) => PSprite;
+  texture(source: HTMLVideoElement | HTMLImageElement | HTMLCanvasElement): PTexture;
+  /** pixi's Graphics, for the tokens' cut-outs (none found: effects go under the tokens instead). */
+  Graphics: (new () => PGraphics) | null;
+}
 
 const kits = new WeakMap<object, Kit | null>();
+const kitTries = new WeakMap<object, number>();
 
 /** Atlas's pixi classes, found on its map (cached per viewport); null when not found. */
 export function kitOf(viewport: AtlasViewport): Kit | null {
@@ -46,11 +53,22 @@ export function kitOf(viewport: AtlasViewport): Kit | null {
       if (depth > 0) for (const c of (o['children'] as unknown[] | undefined) ?? []) look(c, depth - 1);
     };
     look(viewport, 6);
+    // a Graphics (a token's ring, the selection's frame): its class
+    let G: (new () => PGraphics) | null = null;
+    const lookG = (n: unknown, depth: number): void => {
+      if (G || !n || typeof n !== 'object') return;
+      const o = n as Record<string, unknown>;
+      if (typeof o['circle'] === 'function' && typeof o['fill'] === 'function' && typeof o['clear'] === 'function' && o['context']) { G = (n as { constructor: new () => PGraphics }).constructor; return; }
+      if (depth > 0) for (const c of (o['children'] as unknown[] | undefined) ?? []) lookG(c, depth - 1);
+    };
+    lookG(viewport, 6);
     const f = found as { S: new (t?: PTexture) => PSprite; from: (s: unknown) => PTexture } | null;
-    if (Container && f && typeof new Container().addChild === 'function') kit = { Container, Sprite: f.S, texture: (s) => f.from(s) };
+    if (Container && f && typeof new Container().addChild === 'function') kit = { Container, Sprite: f.S, texture: (s) => f.from(s), Graphics: G };
   } catch { kit = null; }
-  // not found yet (the map still loading): asked again later
-  if (kit) kits.set(viewport, kit);
+  // not found yet (the map still loading): asked again later; without a Graphics yet, a while longer
+  const tries = (kitTries.get(viewport) ?? 0) + 1;
+  kitTries.set(viewport, tries);
+  if (kit && (kit.Graphics || tries > 120)) kits.set(viewport, kit);
   return kit;
 }
 
@@ -156,6 +174,8 @@ export class PixiPainter {
   constructor(
     private readonly kit: Kit,
     private readonly viewport: AtlasViewport,
+    /** Atlas's renderer (for its DM-only overlays). */
+    private readonly renderer: unknown,
     private readonly world: World,
     /** The vault file's bytes (Atlas's canvas takes pictures from the vault as their bytes, as Atlas itself does). */
     private readonly read: (path: string) => Promise<ArrayBuffer | null>,
@@ -170,20 +190,67 @@ export class PixiPainter {
     try { it.textures.push(this.kit.texture(source)); this.wake(); } catch (e) { this.fail(e); }
   }
 
-  /** Their layer: in the viewport, under the tokens (Atlas's tokens are at 0, the map's picture under them). */
+  /**
+   * Their layer in the viewport. Over Atlas's lighting (at 90: what is under it is lit, and darkened, like the
+   * floor) and under the tokens' bars and handles (100), with the tokens themselves cut out of it, so they show
+   * through. The players' frame (rendered from this same canvas) leaves hidden tokens out, so no hole gives them away. Without pixi's Graphics: under the tokens (and the
+   * lighting) instead.
+   */
   private layer(): PNode | null {
     const vp = this.viewport as unknown as PNode;
-    if (this.root && !this.root.destroyed && this.root.parent === vp) return this.root;
+    if (this.root && !this.root.destroyed && this.root.parent === vp && this.box) return this.box;
     const root = new this.kit.Container();
     root.label = 'sfx-spell-effects';
-    root.zIndex = -0.5;
     root.eventMode = 'none';
-    // where its place in the order is: before the first of the viewport's layers from the tokens up
+    const box = new this.kit.Container();
+    box.label = 'sfx-effects';
+    root.addChild(box);
+    const G = this.kit.Graphics;
+    let masked = false;
+    if (G) {
+      try {
+        const g = new G();
+        g.label = 'sfx-token-cutouts';
+        root.addChild(g);
+        (box as unknown as { setMask(o: { mask: PNode; inverse: boolean }): void }).setMask({ mask: g, inverse: true });
+        this.cut = g; masked = true;
+        // which frame is being drawn, the DM's or the players': Atlas hides its DM-only overlays for the players'
+        const probe = new this.kit.Container();
+        probe.label = 'sfx-dm-probe';
+        const remove = call<() => void>(this.renderer, 'addDmScreenOverlay', probe);
+        if (typeof remove === 'function') { this.probe = probe; this.unprobe = remove; }
+        (root as unknown as { onRender: (() => void) | null }).onRender = () => this.cutOut(!this.probe || this.probe.visible !== false);
+      } catch { masked = false; this.cut = null; }
+    }
+    root.zIndex = masked ? 95 : -0.5;
+    // its place in the order (Atlas sorts its layers by zIndex; added in place too, in case)
     const kids = vp.children ?? [];
-    const at = kids.findIndex((k) => (k.zIndex ?? 0) >= 0);
+    const at = kids.findIndex((k) => (k.zIndex ?? 0) > root.zIndex);
     if (at >= 0 && typeof vp.addChildAt === 'function') vp.addChildAt(root, at); else vp.addChild(root);
-    this.root = root;
-    return root;
+    this.root = root; this.box = box;
+    return box;
+  }
+
+  /** Whether it can cut the tokens out (so goes over the lighting). */
+  get cuts(): boolean { return !!this.kit.Graphics; }
+  private box: PNode | null = null;
+  private cut: PGraphics | null = null;
+  private probe: PNode | null = null;
+  private unprobe: (() => void) | null = null;
+  /** The tokens to cut out, for the DM's frame and the players'. */
+  private holes: { dm: TokenAt[]; players: TokenAt[] } = { dm: [], players: [] };
+  private cutFor = '';
+
+  /** Draws the tokens' cut-outs for the frame being drawn (only when they changed). */
+  private cutOut(dm: boolean): void {
+    const g = this.cut; if (!g) return;
+    const list = dm ? this.holes.dm : this.holes.players;
+    const key = (dm ? 'd' : 'p') + list.map((t) => `${Math.round(t.x)},${Math.round(t.y)},${Math.round(t.r)}`).join(';');
+    if (key === this.cutFor) return;
+    this.cutFor = key;
+    g.clear();
+    for (const t of list) g.circle(t.x, t.y, t.r * 1.02);
+    if (list.length) g.fill({ color: 0xffffff });
   }
 
   /** Atlas only draws its canvas when something on it changes: a new video frame is a change it can't see. */
@@ -199,6 +266,11 @@ export class PixiPainter {
   /** Draws the effects of map `map` as they are now; `out` are ending (fading). */
   paint(effects: readonly Effect[], now: number, out: ReadonlySet<string>, map: string): void {
     const root = this.layer(); if (!root) return;
+    // the tokens to show through (all, for the DM; not hidden ones, for the players)
+    if (this.cut) {
+      this.holes = { dm: this.world.tokens(map, false).filter((t) => !t.off), players: this.world.tokens(map, true) };
+      this.cutOut(true);
+    }
     const keep = new Set<string>();
     let animating = false;
     for (const e of effects) {
@@ -364,6 +436,8 @@ export class PixiPainter {
   /** Everything off the map. */
   stop(): void {
     for (const id of [...this.items.keys()]) this.drop(id);
+    this.unprobe?.(); this.unprobe = null; this.probe = null;
     if (this.root) { this.root.parent?.removeChild(this.root); this.root.destroy({ children: true }); this.root = null; }
+    this.box = null; this.cut = null; this.cutFor = '';
   }
 }
