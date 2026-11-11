@@ -20,11 +20,14 @@ interface PNode {
   addChild(c: PNode): PNode; addChildAt?(c: PNode, i: number): PNode; removeChild(c: PNode): PNode;
   destroy(options?: { children?: boolean; texture?: boolean; textureSource?: boolean }): void;
 }
-interface PTexture { destroy(destroySource?: boolean): void }
+interface PTexture { destroy(destroySource?: boolean): void; source?: { update?(): void; alphaMode?: string } }
+type AlphaMode = 'premultiply-alpha-on-upload' | 'premultiplied-alpha';
 interface PSprite extends PNode { texture: PTexture; anchor: { set(x: number, y?: number): void }; width: number; height: number }
 interface Kit {
   Container: new () => PNode; Sprite: new (texture?: PTexture) => PSprite;
   texture(source: HTMLVideoElement | HTMLImageElement | HTMLCanvasElement): PTexture;
+  /** A video's texture, its see-through edges read as `alpha` says; its frames put on it by the add-on (`source.update`). */
+  video(v: HTMLVideoElement, alpha: AlphaMode): PTexture;
 }
 
 const kits = new WeakMap<object, Kit | null>();
@@ -51,7 +54,15 @@ export function kitOf(viewport: AtlasViewport): Kit | null {
     };
     look(viewport, 6);
     const f = found as { S: new (t?: PTexture) => PSprite; from: (s: unknown) => PTexture } | null;
-    if (Container && f && typeof new Container().addChild === 'function') kit = { Container, Sprite: f.S, texture: (s) => f.from(s) };
+    // a video not loaded by pixi: its load would guess how this machine gives a video's see-through edges from a
+    // tiny test video of its own, and on some machines it guesses wrong for the real ones (crunchy, speckled, white)
+    if (Container && f) {
+      const from = f.from;
+      if (typeof new Container().addChild === 'function') kit = {
+        Container, Sprite: f.S, texture: (s) => from(s),
+        video: (v, alpha) => from({ resource: v, alphaMode: alpha, autoLoad: false, autoPlay: false }),
+      };
+    }
   } catch { kit = null; }
   // not found yet (the map still loading): asked again later
   if (kit) kits.set(viewport, kit);
@@ -60,6 +71,57 @@ export function kitOf(viewport: AtlasViewport): Kit | null {
 
 /** Each animation's bytes as an address the canvas can take (read once, kept while the add-on runs). */
 const blobs = new Map<string, Promise<string | null>>();
+
+/**
+ * How a video frame's see-through parts came out, read from its pixels as the browser hands them over (nothing
+ * done to them): colour brighter than its own opacity somewhere means plain colour (pixi then mixes it in as it
+ * uploads), none anywhere though some pixels are part see-through means the browser has done that already.
+ * Null when the frame can't tell (all solid, or all clear with no colour in it).
+ */
+export function alphaFromPixels(px: Uint8Array | Uint8ClampedArray): AlphaMode | null {
+  let part = 0;
+  for (let i = 0; i + 3 < px.length; i += 4) {
+    const a = px[i + 3] ?? 0;
+    if (Math.max(px[i] ?? 0, px[i + 1] ?? 0, px[i + 2] ?? 0) > a + 6) return 'premultiply-alpha-on-upload';
+    if (a > 8 && a < 247) part++;
+  }
+  return part > 50 ? 'premultiplied-alpha' : null;
+}
+
+/** Frames of a video read at most to learn how this machine gives see-through edges. */
+const PROBES = 12;
+
+/** This machine's answer, once a video has shown it (the same for every video here). */
+let alphaHere: AlphaMode | null = null;
+let probeGl: WebGLRenderingContext | null | undefined;
+
+/** Reads a video's current frame as the browser gives it to the canvas: its answer, or null when it can't tell. */
+function probeAlpha(v: HTMLVideoElement): AlphaMode | null {
+  if (alphaHere) return alphaHere;
+  try {
+    const w = v.videoWidth, h = v.videoHeight;
+    if (!w || !h) return null;
+    if (probeGl === undefined) probeGl = createEl('canvas').getContext('webgl', { premultipliedAlpha: false });
+    const gl = probeGl; if (!gl) return null;
+    const tex = gl.createTexture(); const fb = gl.createFramebuffer();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, v);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    const px = new Uint8Array(w * h * 4);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.deleteFramebuffer(fb); gl.deleteTexture(tex);
+    const got = alphaFromPixels(px);
+    if (got) {
+      alphaHere = got;
+      // answered for good: the probe's canvas let go
+      gl.getExtension('WEBGL_lose_context')?.loseContext(); probeGl = null;
+    }
+    return got;
+  } catch { return null; }
+}
 
 /** A cone's shape, white on clear, soft at its edges: the point at the middle of its left side, its end the right side. */
 let coneCanvas: HTMLCanvasElement | null = null;
@@ -181,6 +243,8 @@ interface Item {
   look: string;
   sprites: PSprite[];
   textures: PTexture[];
+  /** Frames read so far to learn how this machine gives see-through edges (stops once it knows). */
+  probes?: number;
   video: HTMLVideoElement | null;
   drawn: boolean;
   outAt: number | null;
@@ -209,6 +273,27 @@ export class PixiPainter {
   /** A texture of an animation once loaded; on failure, effects go back to being drawn over the canvas. */
   private textureOf(it: Item, source: HTMLVideoElement | HTMLImageElement): void {
     try { it.textures.push(this.kit.texture(source)); this.wake(); } catch (e) { this.fail(e); }
+  }
+
+  /** A video's texture: its see-through edges as this machine gives them (plain colour until a frame shows otherwise). */
+  private videoTexture(it: Item, v: HTMLVideoElement): void {
+    const alpha = probeAlpha(v);
+    it.probes = alpha ? PROBES : 1;
+    try { it.textures.push(this.kit.video(v, alpha ?? 'premultiply-alpha-on-upload')); this.wake(); } catch (e) { this.fail(e); }
+  }
+
+  /** A video's new frame: onto its texture (the first few read to learn its edges, if not known yet), and drawn. */
+  private newFrame(it: Item, v: HTMLVideoElement): void {
+    const src = it.textures[0]?.source;
+    if (src) {
+      if ((it.probes ?? PROBES) < PROBES) {
+        it.probes = (it.probes ?? 0) + 1;
+        const alpha = probeAlpha(v);
+        if (alpha) { it.probes = PROBES; if (src.alphaMode !== alpha) src.alphaMode = alpha; }
+      }
+      src.update?.();
+    }
+    this.nudge();
   }
 
   /**
@@ -335,12 +420,12 @@ export class PixiPainter {
         const v = createEl('video');
         v.muted = true; v.autoplay = true; v.playsInline = true; v.loop = e.lasting; v.preload = 'auto'; v.crossOrigin = 'anonymous';
         v.addEventListener('loadedmetadata', () => learn(v.videoWidth, v.videoHeight, v.duration * 1000));
-        v.addEventListener('loadeddata', () => { if (it.video === v && !it.textures.length) this.textureOf(it, v); }, { once: true });
+        v.addEventListener('loadeddata', () => { if (it.video === v && !it.textures.length) this.videoTexture(it, v); }, { once: true });
         void blobUrl(this.read, file).then((u) => { if (u && it.video === v) { v.src = u; void v.play().catch(() => undefined); } });
         // each new frame: Atlas draws its canvas again
         const frames = (v as HTMLVideoElement & { requestVideoFrameCallback?: (cb: () => void) => number }).requestVideoFrameCallback?.bind(v);
-        const onFrame = () => { if (!it.video) return; this.nudge(); if (frames) frames(onFrame); };
-        if (frames) frames(onFrame); else v.addEventListener('timeupdate', () => this.nudge());
+        const onFrame = () => { if (!it.video) return; this.newFrame(it, v); if (frames) frames(onFrame); };
+        if (frames) frames(onFrame); else v.addEventListener('timeupdate', () => { if (it.video) this.newFrame(it, v); });
         it.video = v;
       } else {
         const im = createEl('img');
