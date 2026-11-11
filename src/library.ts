@@ -124,6 +124,21 @@ export function coloursOf(file: EffectFile, files: readonly EffectFile[], feet =
   return [...byColour].map(([colour, f]) => ({ colour, file: f })).sort((a, b) => a.colour.localeCompare(b.colour));
 }
 
+/**
+ * The same animation (its family and colour) in the length closest to `feet`: JB2A makes each ray and bolt for
+ * 5, 15, 30, 60 and 90 ft; the one nearest the distance is stretched least. Itself when there are none.
+ */
+export function nearestLength(path: string, files: readonly EffectFile[], feet: number): string {
+  const me = files.find((f) => f.path === path);
+  if (!me || !me.feet || !(feet > 0)) return path;
+  let best = me;
+  for (const f of files) {
+    if (f.family !== me.family || f.colour !== me.colour || !f.feet || f.ext !== me.ext) continue;
+    if (Math.abs(Math.log(f.feet / feet)) < Math.abs(Math.log(best.feet / feet))) best = f;
+  }
+  return best.path;
+}
+
 /** Every animation whose name or folders hold all the words searched for. */
 export function search(text: string, files: readonly EffectFile[], limit = 60): EffectFile[] {
   const want = wordsOf(text);

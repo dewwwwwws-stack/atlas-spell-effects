@@ -11,7 +11,7 @@ import { call, field, type Tab, type AtlasView, type AtlasViewport, type AtlasSt
 import { FolderSuggest, BaseSuggest } from './suggest';
 import { SpellNames, StatblockLinker, type SpellLink } from './statblocks';
 import { areaOf, targetOf, fallbackArea, describe, rangeOf, setRules, unitLabel, square, squares, fromFeet, type GameUnitType, type Area, type Shape, type SpellEntry, type WallBlocks } from './areas';
-import { indexFiles, indexFile, matchesFor, coloursOf, search, type EffectFile } from './library';
+import { indexFiles, indexFile, matchesFor, coloursOf, search, nearestLength, type EffectFile } from './library';
 import { isStored, storedFrom, writeDefaults, clearDefaults, baseFile, noteName, type StoredSpell } from './storage';
 import { looksLikeSpell, spellFromNote } from './notes';
 import { lightOf, placedLights, adoptLook, lightKey, LIGHT_COLOUR, type EffectLight } from './lights';
@@ -1549,7 +1549,9 @@ export default class AtlasSpellEffects extends Plugin {
         const to = tok ? { x: tok.x, y: tok.y } : p;
         const len = Math.hypot(to.x - caster.x, to.y - caster.y) / pxPerFoot(this.scaleOf(tab));
         if (len < 1) return null;
-        return { ...base, shape: 'line', size: Math.round(len * 10) / 10, width: a.width ?? square(), at: { x: caster.x, y: caster.y }, dir: dirTo(caster, to), lasting: false };
+        // the animation in the length nearest the distance (JB2A makes rays for 5 to 90 ft)
+        const file = pending.file ? nearestLength(pending.file, this.files.filter((f) => !f.remote), len / Math.max(1e-6, fromFeet(1))) : undefined;
+        return { ...base, ...(file ? { file } : {}), shape: 'line', size: Math.round(len * 10) / 10, width: a.width ?? square(), at: { x: caster.x, y: caster.y }, dir: dirTo(caster, to), lasting: false };
       }
       return { ...base, shape: 'emanation', size: a.size, at: tok ? { x: tok.x, y: tok.y } : p, ...(tok ? { token: tok.id } : {}), on: true, lasting: a.lasting, ...(pending.light && id !== 'preview' ? { light: { ...pending.light } } : {}) };
     };
@@ -1566,7 +1568,12 @@ export default class AtlasSpellEffects extends Plugin {
         say(); return;
       }
       const fx = effect(uid(), p);
-      if (fx) { this.cast(fx); count++; }
+      if (fx && bolt && pending.file) {
+        // the bolt's animation in the length nearest the distance (fetched from JB2A the first time it's needed)
+        const want = nearestLength(pending.file, this.files, fx.size / Math.max(1e-6, fromFeet(1)));
+        void (async () => { if (want !== fx.file && await this.ensureFile(want)) { fx.file = want; this.indexVault(); } this.cast(fx); })();
+        count++;
+      } else if (fx) { this.cast(fx); count++; }
       if (fx && a.self) { this.placing.stop(); return; }          // only the caster: done
       say();
     };
@@ -2235,7 +2242,7 @@ class CastModal extends Modal {
       const all = P.choices().filter((c) => words.every((w) => c.name.toLowerCase().includes(w)));
       const stored = all.filter((c) => c.source === 'stored');
       // without a search: the spells you stored, then the ones whose text names an area
-      const rest = all.filter((c) => c.source !== 'stored' && (words.length || (c.entry && areaOf(c.entry)))).slice(0, 80);
+      const rest = all.filter((c) => c.source !== 'stored' && (words.length || (c.entry && areaOf(c.entry)))).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true })).slice(0, 80);
       // a group: a header that folds it (Atlas's library sections), then its rows
       const group = (name: string, count: number): HTMLElement | null => {
         const shut = this.folded.has(name) && !words.length;
@@ -2255,7 +2262,7 @@ class CastModal extends Modal {
       };
       const item = (g: HTMLElement, c: Choice) => {
         const a = c.stored ? c.stored.area : c.entry ? areaOf(c.entry) : null;
-        row(g, c.source === 'stored' ? 'sfx-saved-row' : '', c.source === 'stored' ? 'star' : 'wand-2', c.name, a ? describe(a).replace(' around the caster', a.shape === 'emanation' ? ' around' : '') : c.source === 'note' ? 'note' : '', this.choice?.key === c.key, () => { void this.pick(c); });
+        row(g, c.source === 'stored' ? 'sfx-saved-row' : '', c.source === 'stored' ? 'star' : 'wand-2', c.name, a ? (a.target === 'bolt' ? 'bolts' : a.target === 'on' ? (a.self ? 'on the caster' : 'on creatures') : describe(a).replace(' around the caster', a.shape === 'emanation' ? ' around' : '')) : c.source === 'note' ? 'note' : '', this.choice?.key === c.key, () => { void this.pick(c); });
       };
       if (stored.length) { const g = group('Saved spells', stored.length); if (g) for (const c of stored) item(g, c); }
       if (rest.length) { const g = group(words.length ? 'Other spells' : 'Spells with an area', rest.length); if (g) for (const c of rest) item(g, c); }

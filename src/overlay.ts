@@ -49,7 +49,7 @@ export function setVar(el: HTMLElement | SVGElement, prop: string, value: string
 const placed = new WeakMap<HTMLElement, string>();
 
 /** What is known of an animation once loaded (shared by every surface). */
-export const artInfo = new Map<string, { aspect: number; feet: number; duration: number }>();
+export const artInfo = new Map<string, { aspect: number; feet: number; duration: number; w?: number; h?: number; ft?: number }>();
 
 /** How long an instant effect drawn by the add-on, or an image, stays. */
 export const DRAWN_MS = 1800;
@@ -131,7 +131,7 @@ export class Painter {
       const video = /\.(webm|mp4)$/i.test(file);
       const media: HTMLVideoElement | HTMLImageElement = video ? el.createEl('video') : el.createEl('img');
       const feet = fromFeet(Number((/(\d+)\s*ft/i.exec(file) ?? [])[1] ?? 0) || 0);
-      const learn = (w: number, h: number, duration: number) => { if (w > 0 && h > 0) artInfo.set(file, { aspect: w / h, feet, duration }); };
+      const learn = (w: number, h: number, duration: number) => { if (w > 0 && h > 0) artInfo.set(file, { aspect: w / h, feet, duration, w, h, ft: Number((/(\d+)\s*ft/i.exec(file) ?? [])[1] ?? 0) || 0 }); };
       if (video) {
         const v = media as HTMLVideoElement;
         v.muted = true; v.autoplay = true; v.playsInline = true; v.loop = e.lasting; v.preload = 'auto';
@@ -234,6 +234,9 @@ export class Painter {
       setVar(el, '--fx-w', `${fo.w.toFixed(2)}%`); setVar(el, '--fx-h', `${fo.h.toFixed(2)}%`);
     }
     if (el.classList.contains('sfx-fit') !== !!fo) el.classList.toggle('sfx-fit', !!fo);
+    // a cone: its art kept inside the cone, whatever shape its picture is
+    const clip = e.file && e.shape === 'cone' ? 'polygon(0 50%, 100% -4%, 100% 104%)' : '';
+    if (el.style.clipPath !== clip) el.style.clipPath = clip;
   }
 
   /** Drops an effect's element, so it is made again (another animation or colour). */

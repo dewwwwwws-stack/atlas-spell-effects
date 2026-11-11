@@ -87,7 +87,8 @@ body.theme-light .sfx-ctl:not(.sfx-dot),body.theme-light .sfx-size,body.theme-li
 .sfx-item .sfx-star{display:flex;color:var(--text-faint);flex:none}.sfx-item .sfx-star svg{width:14px;height:14px}
 .sfx-item.sfx-saved-row .sfx-star{color:var(--color-yellow)}
 .sfx-item .sfx-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sfx-item small{color:var(--text-faint);font-size:var(--font-ui-smaller);white-space:nowrap}
+.sfx-item small{color:var(--text-faint);font-size:var(--font-ui-smaller);white-space:nowrap;flex:none;max-width:48%;overflow:hidden;text-overflow:ellipsis}
+.sfx-item .sfx-name{flex:1 1 auto}
 .sfx-pane{display:flex;flex-direction:column;flex:1;min-width:0;min-height:0}
 .sfx-head{display:flex;gap:12px;align-items:center;padding:16px 56px 16px 20px;border-bottom:1px solid var(--divider-color);flex:none}
 .sfx-head-actions{display:flex;gap:2px;margin-left:auto}

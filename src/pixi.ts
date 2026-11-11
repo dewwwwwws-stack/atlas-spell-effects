@@ -8,7 +8,7 @@
 
 import { boxOf, onCreature, wallPieces, wallPoints, wallThickness, type Box, type Effect, type Point, type Scale, type TokenAt } from './geometry';
 import { artInfo, instantMs, FADE_MS, DRAWN_MS, type World } from './overlay';
-import { fitOf } from './trim';
+import { fitOf, rangedLayout } from './trim';
 import { fromFeet } from './areas';
 import { call, type AtlasViewport } from './atlas';
 
@@ -60,6 +60,19 @@ export function kitOf(viewport: AtlasViewport): Kit | null {
 
 /** Each animation's bytes as an address the canvas can take (read once, kept while the add-on runs). */
 const blobs = new Map<string, Promise<string | null>>();
+
+/** A cone's shape, white on clear, soft at its edges: the point at the middle of its left side, its end the right side. */
+let coneCanvas: HTMLCanvasElement | null = null;
+function coneMask(): HTMLCanvasElement {
+  if (coneCanvas) return coneCanvas;
+  const c = createEl('canvas'); c.width = 256; c.height = 256;
+  const g = c.getContext('2d');
+  if (g) {
+    g.filter = 'blur(5px)'; g.fillStyle = '#fff';
+    g.beginPath(); g.moveTo(2, 128); g.lineTo(252, 12); g.lineTo(252, 244); g.closePath(); g.fill();
+  }
+  return (coneCanvas = c);
+}
 
 /** The players' view of where the DM aims: its id, and the effect drawn for it (the area, drawn, see-through). */
 const AIM = 'sfx-aim';
@@ -317,7 +330,7 @@ export class PixiPainter {
       const file = e.file;
       const isVideo = /\.(webm|mp4)$/i.test(file);
       const feet = fromFeet(Number((/(\d+)\s*ft/i.exec(file) ?? [])[1] ?? 0) || 0);
-      const learn = (w: number, h: number, ms: number) => { if (w > 0 && h > 0) artInfo.set(file, { aspect: w / h, feet, duration: ms }); };
+      const learn = (w: number, h: number, ms: number) => { if (w > 0 && h > 0) artInfo.set(file, { aspect: w / h, feet, duration: ms, w, h, ft: Number((/(\d+)\s*ft/i.exec(file) ?? [])[1] ?? 0) || 0 }); };
       if (isVideo) {
         const v = createEl('video');
         v.muted = true; v.autoplay = true; v.playsInline = true; v.loop = e.lasting; v.preload = 'auto'; v.crossOrigin = 'anonymous';
@@ -366,9 +379,26 @@ export class PixiPainter {
       }
       return;
     }
-    if (!it.sprites.length) { const sp = new this.kit.Sprite(tex); sp.anchor.set(0.5); it.node.addChild(sp); it.sprites = [sp]; }
+    if (!it.sprites.length) {
+      const sp = new this.kit.Sprite(tex); sp.anchor.set(0.5); it.node.addChild(sp); it.sprites = [sp];
+      // a cone: its art kept inside the cone (soft-edged), whatever shape its picture is
+      if (e.shape === 'cone') {
+        const m = new this.kit.Sprite(this.kit.texture(coneMask())); m.anchor.set(0.5); m.label = 'sfx-cone-mask';
+        it.node.addChild(m); (sp as unknown as { mask: unknown }).mask = m;
+      }
+    }
     const sp = it.sprites[0];
     if (!sp) return;
+    for (const m of it.node.children ?? []) if (m.label === 'sfx-cone-mask') { (m as unknown as PSprite).width = b.w * 1.04; (m as unknown as PSprite).height = b.h * 1.12; }
+    // a JB2A ray or bolt: its shot from the caster's middle to the target's, scaled the same both ways (stretching
+    // only its length squashes it)
+    const rl = e.shape === 'line' && info?.w && info.h && info.ft ? rangedLayout(info.w, info.ft) : null;
+    if (rl && info?.w && info.h) {
+      const k = b.w / rl.span;
+      sp.width = info.w * k; sp.height = info.h * k;
+      sp.x = -b.w / 2 + (info.w / 2 - rl.start) * k; sp.y = 0;
+      return;
+    }
     // art with room round its picture: the picture fills the area (a cone to its full length)
     const fo = (e.shape === 'cone' || e.shape === 'line') ? fitOf(this.world.trim(e.file ?? ''), e.shape) : null;
     if (fo) {

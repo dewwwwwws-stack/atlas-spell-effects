@@ -63,6 +63,17 @@ export async function measureArt(data: ArrayBuffer, path: string): Promise<Trim 
 const within = <T>(p: Promise<T>, ms: number): Promise<T> => Promise.race([p, new Promise<T>((_, no) => window.setTimeout(() => no(new Error('slow')), ms))]);
 
 /**
+ * JB2A's rays and bolts ("…_30ft_1600x400"): drawn on a grid of 200 px to a 5-ft square, the shot starting 200 px
+ * in from the frame's left and ending 200 px from its right (a ray, its impact past the target's middle) or at the
+ * right edge. Where it starts (px from the left) and how long it is (px), or null for other art.
+ */
+export function rangedLayout(w: number, ft: number): { start: number; span: number } | null {
+  if (!(ft > 0) || !(w > 0)) return null;
+  const span = ft * 40, pad = w - span;
+  return Math.abs(pad - 400) <= 40 || Math.abs(pad - 200) <= 40 ? { start: 200, span } : null;
+}
+
+/**
  * How to lay the art out so its visible part fills the area: the media's left, top, width and height as
  * percentages of the area. Cones are fitted both ways (their spread to the cone's); rays and lines only along
  * their length (their thickness stays the art's). Null: nothing worth changing.
