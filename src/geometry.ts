@@ -58,6 +58,12 @@ export interface Effect {
   lasting: boolean;
   /** When it was cast (ms). */
   started: number;
+  /** The conditions it gives the creatures inside it (names, as the collection's conditions are called). */
+  conditions?: string[];
+  /** A bolt shot at one creature (Fire Bolt): no one is caught in it. */
+  bolt?: boolean;
+  /** The initiative round it has been counted from (the round it was cast in, or the fight's first). */
+  round?: number;
 }
 
 /** The usual cone (5e's): as wide at its end as it is long. */

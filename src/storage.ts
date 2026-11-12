@@ -2,14 +2,14 @@
 // (your compendium's spell pages, as Atlas's loot bases use item notes), or a note the add-on makes for an effect
 // of your own. Every property is named "effect-…", so none of them clashes with what your spell pages already
 // hold. Notes stored by older versions (plain "area", "size"… and a "spell-effect" tag) are still read.
-import { square, fromFeet, type Area, type Shape, type WallBlocks } from './areas';
+import { square, fromFeet, currentRules, type Area, type Shape, type WallBlocks } from './areas';
 import type { EffectLight } from './lights';
 
 export const STORAGE_TAG = 'spell-effect';
 export const SHAPES: readonly Shape[] = ['radius', 'emanation', 'cone', 'cube', 'line', 'wall'];
 const BLOCKS: readonly WallBlocks[] = ['none', 'sight', 'movement', 'solid'];
 /** The add-on's properties, without their "effect-" prefix. */
-const KEYS = ['area', 'size', 'width', 'angle', 'origin', 'lasting', 'attach', 'animation', 'colour', 'colour-outer', 'opacity', 'target', 'ring', 'round', 'walls', 'light', 'bright', 'dim', 'light-colour', 'menu'] as const;
+const KEYS = ['area', 'size', 'width', 'angle', 'origin', 'lasting', 'attach', 'animation', 'colour', 'colour-outer', 'opacity', 'target', 'ring', 'round', 'walls', 'light', 'bright', 'dim', 'light-colour', 'menu', 'range', 'conditions', 'unit'] as const;
 type Key = (typeof KEYS)[number];
 export const prop = (k: Key): string => 'effect-' + k;
 
@@ -32,7 +32,28 @@ export interface StoredSpell {
   light?: EffectLight | null;
   /** In ✨'s menu, to cast in one click. */
   menu?: boolean;
+  /** How far from its caster it can be cast (game units). */
+  range?: number;
+  /** The conditions it gives the creatures inside it (names); missing: not said (read from its text). */
+  conditions?: string[];
 }
+
+/** The game's units now, as a saved spell's sizes are written in ("5 feet": a square's size and its unit). */
+export const unitNow = (): string => { const r = currentRules(); return `${r.perSquare} ${r.unit}`; };
+/**
+ * What a size saved in `saved` units ("5 feet") is worth in the game's units now (another game system: "1.5
+ * meters" to a square): the same number of squares. 1 when they're the same, or the note doesn't say.
+ */
+export function unitFactor(saved: unknown): number {
+  const m = /^\s*([\d.]+)\s+(\w+)\s*$/.exec(typeof saved === 'string' ? saved : '');
+  const per = m ? Number(m[1]) : NaN;
+  const r = currentRules();
+  if (!m || !(per > 0) || (per === r.perSquare && m[2] === r.unit)) return 1;
+  return r.perSquare / per;
+}
+const scaled = (v: number, k: number): number => (k === 1 ? v : Math.round(v * k * 100) / 100);
+/** A list property: a YAML list, or names separated by commas. */
+const listOf = (v: unknown): string[] | undefined => (Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean) : typeof v === 'string' ? v.split(',').map((x) => x.trim()).filter(Boolean) : undefined);
 
 const yes = (v: unknown) => v === true || v === 'true' || v === 'yes' || v === 1;
 const numOf = (v: unknown, d: number) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : d; };
@@ -68,6 +89,8 @@ export function isStored(fm: FM): boolean {
  */
 export function storedFrom(path: string, fm: Record<string, unknown>, resolve: (link: string) => string | null): StoredSpell {
   const name = (typeof fm['name'] === 'string' && fm['name'].trim()) || path.split('/').pop()!.replace(/\.md$/i, '');
+  // saved in another game system's units: the same squares in this one's
+  const k = unitFactor(get(fm, 'unit'));
   const a = String(get(fm, 'area') ?? '').toLowerCase();
   const shape = (SHAPES.includes(a as Shape) ? a : 'radius') as Shape;
   const origin = String(get(fm, 'origin') ?? '').toLowerCase();
@@ -76,12 +99,12 @@ export function storedFrom(path: string, fm: Record<string, unknown>, resolve: (
   const target = (tg === 'on' || tg === 'self') && shape === 'emanation' ? 'on' as const : tg === 'bolt' && shape === 'line' ? 'bolt' as const : undefined;
   const area: Area = {
     shape,
-    size: target === 'on' && Number(get(fm, 'size')) >= 0 ? Number(get(fm, 'size')) || 0 : numOf(get(fm, 'size'), fromFeet(shape === 'line' || shape === 'wall' ? 30 : 15)),
+    size: target === 'on' && Number(get(fm, 'size')) >= 0 ? scaled(Number(get(fm, 'size')) || 0, k) : scaled(numOf(get(fm, 'size'), fromFeet(shape === 'line' || shape === 'wall' ? 30 : 15) / k), k),
     ...(target ? { target } : {}),
     ...(tg === 'self' && target === 'on' ? { self: true } : {}),
-    ...(shape === 'line' ? { width: numOf(get(fm, 'width'), square()) } : shape === 'wall' ? { width: numOf(get(fm, 'width'), fromFeet(1)) } : {}),
+    ...(shape === 'line' ? { width: scaled(numOf(get(fm, 'width'), square() / k), k) } : shape === 'wall' ? { width: scaled(numOf(get(fm, 'width'), fromFeet(1) / k), k) } : {}),
     ...(shape === 'cone' && Number(get(fm, 'angle')) > 0 ? { angle: Number(get(fm, 'angle')) } : {}),
-    ...(shape === 'wall' && Number(get(fm, 'ring')) > 0 ? { ring: Number(get(fm, 'ring')) } : {}),
+    ...(shape === 'wall' && Number(get(fm, 'ring')) > 0 ? { ring: scaled(Number(get(fm, 'ring')), k) } : {}),
     ...(shape === 'wall' && yes(get(fm, 'round')) ? { round: true } : {}),
     ...(shape === 'wall' && BLOCKS.includes(blocks) ? { blocks } : {}),
     from: shape === 'cone' || shape === 'line' || shape === 'emanation' ? 'caster' : shape === 'wall' ? 'point' : origin === 'caster' || origin === 'self' ? 'caster' : 'point',
@@ -92,18 +115,18 @@ export function storedFrom(path: string, fm: Record<string, unknown>, resolve: (
   const file = anim ? resolve(anim) ?? undefined : undefined;
   const image = img ? resolve(img) ?? undefined : undefined;
   const lm = String(get(fm, 'light') ?? '').toLowerCase().trim();
-  const feet = (v: unknown) => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? n : 0; };
+  const feet = (v: unknown) => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? scaled(n, k) : 0; };
   const lcv = get(fm, 'light-colour'); const lc = typeof lcv === 'string' ? lcv : '';
   const light: EffectLight | null | undefined =
     lm === 'darkness' ? { mode: 'darkness', bright: 0, dim: area.size } :
     lm === 'light' || lm === 'bright' || lm === 'dim' ? { mode: 'light', bright: feet(get(fm, 'bright')), dim: Math.max(feet(get(fm, 'dim')), feet(get(fm, 'bright'))) || area.size, ...(lc ? { colour: lc } : {}) } :
     lm === 'none' || lm === 'no' || lm === 'false' ? null : undefined;
   const col = get(fm, 'colour'), col2 = fm[prop('colour-outer')], op = Number(fm[prop('opacity')]);
-  return { path, name, area, ...(file ? { file } : {}), ...(typeof col === 'string' ? { colour: col } : {}), ...(typeof col2 === 'string' ? { colour2: col2 } : {}), ...(op > 0 && op < 1 ? { alpha: op } : op > 1 && op < 100 ? { alpha: op / 100 } : {}), ...(image ? { image } : {}), ...(yes(get(fm, 'attach')) ? { attach: true } : {}), ...(light !== undefined ? { light } : {}), ...(yes(fm[prop('menu')]) ? { menu: true } : {}) };
+  return { path, name, area, ...(file ? { file } : {}), ...(typeof col === 'string' ? { colour: col } : {}), ...(typeof col2 === 'string' ? { colour2: col2 } : {}), ...(op > 0 && op < 1 ? { alpha: op } : op > 1 && op < 100 ? { alpha: op / 100 } : {}), ...(image ? { image } : {}), ...(yes(get(fm, 'attach')) ? { attach: true } : {}), ...(light !== undefined ? { light } : {}), ...(yes(fm[prop('menu')]) ? { menu: true } : {}), ...(Number(get(fm, 'range')) > 0 ? { range: scaled(Number(get(fm, 'range')), k) } : {}), ...(listOf(get(fm, 'conditions')) ? { conditions: listOf(get(fm, 'conditions'))! } : {}) };
 }
 
 /** Writes a spell's defaults into a note's properties (keeps everything else in them; an older note's plain ones are moved over). */
-export function writeDefaults(fm: Record<string, unknown>, s: { area: Area; file?: string | undefined; colour?: string | undefined; colour2?: string | undefined; alpha?: number | undefined; attach?: boolean | undefined; light?: EffectLight | null | undefined; menu?: boolean | undefined }): void {
+export function writeDefaults(fm: Record<string, unknown>, s: { area: Area; file?: string | undefined; colour?: string | undefined; colour2?: string | undefined; alpha?: number | undefined; attach?: boolean | undefined; light?: EffectLight | null | undefined; menu?: boolean | undefined; range?: number | undefined; conditions?: string[] | undefined }): void {
   if (isLegacy(fm)) {
     for (const k of [...KEYS, 'blocks', 'color', 'light-color']) delete fm[k];
     if (Array.isArray(fm['tags'])) { fm['tags'] = (fm['tags'] as unknown[]).filter((t) => String(t).replace(/^#/, '').toLowerCase() !== STORAGE_TAG); if (!(fm['tags'] as unknown[]).length) delete fm['tags']; }
@@ -131,6 +154,10 @@ export function writeDefaults(fm: Record<string, unknown>, s: { area: Area; file
   set('dim', s.light?.mode === 'light' ? s.light.dim : undefined);
   set('light-colour', s.light?.mode === 'light' && s.light.colour ? s.light.colour : undefined);
   set('menu', s.menu ? true : undefined);
+  set('range', s.range && s.range > 0 ? s.range : undefined);
+  set('conditions', s.conditions ? [...s.conditions] : undefined);
+  // the units its sizes are in (read again in another game system's units)
+  set('unit', unitNow());
 }
 
 /** Takes a spell's saved settings off its note (everything else in it stays): it is cast from its text again. */

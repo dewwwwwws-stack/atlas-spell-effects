@@ -182,3 +182,27 @@ canvas.sfx-cursor-move{cursor:move}
 .sfx-push{margin-left:auto}
 .sfx-hidden{display:none}
 .sfx-wide{width:100%}
+
+/* creatures caught in instant spells, to resolve (yours only, beside the map) */
+.sfx-caught{position:absolute;right:12px;top:56px;z-index:40;display:flex;flex-direction:column;gap:8px;width:260px;max-height:calc(100% - 80px);overflow:auto;pointer-events:auto}
+.sfx-caught-card{background:var(--background-primary,#1e1e1e);border:1px solid var(--background-modifier-border,rgba(127,127,127,.35));border-radius:var(--radius-m,8px);box-shadow:var(--shadow-s,0 4px 14px rgba(0,0,0,.35));padding:8px 10px;font:13px/1.35 var(--font-interface,system-ui);color:var(--text-normal,#ddd)}
+.sfx-caught-head{display:flex;align-items:center;gap:6px;margin-bottom:4px}
+.sfx-caught-icon{display:inline-flex;color:var(--interactive-accent,#8b5cf6)}
+.sfx-caught-icon svg{width:15px;height:15px}
+.sfx-caught-title{font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sfx-caught-count{color:var(--text-muted,#999);font-size:12px}
+.sfx-caught-x{padding:2px;height:auto}
+.sfx-caught-gives{color:var(--text-muted,#999);font-size:12px;margin-bottom:4px}
+.sfx-caught-row{display:flex;align-items:center;gap:6px;padding:3px 0;border-top:1px solid var(--background-modifier-border,rgba(127,127,127,.2))}
+.sfx-caught-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sfx-caught-btn{font-size:12px;padding:2px 8px;height:auto}
+.sfx-caught-done{color:var(--text-muted,#999);font-size:12px}
+.sfx-caught-row.is-failed .sfx-caught-name,.sfx-caught-row.is-saved .sfx-caught-name{color:var(--text-muted,#999)}
+/* how long a lasting spell has been up (yours only) */
+.sfx-rounds{position:absolute;inset:0;pointer-events:none}
+.sfx-round{position:absolute;transform:translate(-50%,-120%);background:rgba(0,0,0,.72);color:#fff;font:600 11px/1.2 var(--font-interface,system-ui);padding:2px 8px;border-radius:999px;white-space:nowrap}
+/* the cast window: the conditions a spell gives */
+.sfx-chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.sfx-chip-btn{font-size:12px;padding:2px 9px;height:auto;border-radius:999px}
+.sfx-chip-btn.is-on{background:var(--interactive-accent,#8b5cf6);color:var(--text-on-accent,#fff)}
+.sfx-desc{color:var(--text-muted,#999);font-size:12px;margin-top:2px}

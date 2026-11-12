@@ -19,6 +19,8 @@ export interface AtlasToken {
   isHidden?: boolean; side?: string; vision?: { enabled?: boolean }; statblockName?: string;
   /** The statblock note it is linked to. */
   statblockPath?: string;
+  /** Its conditions (ids of its collection's conditions). */
+  conditions?: string[];
   [field: string]: unknown;
 }
 
@@ -38,6 +40,18 @@ export interface AtlasState {
   deleteWall: (id: string) => void;
   deleteWalls: (ids: string[]) => void;
   openLightPopover?: (id: string) => void;
+  /** Adds or takes off a condition on these tokens (one store write). */
+  setTokensCondition?: (tokenIds: string[], conditionId: string, active: boolean) => void;
+  /** Atlas's initiative tracker: whether a fight is on, and its round. */
+  initiative?: { isActive?: boolean; round?: number };
+  currentCollectionId?: string;
+  isPlayerView?: boolean;
+}
+
+/** Atlas's collections (its asset service): a collection's settings, its conditions among them. */
+export interface AtlasAssets {
+  getCollectionSettings(collectionId: string): { conditions?: { id: string; name: string; color?: string; icon?: string }[]; [k: string]: unknown };
+  updateCollectionSettings(collectionId: string, settings: Record<string, unknown>): Promise<void>;
 }
 
 /** Atlas's undo history (a store of its own). */

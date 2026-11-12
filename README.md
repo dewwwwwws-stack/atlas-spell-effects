@@ -261,6 +261,7 @@ If it can't tell, it asks you to click the caster's token first.
   - a cone or line (Lightning Bolt, Burning Hands) starts from them, so you just aim;
   - an area cast at a point (Fireball) shows its **range** as a dashed ring round them (150 ft, from the edge of
     their space), and can't be placed beyond it;
+- **Cast with no target**: its animation once on the caster;
 - **Open in the cast window…**, with that spell picked, so you can change it first.
 
 The buttons only sit beside the statblock's text; nothing in it is changed. Where Atlas draws a statblock's text
@@ -320,6 +321,42 @@ right-click when done.
 Which kind a spell is gets read from its text (ranged spell attacks, rays, bolts and darts are bolts; spells naming a
 creature or target play on it). Change it in the cast window: **On a creature** in the Area row, or *A bolt at creatures* on a Line. It's
 kept with a saved spell as `effect-target` (`self`, `on` or `bolt`).
+
+## Creatures in spells
+**Lasting spells.** A creature inside a lasting spell (Darkness, Silence, Spirit Guardians, Web…) gets Atlas's
+**In a spell** condition, plus the conditions the spell gives, for as long as it's inside. They come off again when
+it leaves or the spell ends. The add-on adds *In a spell* to your collection's conditions the first time it's
+needed. Only what the add-on put on is taken off: a condition the creature had already stays, and one you take off a
+creature that saved stays off while it's still inside. An aura round its caster marks the others in it, not the
+caster.
+
+**Instant spells.** Creatures caught in an instant spell (Fireball, Thunderwave…) are listed on a small card beside
+the map, on your screen only, and get *In a spell* until you've dealt with them. Press **Failed** to give a creature
+the spell's conditions, or **Saved**. **×** finishes everyone left.
+
+**A spell's conditions** are read from its text ("has the Restrained condition", "falls Prone"; not the ones it ends
+or guards against), and Darkness gives Blinded. Change them in the cast window's **Conditions** row, which shows
+your collection's conditions. They're kept with a saved spell as `effect-conditions`.
+
+Turn it all off with **Mark creatures in spells** in the settings.
+
+## The spell turn tracker
+During a fight in Atlas's initiative tracker, each lasting spell shows how many rounds it has been up beside it
+(*Round 3*), on your screen only. It counts from the round the spell was cast in, or from the first round of a fight
+that started later. Spells never end on their own. Turn it off with **Spell turn tracker** in the settings.
+
+It also shows the time (*Round 3 · 12 s*) where the game system's round has a length: 6 seconds in D&D 5e and
+Pathfinder 2e, 10 in Old-School Essentials and Cairn, 3 in Cyberpunk RED. Daggerheart, Call of Cthulhu, Shadowdark
+and Draw Steel have no fixed round, so they count rounds only, as do your own systems until you set one. Change any
+of them with **Round length** in the settings (*6 seconds*, *10 s*, *1 minute*…; empty: rounds only). It's kept for
+each game system.
+
+## Recent spells, and casting with no target
+- The last five spells you cast are at the top of ✨'s menu (*Cast Fireball again*) and of the cast window.
+- In a statblock's **Cast** menu, **Cast with no target** plays the spell's animation once on its caster.
+- A saved spell keeps its range (`effect-range`), so its range ring shows, and the units its sizes are in
+  (`effect-unit`). In a collection with another game system (metres, say), its sizes are read as the same number of
+  squares.
 
 ## Licence
 The add-on's code: MIT (see `LICENSE`). JB2A's animations are not part of it. They're downloaded from JB2A and
