@@ -224,17 +224,24 @@ and every effect has an **Opacity** slider. They're in the cast window and the d
 kept with saved spells (`effect-colour`, `effect-colour-outer`, `effect-opacity`).
 
 ## Casting from Atlas statblocks
-In Atlas's statblocks (Ctrl / ⌘ + hover a token, the side panel, or a statblock note), the names of spells this
-add-on knows are highlighted: every spell in your spell notes and saved spells, by its name, its note's `aliases`,
+In Atlas's statblocks (Ctrl / ⌘ + hover a token, the side panel, or a statblock note), every spell this
+add-on knows gets a small **Cast** button in front of its name: every spell in your spell notes and saved spells, by its name, its note's `aliases`,
 and its name without its inventor ("Hideous Laughter" for "Tasha's Hideous Laughter", as 2024 names it). They're
 found in:
 - spell lists (Atlas's, in a list or in tabs, and Fantasy Statblocks');
 - text about spellcasting: a 2024 *Spellcasting* action's "At Will:" and "1/Day Each:" lines, Pathfinder's
   "Arcane Prepared Spells", "casts *Fireball*", spell cards (*Casting Time… Range… Components…*);
 - a spell name standing on its own in bold, italics or a link: an action called ***Cone of Cold (Recharge 5–6).***,
-  or `[[Shield]]`.
+  or `[[Shield]]`;
+- anything under a heading, label or tab about spells (*Spells*, *Cantrips*, *Prepared*, *Magic*…), such as a
+  player's spells shown as chips or as entries of their own;
+- in a statblock that has spells anywhere: a spell that is the whole of its line, chip or cell; a run of spells
+  after a label (*Magic Initiate (Wizard): Fire Bolt, Mage Hand, Shield*); and a spell of two words or more
+  anywhere in its text (*Misty Step*, *Cure Wounds*).
 
-Other text doesn't count, so "dim light" in a description, or a trait called *Light Sensitivity*, isn't a link.
+Other text doesn't count, so "dim light" in a description, or a trait called *Light Sensitivity*, gets no button.
+Nor does anything under a heading or label about gear (*Equipment*, *Inventory*, *Magic Items*…), so a shield
+there stays a shield.
 A spell whose text names no area can be cast too: on its caster when its range is Self (Shield, *On a creature*), otherwise on a
 square at a point within range (Mage Hand).
 
@@ -245,15 +252,20 @@ square at a point within range (Mage Hand).
 
 If it can't tell, it asks you to click the caster's token first.
 
-- **Click** a name to cast it straight away, as you saved it (or as its text says). With the caster known:
+**Cast** opens a small menu:
+- the caster and the spell's range (*Archmage · 150 ft*), or *No caster on the map*;
+- how it's cast, as you saved it (or as its text says): *Click where it goes on the map*, *Aim it on the map*,
+  *Click a token on the map*, *Click a target on the map*, *Draw it on the map*, or *Cast on Archmage*. With the
+  caster known:
   - an aura lands on them at once;
   - a cone or line (Lightning Bolt, Burning Hands) starts from them, so you just aim;
   - an area cast at a point (Fireball) shows its **range** as a dashed ring round them (150 ft, from the edge of
-    their space), and can't be placed beyond it.
-- **Shift-click** opens the cast window with that spell picked, so you can change it first.
-- **Ctrl / ⌘-click** does what Atlas would do (opens a linked note, for example).
+    their space), and can't be placed beyond it;
+- **Open in the cast window…**, with that spell picked, so you can change it first.
 
-The statblock itself isn't changed: the underline is drawn over it.
+The buttons only sit beside the statblock's text; nothing in it is changed. Where Atlas draws a statblock's text
+itself rather than as markdown, the name is underlined instead and a click on it casts it (Shift-click: the cast
+window).
 
 ### Statblocks with spells: where to get them, and a template
 - **Ready-made:** the [Fantasy Statblocks](https://github.com/javalent/fantasy-statblocks) plugin comes with the 5e

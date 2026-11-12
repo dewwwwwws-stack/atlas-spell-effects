@@ -56,6 +56,17 @@ export interface Choice { key: string; name: string; source: 'stored' | 'note'; 
 /** What is being cast: the area and look, before it is placed. */
 interface Pending { name: string; key: string; area: Area; file?: string; colour: string; colour2?: string; alpha?: number; attach?: boolean; light?: EffectLight; /** How far from its caster it can be cast (feet, from the edge of their space). */ range?: number }
 
+/** What casting a spell from a statblock's menu does, in a few words (`who`: its caster, when known). */
+function castWord(p: Pending, who: string | null): string {
+  const a = p.area;
+  const aims = a.shape === 'cone' || a.shape === 'line' || (a.shape === 'cube' && a.from === 'caster');
+  if (a.shape === 'wall') return 'Draw it on the map';
+  if (a.target === 'bolt') return who ? 'Click a target on the map' : 'Click the caster, then a target';
+  if (a.target) return a.self ? (who ? `Cast on ${who}` : 'Click the caster on the map') : 'Click a token on the map';
+  if (a.from === 'caster') return aims ? (who ? 'Aim it on the map' : 'Click the caster, then aim') : who ? `Cast on ${who}` : 'Click the caster on the map';
+  return 'Click where it goes on the map';
+}
+
 export default class AtlasSpellEffects extends Plugin {
   settings: Settings = { ...DEFAULTS };
   /** Waits before looking again (spells, the vault's files, spell Bases). */
@@ -527,7 +538,7 @@ export default class AtlasSpellEffects extends Plugin {
     const docs = new Set<Document>([document, ...this.docs()]);
     for (const d of docs) {
       if (this.linkers.has(d) || !d.body) continue;
-      const l = new StatblockLinker(d, () => this.spellNames(), (link, how) => void this.castFromStatblock(link, how));
+      const l = new StatblockLinker(d, () => this.spellNames(), (link, how) => void this.castFromStatblock(link, how), (link, how) => void this.statblockMenu(link, how));
       l.start(); this.linkers.set(d, l);
     }
     for (const [d, l] of this.linkers) if (!docs.has(d) || !d.defaultView) { l.stop(); this.linkers.delete(d); }
@@ -571,6 +582,31 @@ export default class AtlasSpellEffects extends Plugin {
     const p = await m.pending();
     if (!this.atlasTab()) { new Notice('Atlas Spell Effects: open an Atlas map first.'); return; }
     this.place(p, tok && this.mapOf(tok.tab) === this.mapOf(this.atlasTab()!) ? tok.id : undefined);
+  }
+
+  /**
+   * A statblock's Cast button: a menu of the caster and the spell's range, the way it's cast (the map takes it
+   * from there), and the cast window.
+   */
+  async statblockMenu(link: SpellLink, how: { statblock: HTMLElement; x: number; y: number }): Promise<void> {
+    const tok = this.tokenOfStatblock(how.statblock);
+    const c = this.choices().find((x) => x.key === link.key) ?? null;
+    if (!c) return;
+    const m = new CastModal(this.app, this);
+    await m.pick(c);
+    const p = await m.pending();
+    const tab = this.atlasTab();
+    const here = tok && tab && this.mapOf(tok.tab) === this.mapOf(tab) ? tok : null;
+    const who = here ? this.tokenName(here.tab, here.id) : null;
+    const range = p.range && p.range > 0 ? `${p.range} ${unitLabel()}` : '';
+    const menu = new Menu();
+    menu.addItem((i) => i.setTitle([who ?? 'No caster on the map', range].filter(Boolean).join('   ·   ')).setIcon('user').setDisabled(true));
+    menu.addItem((i) => i.setTitle(castWord(p, who)).setIcon('wand-sparkles').onClick(() => {
+      if (!this.atlasTab()) { new Notice('Atlas Spell Effects: open an Atlas map first.'); return; }
+      this.place(p, here?.id);
+    }));
+    menu.addItem((i) => i.setTitle('Open in the cast window…').setIcon('sliders-horizontal').onClick(() => { m.casterToken = tok?.id; m.open(); }));
+    menu.showAtPosition({ x: how.x, y: how.y }, how.statblock.ownerDocument);
   }
 
   // ── spell Bases ──
