@@ -228,7 +228,7 @@ export class Painter {
 
   /** The art laid out so its picture, not its empty frame, fills the area (a cone reaching its full length). */
   private fit(el: HTMLElement, e: Effect): void {
-    const fo = e.file && !isPreview(e) && (e.shape === 'cone' || e.shape === 'line') ? fitOf(this.world.trim(e.file), e.shape) : null;
+    const fo = e.file && !isPreview(e) && (e.shape === 'cone' || e.shape === 'line' || ((e.shape === 'radius' || e.shape === 'emanation') && !e.on)) ? fitOf(this.world.trim(e.file), e.shape) : null;
     if (fo) {
       setVar(el, '--fx-l', `${fo.l.toFixed(2)}%`); setVar(el, '--fx-t', `${fo.t.toFixed(2)}%`);
       setVar(el, '--fx-w', `${fo.w.toFixed(2)}%`); setVar(el, '--fx-h', `${fo.h.toFixed(2)}%`);

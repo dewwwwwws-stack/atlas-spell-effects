@@ -490,7 +490,7 @@ export class PixiPainter {
       return;
     }
     // art with room round its picture: the picture fills the area (a cone to its full length)
-    const fo = (e.shape === 'cone' || e.shape === 'line') ? fitOf(this.world.trim(e.file ?? ''), e.shape) : null;
+    const fo = (e.shape === 'cone' || e.shape === 'line' || ((e.shape === 'radius' || e.shape === 'emanation') && !e.on)) ? fitOf(this.world.trim(e.file ?? ''), e.shape) : null;
     if (fo) {
       sp.width = b.w * fo.w / 100; sp.height = b.h * fo.h / 100;
       sp.x = (fo.l + fo.w / 2) / 100 * b.w - b.w / 2; sp.y = (fo.t + fo.h / 2) / 100 * b.h - b.h / 2;

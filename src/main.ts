@@ -5,7 +5,7 @@
 import { Plugin, Modal, Menu, Notice, PluginSettingTab, Setting, setIcon, TFile, MarkdownView, type App, type TextComponent, type WorkspaceLeaf, type SettingDefinitionItem } from 'obsidian';
 import { BaseReader, basesReady } from './bases';
 import { jb2aFiles, fetchJb2a, fetchAll } from './jb2a';
-import { measureArt, type Trim } from './trim';
+import { measureArt, hasReach, type Trim } from './trim';
 import { kitOf, PixiPainter, forgetBlobs, type AimLook } from './pixi';
 import { areaOf as atlasAreaOf, areaKey, effectFromArea, lookOf, areaCarries, atlasLightOf, toolShapeOf, AREA_LOOKS, LOOK_NAMES, LOOK_COLOURS, type AreaShape, type AreaLook } from './measures';
 import { IN_SPELL_ID, IN_SPELL, ROUND_SECS, idsOf, upFor, timeOf, secondsOf, spellConditions, type ConditionDef } from './conditions';
@@ -1010,7 +1010,9 @@ export default class AtlasSpellEffects extends Plugin {
   /** Where an animation's picture is in its frame: known, or looked at soon (one at a time). */
   trimOf(path: string): Trim | null {
     const known = this.settings.artTrim[path];
-    if (known !== undefined) return known || null;
+    // measured before the reach of a burst was: looked at again, once
+    if (known !== undefined && !(known && !hasReach(known) && !this.trimming.has(path))) return known || null;
+    if (known) { this.trimming.add(path); this.trimQueue.push(path); if (this.trimQueue.length === 1) void this.nextTrim(); return known; }
     if (!this.trimming.has(path)) {
       this.trimming.add(path); this.trimQueue.push(path);
       if (this.trimQueue.length === 1) void this.nextTrim();

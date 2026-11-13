@@ -387,6 +387,9 @@ All of it is kept with a saved spell (`effect-draw`, `effect-area-light`, `effec
   spell for it. Its animation, conditions and so on go on that area, where it lies; ending the spell leaves your
   area as it was.
 
+A burst's animation (Fireball's explosion) is grown so the blast itself reaches the edge of its circle; JB2A's
+art leaves empty room round it. Stray sparks may go a little past the edge.
+
 A cone is drawn the way Atlas draws cones (your game's cone angle, with a rounded end unless its rules make cones
 flat), so where you aim it is exactly where its area lands.
 

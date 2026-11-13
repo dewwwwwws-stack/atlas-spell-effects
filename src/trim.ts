@@ -3,8 +3,14 @@
 // reach. A few frames are looked at once, the part that is ever visible is kept, and that part is what is
 // fitted to the area from then on.
 
-/** The visible part of a frame, as fractions of its width and height: left, right, top, bottom. */
-export type Trim = [number, number, number, number];
+/**
+ * The visible part of a frame, as fractions of its width and height: left, right, top, bottom; and (measured since
+ * 1.8.4) how far from the frame's middle the body of the picture reaches at its biggest, as a fraction of half its
+ * shorter side (a burst's edge, not its stray sparks).
+ */
+export type Trim = [number, number, number, number] | [number, number, number, number, number];
+/** Whether a trim was measured with its reach (older ones weren't). */
+export const hasReach = (t: Trim | null | undefined): boolean => !!t && t.length > 4;
 
 const SIDE = 160;           // the frames are looked at this big (their longer side)
 const SOLID = 40;           // of 255: less see-through than this counts as picture
@@ -19,7 +25,8 @@ export async function measureArt(data: ArrayBuffer, path: string): Promise<Trim 
     const canvas = createEl('canvas');
     const g = canvas.getContext('2d', { willReadFrequently: true });
     if (!g) return null;
-    let box: Trim | null = null;
+    let box: [number, number, number, number] | null = null;
+    let reach = 0;
     const look = (src: CanvasImageSource, w: number, h: number) => {
       const k = SIDE / Math.max(w, h);
       const cw = Math.max(1, Math.round(w * k)), ch = Math.max(1, Math.round(h * k));
@@ -27,10 +34,16 @@ export async function measureArt(data: ArrayBuffer, path: string): Promise<Trim 
       g.clearRect(0, 0, cw, ch); g.drawImage(src, 0, 0, cw, ch);
       const px = g.getImageData(0, 0, cw, ch).data;
       let x0 = cw, x1 = -1, y0 = ch, y1 = -1;
+      const half = Math.min(cw, ch) / 2, dists: number[] = [];
       for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) {
-        if (px[(y * cw + x) * 4 + 3] > SOLID) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+        if (px[(y * cw + x) * 4 + 3] > SOLID) {
+          if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+          dists.push(Math.hypot(x + 0.5 - cw / 2, y + 0.5 - ch / 2) / half);
+        }
       }
       if (x1 < 0) return;
+      // the body of the picture: as far out as nearly all of it (stray sparks beyond don't count)
+      if (dists.length > 20) { dists.sort((a, b) => a - b); reach = Math.max(reach, dists[Math.floor(dists.length * 0.97)] ?? 0); }
       const t: Trim = [x0 / cw, (x1 + 1) / cw, y0 / ch, (y1 + 1) / ch];
       box = box ? [Math.min(box[0], t[0]), Math.max(box[1], t[1]), Math.min(box[2], t[2]), Math.max(box[3], t[3])] : t;
     };
@@ -52,7 +65,7 @@ export async function measureArt(data: ArrayBuffer, path: string): Promise<Trim 
       await within(im.decode(), 8000);
       look(im, im.naturalWidth, im.naturalHeight);
     }
-    return box;
+    return box ? [box[0], box[1], box[2], box[3], Math.round(reach * 1000) / 1000] : null;
   } catch {
     return null;
   } finally {
@@ -79,7 +92,15 @@ export function rangedLayout(w: number, ft: number): { start: number; span: numb
  * their length (their thickness stays the art's). Null: nothing worth changing.
  */
 export function fitOf(trim: Trim | null | undefined, shape: string): { l: number; t: number; w: number; h: number } | null {
-  if (!trim || (shape !== 'cone' && shape !== 'line')) return null;
+  if (!trim) return null;
+  if (shape === 'radius' || shape === 'emanation') {
+    // a burst (Fireball) whose picture stops short of its frame: grown till its body reaches the area's edge
+    const r = trim[4];
+    if (!r || !(r > 0.2) || r > 0.93) return null;
+    const k = Math.min(1.6, 1 / r);
+    return { l: 50 - 50 * k, t: 50 - 50 * k, w: 100 * k, h: 100 * k };
+  }
+  if (shape !== 'cone' && shape !== 'line') return null;
   const [x0, x1, y0, y1] = trim;
   const along = Math.max(0.05, x1 - x0), across = shape === 'cone' ? Math.max(0.05, y1 - y0) : 1;
   const top = shape === 'cone' ? y0 : 0;
