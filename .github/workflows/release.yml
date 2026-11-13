@@ -1,8 +1,12 @@
 name: Release
-# Every change to main is checked for a new version (package.json's "version"). When there is one, this:
+# Every change to main:
+#   - makes package-lock.json if there isn't one, and commits it (the exact versions the build uses, so anyone can
+#     build the same main.js; Obsidian's review checks for it).
+# And when package.json's "version" is new, it:
 #   1. sets manifest.json's version (and minAppVersion, from versions.json) to match, and commits it,
 #   2. builds main.js,
-#   3. makes the GitHub release with that version as its tag, main.js, manifest.json and styles.css attached
+#   3. attests main.js, styles.css and manifest.json (GitHub's build provenance), so anyone can check they came from here,
+#   4. makes the GitHub release with that version as its tag, main.js, manifest.json and styles.css attached
 #      (as Obsidian needs), and release-notes.md as its description.
 # So an update is: upload the changed files, commit. Nothing else.
 on:
@@ -11,6 +15,8 @@ on:
   workflow_dispatch:
 permissions:
   contents: write
+  id-token: write      # for the build attestation
+  attestations: write
 concurrency:
   group: release
   cancel-in-progress: false
@@ -22,6 +28,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: A lockfile (the exact versions of what builds it)
+        run: |
+          if [ ! -f package-lock.json ]; then
+            npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add package-lock.json
+            git commit -m "Lockfile (package-lock.json)"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
       - name: The version
         id: v
         run: |
@@ -54,8 +70,16 @@ jobs:
       - name: Build
         if: steps.v.outputs.new == 'true'
         run: |
-          npm install --no-audit --no-fund
+          npm ci --no-audit --no-fund
           npm run build
+      - name: Attest the build (proves main.js and styles.css were built here, from this repo)
+        if: steps.v.outputs.new == 'true'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            main.js
+            styles.css
+            manifest.json
       - name: Release
         if: steps.v.outputs.new == 'true'
         env:
