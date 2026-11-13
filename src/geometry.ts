@@ -80,6 +80,8 @@ export interface Effect {
   hidden?: boolean;
   /** Its Atlas area's colour, given in Atlas (else its look's own). */
   areaColour?: string;
+  /** A cone that ends in an arc (as Atlas draws cones unless the game's rules make them flat). */
+  coneRound?: boolean;
 }
 
 /** The usual cone (5e's): as wide at its end as it is long. */
@@ -88,6 +90,23 @@ export const CONE_ANGLE = 53.13;
 export const coneWidth = (len: number, angle?: number): number => 2 * len * Math.tan(((Math.min(170, Math.max(1, angle ?? CONE_ANGLE)) / 2) * Math.PI) / 180);
 
 export interface Box { cx: number; cy: number; w: number; h: number; rot: number }
+
+const halfAngle = (angle?: number): number => ((Math.min(170, Math.max(1, angle ?? CONE_ANGLE)) / 2) * Math.PI) / 180;
+/** A round-ended cone's width (its arc's ends), from its length and angle. */
+export const roundConeWidth = (len: number, angle?: number): number => 2 * len * Math.sin(halfAngle(angle));
+/**
+ * A cone's outline in its box's own frame (the box's middle at 0,0, its point at -w/2,0, pointing along +x): a
+ * triangle, or (round) its point and an arc as far from it as it is long, as Atlas draws a cone.
+ */
+export function coneLocal(e: Pick<Effect, 'angle' | 'coneRound'>, w: number, h: number, n = 24): Point[] {
+  if (!e.coneRound) return [{ x: -w / 2, y: 0 }, { x: w / 2, y: -h / 2 }, { x: w / 2, y: h / 2 }];
+  const half = halfAngle(e.angle);
+  const pts: Point[] = [{ x: -w / 2, y: 0 }];
+  for (let i = 0; i <= n; i++) { const a = -half + (2 * half * i) / n; pts.push({ x: -w / 2 + w * Math.cos(a), y: w * Math.sin(a) * (h / 2) / Math.max(1e-9, w * Math.sin(half)) }); }
+  return pts;
+}
+/** The same outline as percentages of its box (for SVG polygons and clip paths). */
+export const conePercent = (e: Pick<Effect, 'angle' | 'coneRound'>, pad = 0): Point[] => coneLocal(e, 1, 1).map((p) => ({ x: (p.x + 0.5) * 100, y: 50 + p.y * (100 + 2 * pad) }));
 
 /** What the map says about sizes: the grid's cell in world units and how many feet one cell is. */
 export interface Scale { cell: number; feetPerCell: number }
@@ -168,7 +187,7 @@ export function boxOf(e: Effect, s: Scale, tokenAt?: TokenAt | null, art?: { asp
     case 'cone': {
       // the cone's point at the origin, as wide at its end as its angle makes it
       const len = e.size * ppf;
-      return { cx: at.x + Math.cos(dir) * len / 2, cy: at.y + Math.sin(dir) * len / 2, w: len, h: coneWidth(len, e.angle), rot: dir };
+      return { cx: at.x + Math.cos(dir) * len / 2, cy: at.y + Math.sin(dir) * len / 2, w: len, h: e.coneRound ? roundConeWidth(len, e.angle) : coneWidth(len, e.angle), rot: dir };
     }
     case 'wall': {
       // all of it: its corners and its thickness
@@ -280,7 +299,7 @@ export function controlsOf(e: Effect, s: Scale, tokenAt: TokenAt | null, b: Box,
     return { outline: { circle: { cx: b.cx, cy: b.cy, r } }, handles: h, badge: { x: b.cx + r + 50 * px, y: b.cy, text: size(e.size) } };
   }
   if (aims(e)) {
-    const poly = e.shape === 'cone' ? [at(-hw, 0), at(hw, -hh), at(hw, hh)] : [at(-hw, -hh), at(hw, -hh), at(hw, hh), at(-hw, hh)];
+    const poly = e.shape === 'cone' ? coneLocal(e, b.w, b.h).map((q) => at(q.x, q.y)) : [at(-hw, -hh), at(hw, -hh), at(hw, hh), at(-hw, hh)];
     put('len', at(hw + 14 * px, 0), 'ew-resize');
     put('turn', at(hw + 46 * px, 0), 'grab');
     const side = at(hw + 14 * px, hh + 30 * px);
@@ -372,7 +391,7 @@ export function snapCorner(p: Point, cell: number, offset: Point = { x: 0, y: 0 
 }
 
 /** Whether the world point `p` is inside the effect's shape (its box `b`): circle, square, cone or line. */
-export function hitEffect(e: Pick<Effect, 'shape'>, b: Box, p: Point, pieces?: readonly Box[]): boolean {
+export function hitEffect(e: Pick<Effect, 'shape' | 'angle' | 'coneRound'>, b: Box, p: Point, pieces?: readonly Box[]): boolean {
   if (e.shape === 'wall' && pieces) return pieces.some((q) => hitEffect({ shape: 'line' }, q, p));
   const dx = p.x - b.cx, dy = p.y - b.cy;
   const c = Math.cos(-b.rot), s = Math.sin(-b.rot);
@@ -382,6 +401,7 @@ export function hitEffect(e: Pick<Effect, 'shape'>, b: Box, p: Point, pieces?: r
     case 'emanation':
       return Math.hypot(dx, dy) <= b.w / 2;
     case 'cone': {
+      if (e.coneRound) { const ax = lx + b.w / 2; return Math.hypot(ax, ly) <= b.w && Math.abs(Math.atan2(ly, ax)) <= halfAngle(e.angle); }
       if (lx < -b.w / 2 || lx > b.w / 2) return false;
       const along = (lx + b.w / 2) / b.w;                         // 0 at the point, 1 at the far end
       return Math.abs(ly) <= along * b.h / 2;

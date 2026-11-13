@@ -6,7 +6,7 @@
 // Container, and a Sprite and Texture from a picture on it. When they can't be found, the overlay (overlay.ts)
 // draws effects instead, as before.
 
-import { boxOf, onCreature, wallPieces, wallPoints, wallThickness, type Box, type Effect, type Point, type Scale, type TokenAt } from './geometry';
+import { boxOf, onCreature, coneLocal, wallPieces, wallPoints, wallThickness, type Box, type Effect, type Point, type Scale, type TokenAt } from './geometry';
 import { artInfo, instantMs, FADE_MS, DRAWN_MS, type World } from './overlay';
 import { fitOf, rangedLayout } from './trim';
 import { fromFeet } from './areas';
@@ -125,16 +125,20 @@ function probeAlpha(v: HTMLVideoElement): AlphaMode | null {
 
 /** A cone's shape, white on clear, soft at its edges: the point at the middle of its left side, its end the right side. */
 let coneCanvas: HTMLCanvasElement | null = null;
-function coneMask(): HTMLCanvasElement {
-  if (coneCanvas) return coneCanvas;
+function coneMask(round = false): HTMLCanvasElement {
+  const had = round ? roundCanvas : coneCanvas; if (had) return had;
   const c = createEl('canvas'); c.width = 256; c.height = 256;
   const g = c.getContext('2d');
   if (g) {
     g.filter = 'blur(5px)'; g.fillStyle = '#fff';
-    g.beginPath(); g.moveTo(2, 128); g.lineTo(252, 12); g.lineTo(252, 244); g.closePath(); g.fill();
+    g.beginPath();
+    coneLocal({ coneRound: round }, 250, 232).forEach((p, i) => { if (i) g.lineTo(127 + p.x, 128 + p.y); else g.moveTo(127 + p.x, 128 + p.y); });
+    g.closePath(); g.fill();
   }
-  return (coneCanvas = c);
+  if (round) roundCanvas = c; else coneCanvas = c;
+  return c;
 }
+let roundCanvas: HTMLCanvasElement | null = null;
 
 /** The players' view of where the DM aims: its id, and the effect drawn for it (the area, drawn, see-through). */
 const AIM = 'sfx-aim';
@@ -181,7 +185,7 @@ function drawnCanvas(e: Effect, w: number, h: number): HTMLCanvasElement {
     // where you aim: on a dark floor the wash looked like light, and showed the floor under it)
     g.beginPath();
     if (e.shape === 'radius' || e.shape === 'emanation') g.arc(0, 0, Math.min(w, h) / 2, 0, Math.PI * 2);
-    else if (e.shape === 'cone') { g.moveTo(-w / 2, 0); g.lineTo(w / 2, -h / 2); g.lineTo(w / 2, h / 2); g.closePath(); }
+    else if (e.shape === 'cone') { coneLocal(e, w, h).forEach((p, i) => { if (i) g.lineTo(p.x, p.y); else g.moveTo(p.x, p.y); }); g.closePath(); }
     else g.rect(-w / 2, -h / 2, w, h);
     if (e.id !== AIM) { g.fillStyle = rgba(c1, 0.16); g.fill(); }
     const lw = Math.max(3 / k, Math.max(w, h) * 0.012);
@@ -210,7 +214,7 @@ function drawnCanvas(e: Effect, w: number, h: number): HTMLCanvasElement {
     // its point on the left, its far end on the right: the inner colour fading from the point, the outer on its edge
     const lg = g.createLinearGradient(-w / 2, 0, w / 2, 0);
     lg.addColorStop(0, rgba(c1, 0.8)); lg.addColorStop(0.55, rgba(c1, 0.4)); lg.addColorStop(1, rgba(c2, 0.55));
-    g.beginPath(); g.moveTo(-w / 2, 0); g.lineTo(w / 2, -h / 2); g.lineTo(w / 2, h / 2); g.closePath();
+    g.beginPath(); coneLocal(e, w, h).forEach((p, i) => { if (i) g.lineTo(p.x, p.y); else g.moveTo(p.x, p.y); }); g.closePath();
     g.fillStyle = lg; g.fill();
     g.shadowColor = rgba(c2, 1); g.shadowBlur = glow * k * 1.5;
     g.strokeStyle = rgba(c2, 0.9); g.lineWidth = Math.max(2 / k, Math.max(w, h) * 0.008); g.lineJoin = 'round'; g.stroke();
@@ -451,7 +455,7 @@ export class PixiPainter {
     it.node.x = b.cx; it.node.y = b.cy; it.node.rotation = b.rot;
     if (!tex) {
       // drawn: made at its size (again when the size changes)
-      const key = `${Math.round(b.w)}x${Math.round(b.h)}`;
+      const key = `${Math.round(b.w)}x${Math.round(b.h)}${e.coneRound ? 'r' : ''}`;
       const sp0 = it.sprites[0] as (PSprite & { sfxKey?: string }) | undefined;
       if (!sp0 || sp0.sfxKey !== key) {
         for (const sp of it.sprites) { it.node.removeChild(sp); sp.destroy({ texture: true, textureSource: true }); }
@@ -469,7 +473,7 @@ export class PixiPainter {
       const sp = new this.kit.Sprite(tex); sp.anchor.set(0.5); it.node.addChild(sp); it.sprites = [sp];
       // a cone: its art kept inside the cone (soft-edged), whatever shape its picture is
       if (e.shape === 'cone') {
-        const m = new this.kit.Sprite(this.kit.texture(coneMask())); m.anchor.set(0.5); m.label = 'sfx-cone-mask';
+        const m = new this.kit.Sprite(this.kit.texture(coneMask(!!e.coneRound))); m.anchor.set(0.5); m.label = 'sfx-cone-mask';
         it.node.addChild(m); (sp as unknown as { mask: unknown }).mask = m;
       }
     }

@@ -1,7 +1,7 @@
 // Draws effects over a map: the DM's Atlas view and the player window each get a layer laid exactly over the
 // map canvas (turned with the TV), and every effect is an element placed in it from its box in the world.
 // Animations are the vault's files (video or image); without one, the add-on draws the shape itself.
-import { boxOf, onCreature, coneWidth, wallPieces, wallPoints, wallThickness, type Controls, type Point, type Box, type Effect, type Scale, type TokenAt } from './geometry';
+import { boxOf, onCreature, coneWidth, conePercent, wallPieces, wallPoints, wallThickness, type Controls, type Point, type Box, type Effect, type Scale, type TokenAt } from './geometry';
 import { fromFeet, unitLabel, type Shape } from './areas';
 import { fitOf, type Trim } from './trim';
 
@@ -235,8 +235,13 @@ export class Painter {
     }
     if (el.classList.contains('sfx-fit') !== !!fo) el.classList.toggle('sfx-fit', !!fo);
     // a cone: its art kept inside the cone, whatever shape its picture is
-    const clip = e.file && e.shape === 'cone' ? 'polygon(0 50%, 100% -4%, 100% 104%)' : '';
+    const clip = e.file && e.shape === 'cone' ? (e.coneRound ? `polygon(${conePercent(e, 0.04).map((p) => `${p.x.toFixed(1)}% ${p.y.toFixed(1)}%`).join(', ')})` : 'polygon(0 50%, 100% -4%, 100% 104%)') : '';
     if (el.style.clipPath !== clip) el.style.clipPath = clip;
+    // a drawn cone: a triangle, or round-ended as Atlas draws it
+    if (e.shape === 'cone' && !e.file) {
+      const pts = conePercent(e).map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(' ');
+      el.querySelectorAll('.sfx-cone-fill, .sfx-cone-edge').forEach((pg) => { if (pg.getAttribute('points') !== pts) pg.setAttribute('points', pts); });
+    }
   }
 
   /** Drops an effect's element, so it is made again (another animation or colour). */

@@ -1,14 +1,35 @@
 # Spell Effects for AtlasVTT
 
-Animated spell areas on your Atlas VTT maps: Fireball's burst, Burning Hands' cone, Lightning Bolt's line,
-Spirit Guardians around the cleric. They show on your screen and on the player window (the TV), in the right
-place and at the right size, and follow the players' own view. A bridge until Atlas has effects of its own.
+Atlas now draws spell areas itself: kept measurements with a Fire, Frost, Lightning, Mist, Radiance or Shadow
+look, light or darkness, and auras that follow a token. Atlas also rings and counts the tokens inside, and stops
+areas at walls. This add-on builds on those areas rather than replacing them. Your spells become Atlas's own areas,
+so they show on the map, the player view and Atlas Online like any other. On top of that, it adds:
+
+- **Animations:** JB2A's free animations play over the area: Fireball's burst, Lightning Bolt's line, Spirit
+  Guardians around the cleric. Bolts like Fire Bolt fly from the caster to each target.
+- **Cast from statblocks:** a **Cast** button next to every spell in a creature's or player's statblock. The
+  caster and range come from the token, and spells cast at creatures list everyone in range so you just pick one.
+- **Your spell library:** spells come from your own spell notes and Bases. Save a spell's animation, colour, look
+  and area once and it's used every time. You can also make your own spells.
+- **Who it caught:** a card names the creatures an instant spell hit, and lasting spells put conditions on those
+  inside, such as *In a spell* or *Blinded* in Darkness.
+- **Rounds:** shows how long each lasting spell has been up, from Atlas's initiative, with round lengths for each
+  game system.
+- **Teleports:** Misty Step and Dimension Door move the caster's token, with an animation where they leave and
+  where they arrive.
+- **Walls and rings:** Wall of Fire and the like, drawn corner by corner (Atlas's areas are circles, cones,
+  squares and lines).
+- **Inside Atlas's own windows:** click a spell's area to **Edit** or **End** it, or **Animate…** any area you've
+  drawn yourself.
+
+Turn off *Spells as Atlas areas* in the settings and the add-on draws spells on its own, as it did before Atlas
+0.15.
 
 > A community add-on for [Atlas VTT](https://community.obsidian.md/users/atlas-vtt). It is not made, endorsed or
 > supported by Atlas VTT, Atlas Online or JB2A.
 
 ## Needs
-- **Atlas VTT** (tested with 0.12), on desktop.
+- **Atlas VTT** (tested with 0.15), on desktop. Atlas 0.15 or later for spells as Atlas areas.
 - Obsidian 1.10 or later. Spell bases need the Bases core plugin on.
 
 ## Install
@@ -20,6 +41,11 @@ Settings → Community plugins → Browse → search **Spell Effects** → Insta
   (`raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e`). That happens when you first use an animation, when its
   preview picture shows in the cast window, or when you press *Download everything*. Turn *Offer every JB2A
   animation* off in the settings and it fetches nothing at all. No tracking, no accounts, nothing sent anywhere.
+- **Your vault's file list:** to find your spells and animations it looks through the names of the vault's files
+  and the properties of its notes: notes with saved spell settings, notes in the Bases you pick, spell notes (if
+  *Also find spell notes anywhere* is on), and animations in the JB2A folder and any *Spell Effects* folder (or the
+  folders you pick). Its folder and Base pickers in the settings list your folders and Bases. It only reads the
+  notes it's found as spells.
 - **Your vault:** it saves downloaded animations, and a JB2A credit and licence note, in the JB2A folder
   (`JB2A_DnD5e`). *Save* writes `effect-…` properties onto that spell's note (and *Delete* takes them off
   again). A spell of your own (*Save as new…*) gets a note, and a Base, in its own folder (*Spell Storage*);
@@ -360,6 +386,9 @@ All of it is kept with a saved spell (`effect-draw`, `effect-area-light`, `effec
 - one of your own areas, drawn with Atlas's Measure tool: **Animate…**, which opens the cast window to pick a
   spell for it. Its animation, conditions and so on go on that area, where it lies; ending the spell leaves your
   area as it was.
+
+A cone is drawn the way Atlas draws cones (your game's cone angle, with a rounded end unless its rules make cones
+flat), so where you aim it is exactly where its area lands.
 
 A spell's area takes its look's own colour (Frost pale blue, Fire orange…), not the spell's colour. Change it in
 Atlas's window and your colour is kept.

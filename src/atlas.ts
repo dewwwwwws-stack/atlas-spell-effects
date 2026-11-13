@@ -122,6 +122,8 @@ export interface Measurement {
   /** The game system's range bands (Daggerheart, Shadowdark), and its cone's angle. */
   rangeBands?: readonly { name: string; maxSquares: number }[];
   coneAngle?: number;
+  /** How Atlas ends a measured cone: 'round' (unset) or 'flat'. */
+  coneEnd?: string;
 }
 
 /** What the add-on reads of one Atlas map tab. */
