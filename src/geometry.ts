@@ -60,6 +60,8 @@ export interface Effect {
   started: number;
   /** The conditions it gives the creatures inside it (names, as the collection's conditions are called). */
   conditions?: string[];
+  /** The creature it comes from (a cone, a line, an aura): never caught in its own spell. */
+  caster?: string;
   /** A bolt shot at one creature (Fire Bolt): no one is caught in it. */
   bolt?: boolean;
   /** The initiative round it has been counted from (the round it was cast in, or the fight's first). */

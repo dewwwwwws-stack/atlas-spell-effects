@@ -2,7 +2,7 @@
 // Cast from the command palette or the ribbon: pick a spell (your spell list says its area), pick its animation
 // (JB2A or your own files; or one the add-on draws), click the caster / aim / click where it lands. It plays on
 // your map and on the player window (the TV) at the right place and size; lasting ones stay until you end them.
-import { Plugin, Modal, Menu, Notice, PluginSettingTab, Setting, setIcon, TFile, MarkdownView, type App, type TextComponent } from 'obsidian';
+import { Plugin, Modal, Menu, Notice, PluginSettingTab, Setting, setIcon, TFile, MarkdownView, type App, type TextComponent, type WorkspaceLeaf } from 'obsidian';
 import { BaseReader, basesReady } from './bases';
 import { jb2aFiles, fetchJb2a, fetchAll } from './jb2a';
 import { measureArt, type Trim } from './trim';
@@ -566,7 +566,7 @@ export default class AtlasSpellEffects extends Plugin {
     const docs = new Set<Document>([document, ...this.docs()]);
     for (const d of docs) {
       if (this.linkers.has(d) || !d.body) continue;
-      const l = new StatblockLinker(d, () => this.spellNames(), (link, how) => void this.castFromStatblock(link, how), (link, how) => void this.statblockMenu(link, how));
+      const l = new StatblockLinker(d, () => this.spellNames(), (link, how) => void this.castFromStatblock(link, how), (link, how) => void this.statblockMenu(link, how), (sb) => { if (sb.closest('.atlas-statblock-preview-window')) this.tokenOfStatblock(sb); });
       l.start(); this.linkers.set(d, l);
     }
     for (const [d, l] of this.linkers) if (!docs.has(d) || !d.defaultView) { l.stop(); this.linkers.delete(d); }
@@ -581,18 +581,34 @@ export default class AtlasSpellEffects extends Plugin {
   private tokenOfStatblock(sb: HTMLElement): { tab: Tab; id: string } | null {
     const win = sb.closest('.atlas-statblock-preview-window');
     if (!win) {
-      // a statblock elsewhere (Atlas's side panel, a note): the one token selected on the map, if there is one
       const t = this.atlasTab(); const st = t?.store.getState?.();
-      const sel = (st?.selectedIds ?? []).filter((id: string) => st?.objects?.tokens?.[id]);
-      if (t && sel.length === 1) return { tab: t, id: sel[0] };
-      // a statblock note open in a tab: the one token on the map linked to that note
-      const note = this.app.workspace.getLeavesOfType('markdown').find((l) => l.view.containerEl.contains(sb))?.view;
-      const path = note instanceof MarkdownView ? note.file?.path : undefined;
+      const tokens = st?.objects?.tokens ?? {};
+      const sel = (st?.selectedIds ?? []).filter((id: string) => tokens[id]);
+      // a statblock note open in a tab, or Atlas's statblock pane ("Edit statblock" on a token): the token on the
+      // map linked to that note (the selected one, where several share it)
+      const leaf = this.app.workspace.getLeavesOfType('markdown').find((l) => l.view.containerEl.contains(sb))
+        ?? (() => { let found: WorkspaceLeaf | undefined; this.app.workspace.iterateAllLeaves((l) => { if (!found && l.view.containerEl.contains(sb)) found = l; }); return found; })();
+      const v = leaf?.view;
+      const fp = v instanceof MarkdownView ? v.file?.path : field(v, 'file') instanceof TFile ? (field(v, 'file') as TFile).path : field(v, 'path');
+      const path = typeof fp === 'string' ? fp : undefined;
       if (t && path) {
-        const linked = Object.entries(st?.objects?.tokens ?? {}).filter(([, tok]) => tok.statblockPath === path && !tok.offMap).map(([id]) => id);
-        if (linked.length === 1) return { tab: t, id: linked[0] };
+        const linked = Object.entries(tokens).filter(([, tok]) => tok.statblockPath === path && !tok.offMap).map(([id]) => id);
+        const picked = linked.length === 1 ? linked[0] : linked.find((id) => sel.length === 1 && sel[0] === id);
+        if (picked) return { tab: t, id: picked };
       }
+      // elsewhere (Atlas's side panel…): the one token selected on the map, if there is one
+      if (t && sel.length === 1) return { tab: t, id: sel[0] };
       return null;
+    }
+    // a window Atlas opened for a token on a map (Ctrl / ⌘ + hover): Atlas keeps it by its token
+    for (const tab of this.atlasTabs()) {
+      const open = field(call<unknown>(tab.view.serviceManager, 'getNotePreviewUIManager'), 'activePreviews');
+      if (!(open instanceof Map)) continue;
+      for (const [key, pv] of open as Map<unknown, unknown>) {
+        if (typeof key !== 'string' || field(pv, 'element') !== win) continue;
+        const id = key.slice(key.lastIndexOf('::') + 2);
+        if (tab.store.getState()?.objects?.tokens?.[id]) { this.windowTok.set(win, { tab, id }); return { tab, id }; }
+      }
     }
     let t = this.windowTok.get(win);
     if (!t && this.hoverTok && Date.now() - this.hoverTok.at < 5000) { t = { tab: this.hoverTok.tab, id: this.hoverTok.id }; this.windowTok.set(win, t); }
@@ -1304,8 +1320,8 @@ export default class AtlasSpellEffects extends Plugin {
     const pieces = e.shape === 'wall' ? wallPieces(e, s, follow) : undefined;
     const out: string[] = [];
     for (const [id, tok] of Object.entries(tokens)) {
-      // an aura round its caster: the others in it, not the caster
-      if (tok.offMap || (e.shape === 'emanation' && id === e.token)) continue;
+      // a cone, a line or an aura from its caster: the others in it, not the caster
+      if (tok.offMap || id === e.caster || (e.shape === 'emanation' && id === e.token)) continue;
       const at = this.tokenOf(t, id); if (!at) continue;
       const pts = [{ x: at.x, y: at.y }, ...Array.from({ length: 8 }, (_, i) => ({ x: at.x + Math.cos(i * Math.PI / 4) * at.r * 0.6, y: at.y + Math.sin(i * Math.PI / 4) * at.r * 0.6 }))];
       if (pts.some((p) => hitEffect(e, b, p, pieces))) out.push(id);
@@ -1778,8 +1794,8 @@ export default class AtlasSpellEffects extends Plugin {
         const tok = this.tokenAt(tab, p);
         return { ...base, at: tok ? { x: tok.x, y: tok.y } : p, ...(aims ? { dir: 0 } : {}) };
       }
-      if (aims && c) return { ...base, at: { x: c.x, y: c.y }, dir: dirTo(c, p), ...(c.token && (pending.attach || a.shape === 'cube') ? { token: c.token } : {}) };
-      if (needsCaster && c) return { ...base, at: { x: c.x, y: c.y }, ...(c.token ? { token: c.token } : {}) };
+      if (aims && c) return { ...base, at: { x: c.x, y: c.y }, dir: dirTo(c, p), ...(c.token ? { caster: c.token } : {}), ...(c.token && (pending.attach || a.shape === 'cube') ? { token: c.token } : {}) };
+      if (needsCaster && c) return { ...base, at: { x: c.x, y: c.y }, ...(c.token ? { token: c.token, caster: c.token } : {}) };
       void sc;
       const at = a.shape === 'radius' || a.shape === 'cube' ? inRange(this.snapPoint(tab, p, { altKey: alt })) : p;
       return { ...base, at };

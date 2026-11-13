@@ -64,6 +64,8 @@ export function headingKind(text: string): 'spell' | 'gear' | null {
 export const SPELL_TEXT = /spellcast|\bcasts?\b|\bspells?\b|at will|\/day|cantrips?|\(\d+ slots?\)|\d+(st|nd|rd|th)[- ]level|spell save dc|casting time|\bcomponents?\b|\bconc(entration)?\b|\britual\b/i;
 
 const STATBLOCK = '.atlas-statblock, .atlas-sb-sheet, .atlas-statblock-preview-window, [class*="statblock"]';
+/** The add-on's own things on screen: never read for spells. */
+const OWN = '.sfx-caught, .sfx-layer, .sfx-hint, .sfx-castwin, .sfx-edit, .sfx-tool';
 const LIST = '.atlas-sb-spell-list, .atlas-sb-spell-header, .atlas-sb-spells-block';
 const HL = 'sfx-spell';
 /** The Cast button's class (its word is drawn by CSS, so it's no text of the statblock's). */
@@ -97,6 +99,8 @@ export class StatblockLinker {
     private readonly cast: (link: SpellLink, how: { shift: boolean; statblock: HTMLElement; x: number; y: number }) => void,
     /** A Cast button pressed: its menu, at `x`, `y`. */
     private readonly menu: (link: SpellLink, how: { statblock: HTMLElement; x: number; y: number }) => void = () => {},
+    /** A statblock seen (each look): its window's token can be noted while the pointer that opened it is fresh. */
+    private readonly seen: (statblock: HTMLElement) => void = () => {},
   ) {}
 
   start(): void {
@@ -138,6 +142,9 @@ export class StatblockLinker {
       // the outermost of nested ones only (a sheet inside a preview window is read once)
       const roots = all.filter((el) => !all.some((o) => o !== el && o.contains(el)));
       for (const sb of roots) {
+        // the add-on's own cards and windows (a spell's name in a title) are no statblocks
+        if (sb.closest(OWN)) continue;
+        this.seen(sb);
         if (sb.closest('.sfx-modal, .modal')) continue;
         const spelly = /\bspells?\b|cantrips?|spellcasting/i.test(sb.textContent ?? '');
         const kinds = new Map<Element, 'spell' | 'gear' | null>();
@@ -148,7 +155,7 @@ export class StatblockLinker {
         const display = new Map<Element, string>();
         for (let n = walker.nextNode() as Text | null; n; n = walker.nextNode() as Text | null) {
           const text = n.data; if (text.trim().length < 3) continue;
-          const host = n.parentElement; if (!host || host.closest('input, textarea, [contenteditable=true]')) continue;
+          const host = n.parentElement; if (!host || host.closest('input, textarea, [contenteditable=true], ' + OWN)) continue;
           // a spell list, or a paragraph about spellcasting: the block the name is in (Atlas sets a trait's text in
           // spans and links, inside a block of its own)
           const unit = host.closest(LIST) ?? this.blockOf(host, sb, display);
