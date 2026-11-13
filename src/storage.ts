@@ -9,7 +9,7 @@ export const STORAGE_TAG = 'spell-effect';
 export const SHAPES: readonly Shape[] = ['radius', 'emanation', 'cone', 'cube', 'line', 'wall'];
 const BLOCKS: readonly WallBlocks[] = ['none', 'sight', 'movement', 'solid'];
 /** The add-on's properties, without their "effect-" prefix. */
-const KEYS = ['area', 'size', 'width', 'angle', 'origin', 'lasting', 'attach', 'animation', 'colour', 'colour-outer', 'opacity', 'target', 'ring', 'round', 'walls', 'light', 'bright', 'dim', 'light-colour', 'menu', 'range', 'conditions', 'unit', 'teleport'] as const;
+const KEYS = ['area', 'size', 'width', 'angle', 'origin', 'lasting', 'attach', 'animation', 'colour', 'colour-outer', 'opacity', 'target', 'ring', 'round', 'walls', 'light', 'bright', 'dim', 'light-colour', 'menu', 'range', 'conditions', 'unit', 'teleport', 'look', 'draw', 'area-light', 'walls', 'players', 'tool'] as const;
 type Key = (typeof KEYS)[number];
 export const prop = (k: Key): string => 'effect-' + k;
 
@@ -38,6 +38,10 @@ export interface StoredSpell {
   conditions?: string[];
   /** How far it teleports its caster (game units); 0: it doesn't; missing: not said (read from its text). */
   teleport?: number;
+  /** Atlas's look for its area ('' none); missing: not said (from its damage or name). */
+  look?: string;
+  /** Its Atlas area's other choices (how it's drawn, its light, walls, players, Atlas's tool). */
+  atlas?: { draw?: 'area' | 'animation'; areaLight?: 'atlas' | 'none'; throughWalls?: boolean; hidden?: boolean; tool?: boolean };
 }
 
 /** The game's units now, as a saved spell's sizes are written in ("5 feet": a square's size and its unit). */
@@ -54,6 +58,21 @@ export function unitFactor(saved: unknown): number {
   return r.perSquare / per;
 }
 const scaled = (v: number, k: number): number => (k === 1 ? v : Math.round(v * k * 100) / 100);
+/** A saved spell's Atlas area choices (only what's said: the rest as Atlas does it). */
+function atlasFrom(fm: Record<string, unknown>): { atlas?: NonNullable<StoredSpell['atlas']> } {
+  const g = (k: Key) => fm[prop(k)];
+  const draw = String(g('draw') ?? '').toLowerCase(), light = String(g('area-light') ?? '').toLowerCase();
+  const no = (v: unknown) => v === false || /^(false|no|off)$/i.test(String(v ?? ''));
+  const out: NonNullable<StoredSpell['atlas']> = {
+    ...(draw === 'area' || draw === 'animation' ? { draw } : {}),
+    ...(light === 'atlas' || light === 'none' ? { areaLight: light } : {}),
+    ...(no(g('walls')) ? { throughWalls: true } : {}),
+    ...(no(g('players')) ? { hidden: true } : {}),
+    ...(/^atlas$/i.test(String(g('tool') ?? '')) ? { tool: true } : {}),
+  };
+  return Object.keys(out).length ? { atlas: out } : {};
+}
+
 /** A list property: a YAML list, or names separated by commas. */
 const listOf = (v: unknown): string[] | undefined => (Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean) : typeof v === 'string' ? v.split(',').map((x) => x.trim()).filter(Boolean) : undefined);
 
@@ -124,11 +143,11 @@ export function storedFrom(path: string, fm: Record<string, unknown>, resolve: (
     lm === 'light' || lm === 'bright' || lm === 'dim' ? { mode: 'light', bright: feet(get(fm, 'bright')), dim: Math.max(feet(get(fm, 'dim')), feet(get(fm, 'bright'))) || area.size, ...(lc ? { colour: lc } : {}) } :
     lm === 'none' || lm === 'no' || lm === 'false' ? null : undefined;
   const col = get(fm, 'colour'), col2 = fm[prop('colour-outer')], op = Number(fm[prop('opacity')]);
-  return { path, name, area, ...(file ? { file } : {}), ...(typeof col === 'string' ? { colour: col } : {}), ...(typeof col2 === 'string' ? { colour2: col2 } : {}), ...(op > 0 && op < 1 ? { alpha: op } : op > 1 && op < 100 ? { alpha: op / 100 } : {}), ...(image ? { image } : {}), ...(yes(get(fm, 'attach')) ? { attach: true } : {}), ...(light !== undefined ? { light } : {}), ...(yes(fm[prop('menu')]) ? { menu: true } : {}), ...(Number(get(fm, 'range')) > 0 ? { range: scaled(Number(get(fm, 'range')), k) } : {}), ...(listOf(get(fm, 'conditions')) ? { conditions: listOf(get(fm, 'conditions'))! } : {}), ...(get(fm, 'teleport') !== undefined && Number.isFinite(Number(get(fm, 'teleport'))) ? { teleport: scaled(Math.max(0, Number(get(fm, 'teleport'))), k) } : {}) };
+  return { path, name, area, ...(file ? { file } : {}), ...(typeof col === 'string' ? { colour: col } : {}), ...(typeof col2 === 'string' ? { colour2: col2 } : {}), ...(op > 0 && op < 1 ? { alpha: op } : op > 1 && op < 100 ? { alpha: op / 100 } : {}), ...(image ? { image } : {}), ...(yes(get(fm, 'attach')) ? { attach: true } : {}), ...(light !== undefined ? { light } : {}), ...(yes(fm[prop('menu')]) ? { menu: true } : {}), ...(Number(get(fm, 'range')) > 0 ? { range: scaled(Number(get(fm, 'range')), k) } : {}), ...(listOf(get(fm, 'conditions')) ? { conditions: listOf(get(fm, 'conditions'))! } : {}), ...(get(fm, 'teleport') !== undefined && Number.isFinite(Number(get(fm, 'teleport'))) ? { teleport: scaled(Math.max(0, Number(get(fm, 'teleport'))), k) } : {}), ...(typeof get(fm, 'look') === 'string' ? { look: String(get(fm, 'look')).trim().toLowerCase() === 'none' ? '' : String(get(fm, 'look')).trim().toLowerCase() } : {}), ...atlasFrom(fm) };
 }
 
 /** Writes a spell's defaults into a note's properties (keeps everything else in them; an older note's plain ones are moved over). */
-export function writeDefaults(fm: Record<string, unknown>, s: { area: Area; file?: string | undefined; colour?: string | undefined; colour2?: string | undefined; alpha?: number | undefined; attach?: boolean | undefined; light?: EffectLight | null | undefined; menu?: boolean | undefined; range?: number | undefined; conditions?: string[] | undefined; teleport?: number | undefined }): void {
+export function writeDefaults(fm: Record<string, unknown>, s: { area: Area; file?: string | undefined; colour?: string | undefined; colour2?: string | undefined; alpha?: number | undefined; attach?: boolean | undefined; light?: EffectLight | null | undefined; menu?: boolean | undefined; range?: number | undefined; conditions?: string[] | undefined; teleport?: number | undefined; look?: string | undefined; atlas?: StoredSpell['atlas'] | undefined }): void {
   if (isLegacy(fm)) {
     for (const k of [...KEYS, 'blocks', 'color', 'light-color']) delete fm[k];
     if (Array.isArray(fm['tags'])) { fm['tags'] = (fm['tags'] as unknown[]).filter((t) => String(t).replace(/^#/, '').toLowerCase() !== STORAGE_TAG); if (!(fm['tags'] as unknown[]).length) delete fm['tags']; }
@@ -159,6 +178,9 @@ export function writeDefaults(fm: Record<string, unknown>, s: { area: Area; file
   set('range', s.range && s.range > 0 ? s.range : undefined);
   set('conditions', s.conditions ? [...s.conditions] : undefined);
   set('teleport', s.teleport !== undefined ? s.teleport : undefined);
+  set('look', s.look !== undefined ? (s.look || 'none') : undefined);
+  const ac = s.atlas ?? {};
+  set('draw', ac.draw); set('area-light', ac.areaLight); set('walls', ac.throughWalls ? false : undefined); set('players', ac.hidden ? false : undefined); set('tool', ac.tool ? 'atlas' : undefined);
   // the units its sizes are in (read again in another game system's units)
   set('unit', unitNow());
 }

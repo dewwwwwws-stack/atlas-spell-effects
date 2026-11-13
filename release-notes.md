@@ -1,11 +1,12 @@
-## What's new
+## What's new: works with Atlas 0.15's own spell areas
 
-- **Teleporting.** Misty Step, Far Step, Dimension Door and Thunder Step move the caster's token. Click where they go (their reach shows round them); the animation plays where they leave and arrive. Ctrl+Z puts them back.
-- **Spell lists, one spell a line,** each with its Cast button, like a character sheet.
-- **Spell names written as your notes write them:** "fire bolt" in a statblock reads "Fire Bolt".
-- **Attack cantrips get Cast buttons too** (Fire Bolt in a player's Attacks), and the hover tip no longer gets a button of its own.
+- **Every spell is one of Atlas's own areas too**, with the animation on top. Atlas draws it, saves it with the scene, and **online players see it**.
+- **Atlas's looks:** Fire, Frost, Lightning, Mist, Radiance or Shadow, picked from the spell's damage or name. Change it in the cast window.
+- **Atlas lights it:** a spell's light or magical darkness is now the area's own.
+- **Both ways:** move, resize or recolour the area in Atlas and the spell follows; delete it and the spell ends.
+- **Animate Atlas's own areas:** ✨ → *Animate one of Atlas's areas…*, click an area you kept with the Measure tool, and pick a spell.
+- **Who's in a spell** is now Atlas's own count, so walls stop spells for conditions and the "hit" card.
+- **Atlas's own area choices in the cast window:** draw it as the animation over Atlas's area, Atlas's area only, or the animation only (the add-on's own way); its look, its light (the spell's, or Atlas's for its look), whether walls stop it and whether players see it. Saved spells keep them.
+- **Place with Atlas's Measure tool:** draw the spell's area with Atlas's own tool (its snapping and cone), and the spell goes on it.
 
-## Fixes
-
-- **The "hit" card is simpler:** just who an instant spell hit, no Failed/Saved buttons. Its × now closes it (the map was taking the click).
-- **The players' aim preview no longer looks like light** on a dark map (its faint fill is gone; the dashed outline stays).
+Older Atlas versions work as before. Turn it off with **Spells as Atlas areas** in the settings.

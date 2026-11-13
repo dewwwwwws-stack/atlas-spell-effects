@@ -323,7 +323,41 @@ Which kind a spell is gets read from its text (ranged spell attacks, rays, bolts
 creature or target play on it). Change it in the cast window: **On a creature** in the Area row, or *A bolt at creatures* on a Line. It's
 kept with a saved spell as `effect-target` (`self`, `on` or `bolt`).
 
-## Creatures in spells
+## Spells as Atlas areas (Atlas 0.15 or later)
+Each spell you cast is one of Atlas's own areas too (the kind its Measure tool keeps), and the animation plays over
+it. So Atlas:
+- **draws its area**, in the spell's colour, with one of its looks: *Fire*, *Frost*, *Lightning*, *Mist*,
+  *Radiance* or *Shadow*. The look is picked from the spell's damage or name (Fireball: Fire, Cone of Cold: Frost,
+  Darkness: Shadow, Fog Cloud: Mist); change it with **Atlas area look** in the cast window (kept as `effect-look`);
+- **lights it**: a spell's light, or its magical darkness, is the area's (a darkness only round a point: in another
+  shape, the add-on puts up its own);
+- **counts the creatures in it** as far as walls let it, as it rings them: the add-on's conditions and its "hit"
+  cards go by that count;
+- **saves it with the scene and shows it to online players** (they see Atlas's area and its look; the animation
+  only on your screens).
+
+It works both ways. Move, resize or recolour the area with Atlas's handles and the spell follows; delete it in Atlas
+and the spell ends; end the spell and its area goes. A cone, a line or a cube is Atlas's; a creature's aura (Spirit
+Guardians) is an aura on that creature in Atlas too. Walls, bolts and effects on a creature stay the add-on's alone.
+
+**Atlas's choices in the cast window** (its **Atlas area** part, on an Atlas map that has areas):
+- **Drawn as**: the animation over Atlas's area (as above), *Atlas's area only* (no animation: just Atlas's look), or
+  *Animation only* (no Atlas area: the add-on's own way, as before);
+- **Look**, **Light** (*the spell's*, *Atlas's for its look*: Fire and Lightning flicker, Radiance shines, Shadow
+  darkens, or *none*), **Stops at walls** and **Players see it**, as Atlas's area popover has them;
+- **Place with Atlas's Measure tool**: the tool is picked with the spell's shape, colour and look, you draw the area
+  with it (its snapping, its cone), and the spell goes on that area; the tool goes back as it was. Esc stops.
+
+All of it is kept with a saved spell (`effect-draw`, `effect-area-light`, `effect-walls`, `effect-players`,
+`effect-tool`).
+
+**Animate one of Atlas's areas:** draw and keep an area with Atlas's Measure tool, then ✨ → **Animate one of
+Atlas's areas…**, click it, and pick the spell in the cast window. Its animation, conditions and so on go on that
+area, where it lies; ending the spell leaves your area as it was.
+
+Turn it off with **Spells as Atlas areas** in the settings (the add-on then draws spells alone, as before Atlas
+0.15).
+
 **Lasting spells.** A creature inside a lasting spell (Darkness, Silence, Spirit Guardians, Web…) gets Atlas's
 **In a spell** condition, plus the conditions the spell gives, for as long as it's inside. They come off again when
 it leaves or the spell ends. The add-on adds *In a spell* to your collection's conditions the first time it's

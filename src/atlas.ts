@@ -28,7 +28,7 @@ export interface AtlasToken {
 export interface AtlasState {
   mapPath?: string;
   grid?: { size?: number; offsetX?: number; offsetY?: number };
-  objects?: { tokens?: Record<string, AtlasToken>; lights?: Record<string, AtlasLight>; walls?: Record<string, AtlasWall> };
+  objects?: { tokens?: Record<string, AtlasToken>; lights?: Record<string, AtlasLight>; walls?: Record<string, AtlasWall>; measures?: Record<string, Record<string, unknown>> };
   selectedIds?: string[];
   activeTool?: string;
   selectionMode?: string;
@@ -40,6 +40,14 @@ export interface AtlasState {
   deleteWall: (id: string) => void;
   deleteWalls: (ids: string[]) => void;
   openLightPopover?: (id: string) => void;
+  /** Atlas's own areas (kept measurements, Atlas 0.15 on): keeps one and gives its id (null: none kept). */
+  addMeasure?: (data: Record<string, unknown>) => string | null;
+  updateMeasure?: (id: string, changes: Record<string, unknown>) => void;
+  deleteMeasure?: (id: string) => void;
+  /** Atlas's Measure tool: its choices (shape, kept, players, colour, look), and the tool in hand. */
+  measureTool?: Record<string, unknown>;
+  setMeasureTool?: (changes: Record<string, unknown>) => void;
+  setActiveTool?: (tool: string) => void;
   /** Moves a token (its middle) to a spot on the map. */
   moveToken?: (id: string, x: number, y: number) => void;
   /** Adds or takes off a condition on these tokens (one store write). */

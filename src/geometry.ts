@@ -66,6 +66,18 @@ export interface Effect {
   bolt?: boolean;
   /** The initiative round it has been counted from (the round it was cast in, or the fight's first). */
   round?: number;
+  /** Its area among Atlas's own (a kept measurement's id): Atlas draws, lights and counts it. */
+  measure?: string;
+  /** Atlas's look for that area (fire, frost, lightning, mist, radiance, shadow); none: the plain wash. */
+  look?: string;
+  /** How it's drawn where Atlas keeps areas: `area` Atlas's area only (no animation), `animation` the add-on's only (no area); missing: both. */
+  draw?: 'area' | 'animation';
+  /** Its Atlas area's light: `atlas` the one Atlas gives its look, `none`; missing: the spell's own. */
+  areaLight?: 'atlas' | 'none';
+  /** Its Atlas area goes through walls (they stop it otherwise). */
+  throughWalls?: boolean;
+  /** Its Atlas area is the GM's alone (players see it otherwise). */
+  hidden?: boolean;
 }
 
 /** The usual cone (5e's): as wide at its end as it is long. */
