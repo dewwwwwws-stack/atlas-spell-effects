@@ -48,6 +48,9 @@ export interface AtlasState {
   measureTool?: Record<string, unknown>;
   setMeasureTool?: (changes: Record<string, unknown>) => void;
   setActiveTool?: (tool: string) => void;
+  /** The area whose window (popover) is open, and closing it. */
+  measurePopover?: string | null;
+  closeMeasurePopover?: () => void;
   /** Moves a token (its middle) to a spot on the map. */
   moveToken?: (id: string, x: number, y: number) => void;
   /** Adds or takes off a condition on these tokens (one store write). */

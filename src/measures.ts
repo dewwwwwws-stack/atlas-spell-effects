@@ -11,6 +11,8 @@ import type { Box, Effect, Point } from './geometry';
 /** Atlas's looks for an area (drawn in its own colour). */
 export type AreaLook = 'fire' | 'frost' | 'lightning' | 'mist' | 'radiance' | 'shadow';
 export const AREA_LOOKS: readonly AreaLook[] = ['fire', 'frost', 'lightning', 'mist', 'radiance', 'shadow'];
+/** The colour Atlas draws each look in (its own swatches): a Frost area is pale blue, whatever the spell's animation's colour. */
+export const LOOK_COLOURS: Readonly<Record<AreaLook, string>> = { fire: '#ec7500', frost: '#8ad1f8', lightning: '#086ddd', mist: '#ffffff', radiance: '#e0ac00', shadow: '#7852ee' };
 export const LOOK_NAMES: Readonly<Record<AreaLook, string>> = { fire: 'Fire', frost: 'Frost', lightning: 'Lightning', mist: 'Mist', radiance: 'Radiance', shadow: 'Shadow' };
 
 /** A kept measurement as the add-on writes and reads it (Atlas's `KeptMeasure`, what of it matters here). */
@@ -32,7 +34,8 @@ const r1 = (v: number): number => Math.round(v * 10) / 10;
  */
 export function areaOf(e: Effect, b: Box): AreaShape | null {
   if (e.on || e.bolt || e.shape === 'wall' || e.outline) return null;
-  const color = e.colour;
+  // the colour you gave the area in Atlas; else its look's own (as Atlas colours a look); else the spell's
+  const color = e.areaColour ?? (e.look && e.look in LOOK_COLOURS ? LOOK_COLOURS[e.look as AreaLook] : e.colour);
   const dir = { x: Math.cos(b.rot), y: Math.sin(b.rot) };
   const from = (len: number): Point => ({ x: b.cx - dir.x * len / 2, y: b.cy - dir.y * len / 2 });
   switch (e.shape) {
@@ -77,10 +80,13 @@ export function effectFromArea(e: Effect, a: AreaShape, ppf: number, cell: numbe
   const [o, end] = a.points;
   if (!o || !end || !(ppf > 0)) return null;
   const dx = end.x - o.x, dy = end.y - o.y, len = Math.hypot(dx, dy);
-  const colour = typeof a.color === 'string' && /^#[0-9a-f]{6}$/i.test(a.color) ? a.color : e.colour;
-  const { token: _t, offset: _o, turn: _u, dir: _d, ...rest } = e; void _t; void _o; void _u; void _d;
-  const base: Effect = { ...rest, colour };
-  if (a.follows) return { ...e, colour, shape: 'emanation', token: a.follows, size: Math.max(0, Number(a.aura) || 0) };
+  // a colour other than its look's own: given in Atlas, kept for its area (the animation keeps its own)
+  const given = typeof a.color === 'string' && /^#[0-9a-f]{6}$/i.test(a.color) ? a.color : undefined;
+  const own = e.look && e.look in LOOK_COLOURS ? LOOK_COLOURS[e.look as AreaLook] : e.colour;
+  const areaColour = given && given.toLowerCase() !== own.toLowerCase() ? given : undefined;
+  const { token: _t, offset: _o, turn: _u, dir: _d, areaColour: _c, ...rest } = e; void _t; void _o; void _u; void _d; void _c;
+  const base: Effect = { ...rest, ...(areaColour ? { areaColour } : {}) };
+  if (a.follows) { const { areaColour: _c2, ...keep } = e; void _c2; return { ...keep, ...(areaColour ? { areaColour } : {}), shape: 'emanation', token: a.follows, size: Math.max(0, Number(a.aura) || 0) }; }
   if (!(len > 0)) return null;
   const dir = Math.atan2(dy, dx);
   switch (a.shape) {

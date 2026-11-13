@@ -26,7 +26,7 @@
 @keyframes sfx-sweep{0%{transform:scaleX(.05);opacity:0}25%{opacity:1}55%{transform:scaleX(1);opacity:.95}100%{transform:scaleX(1);opacity:0}}
 @keyframes sfx-pulse{0%,100%{opacity:.78}50%{opacity:1}}
 .sfx-preview .sfx-drawn{animation:none;opacity:.55;outline:2px dashed var(--c)}
-.sfx-range .sfx-drawn{background:none!important;box-shadow:none!important;outline:none;opacity:.9;border:2px dashed color-mix(in srgb,var(--c) 85%,white);border-radius:50%;box-sizing:border-box}
+.sfx.sfx-range .sfx-drawn{background:none;box-shadow:none;outline:none;opacity:.9;border:2px dashed color-mix(in srgb,var(--c) 85%,white);border-radius:50%;box-sizing:border-box}
 .sfx.sfx-wall{width:0;height:0;transform:none;overflow:visible}
 .sfx-piece{position:absolute;left:0;top:0;transform-origin:50% 50%}
 .sfx-piece>video,.sfx-piece>img{position:absolute;top:0;left:0;height:100%;display:block;object-fit:fill}
@@ -152,7 +152,7 @@ body.theme-light .sfx-ctl:not(.sfx-dot),body.theme-light .sfx-size,body.theme-li
 .sfx-castwin .sfx-foot{flex-wrap:nowrap}
 .sfx-foot .sfx-saved{margin-right:auto;font-size:var(--font-ui-smaller);color:var(--text-faint);min-width:0;flex:1 1 120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sfx-endwin{width:min(580px,94vw)}
-.modal-container:has(.sfx-endwin) .modal-bg{opacity:.25}
+.sfx-endwin-bg .modal-bg{opacity:.25}
 .sfx-endwin .sfx-muted{margin-bottom:10px}
 .sfx-endlist{max-height:60vh;display:flex;flex-direction:column;gap:2px;margin:0;padding:0}
 .sfx-end-row{padding:6px 8px 6px 10px;cursor:default}
@@ -184,7 +184,7 @@ canvas.sfx-cursor-move{cursor:move}
 .sfx-wide{width:100%}
 
 /* creatures caught in instant spells, to resolve (yours only, beside the map) */
-.sfx-caught{position:absolute;right:12px;top:56px;z-index:40;display:flex;flex-direction:column;gap:8px;width:260px;max-height:calc(100% - 80px);overflow:auto;pointer-events:auto}
+.sfx-caught{position:fixed;z-index:var(--layer-popover,30);display:flex;flex-direction:column;gap:8px;width:260px;max-height:calc(100% - 80px);overflow:auto;pointer-events:auto}
 .sfx-caught-card{background:var(--background-primary,#1e1e1e);border:1px solid var(--background-modifier-border,rgba(127,127,127,.35));border-radius:var(--radius-m,8px);box-shadow:var(--shadow-s,0 4px 14px rgba(0,0,0,.35));padding:8px 10px;font:13px/1.35 var(--font-interface,system-ui);color:var(--text-normal,#ddd)}
 .sfx-caught-head{display:flex;align-items:center;gap:6px;margin-bottom:4px}
 .sfx-caught-icon{display:inline-flex;color:var(--interactive-accent,#8b5cf6)}
@@ -212,3 +212,11 @@ canvas.sfx-cursor-move{cursor:move}
 .sfx-sb-cols .sfx-sb-row.is-plain{margin-left:.25em}
 .sfx-sb-cols .sfx-sb-sep{display:none}
 .sfx-sb-cols .atlas-sb-spell-level{display:block;margin-bottom:2px}
+
+/* our part of Atlas's area window */
+.sfx-pop { display: flex; flex-direction: column; gap: 6px; }
+.sfx-pop-head { display: flex; align-items: center; gap: 6px; font-weight: var(--font-semibold, 600); font-size: var(--font-ui-small, 13px); }
+.sfx-pop-icon { display: inline-flex; color: var(--text-accent); }
+.sfx-pop-icon svg { width: 14px; height: 14px; }
+.sfx-pop-buttons { display: flex; gap: 6px; flex-wrap: wrap; }
+.sfx-pop-btn { flex: 1; font-size: var(--font-ui-small, 13px); }

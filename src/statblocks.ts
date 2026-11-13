@@ -31,7 +31,7 @@ export class SpellNames {
   isRun(text: string): boolean {
     // after its label: a colon, a full stop ("Magic Initiate (Wizard). Fire Bolt, …") or a dash
     const tail = text.replace(/\([^)]*\)|\[[^\]]*\]/g, ' ').split(/:|\.\s|\s[—–-]\s/).pop() ?? '';
-    const items = tail.split(/[,;\/•·]|\band\b|\bor\b/i).map((t) => t.trim()).filter((t) => t.length > 0);
+    const items = tail.split(/[,;/•·]|\band\b|\bor\b/i).map((t) => t.trim()).filter((t) => t.length > 0);
     if (items.length < 2) return false;
     const spells = items.filter((t) => this.exact(t)).length;
     return spells >= 2 && spells >= Math.ceil(items.length * 0.8);
@@ -83,7 +83,7 @@ type Hit = { node: Text; start: number; end: number; link: SpellLink };
 /** The CSS Custom Highlight API (Chromium's; not in every DOM typing yet). */
 interface HighlightWindow { Highlight?: new (...ranges: Range[]) => object; CSS?: { highlights?: { set(name: string, h: object): void; delete(name: string): void } } }
 /** Where a point falls in the text (the two names browsers give it). */
-interface CaretDocument { caretRangeFromPoint?(x: number, y: number): Range | null; caretPositionFromPoint?(x: number, y: number): { offsetNode: Node; offset: number } | null }
+interface CaretDocument { caretPositionFromPoint?(x: number, y: number): { offsetNode: Node; offset: number } | null }
 
 /** Watches one document's Atlas statblocks. */
 export class StatblockLinker {
@@ -359,8 +359,8 @@ export class StatblockLinker {
     if (!t?.closest?.(STATBLOCK)) return null;
     const d = this.doc as Document & CaretDocument;
     let node: Node | null = null, off = 0;
-    if (d.caretRangeFromPoint) { const r = d.caretRangeFromPoint(e.clientX, e.clientY); if (r) { node = r.startContainer; off = r.startOffset; } }
-    else if (d.caretPositionFromPoint) { const p = d.caretPositionFromPoint(e.clientX, e.clientY); if (p) { node = p.offsetNode; off = p.offset; } }
+    // (the standard way: Obsidian's Chromium has it)
+    if (d.caretPositionFromPoint) { const p = d.caretPositionFromPoint(e.clientX, e.clientY); if (p) { node = p.offsetNode; off = p.offset; } }
     if (!node || node.nodeType !== 3) return null;
     for (const h of this.hits) {
       if (h.node !== node || off < h.start || off > h.end) continue;

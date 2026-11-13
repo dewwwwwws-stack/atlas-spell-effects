@@ -78,6 +78,8 @@ export interface Effect {
   throughWalls?: boolean;
   /** Its Atlas area is the GM's alone (players see it otherwise). */
   hidden?: boolean;
+  /** Its Atlas area's colour, given in Atlas (else its look's own). */
+  areaColour?: string;
 }
 
 /** The usual cone (5e's): as wide at its end as it is long. */

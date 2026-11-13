@@ -262,6 +262,9 @@ If it can't tell, it asks you to click the caster's token first.
   - a cone or line (Lightning Bolt, Burning Hands) starts from them, so you just aim;
   - an area cast at a point (Fireball) shows its **range** as a dashed ring round them (150 ft, from the edge of
     their space), and can't be placed beyond it;
+- for a spell cast at creatures (Fire Bolt, Hold Person): **each creature in its range**, nearest first, with how
+  far away they are (*Goblin · 25 ft*). Pick one and it's cast on them at once, from the caster, no clicking on
+  the map. (More than twelve: the rest are clicked on the map.)
 - **Cast with no target**: its animation once on the caster;
 - **Open in the cast window…**, with that spell picked, so you can change it first.
 
@@ -351,9 +354,15 @@ Guardians) is an aura on that creature in Atlas too. Walls, bolts and effects on
 All of it is kept with a saved spell (`effect-draw`, `effect-area-light`, `effect-walls`, `effect-players`,
 `effect-tool`).
 
-**Animate one of Atlas's areas:** draw and keep an area with Atlas's Measure tool, then ✨ → **Animate one of
-Atlas's areas…**, click it, and pick the spell in the cast window. Its animation, conditions and so on go on that
-area, where it lies; ending the spell leaves your area as it was.
+**Atlas's own area window:** click an area's handle and Atlas's window for it opens as usual, with a small
+**Spell Effects** part above its last row:
+- a spell's area: its name, **Edit spell…** (the add-on's edit window for it) and **End spell**;
+- one of your own areas, drawn with Atlas's Measure tool: **Animate…**, which opens the cast window to pick a
+  spell for it. Its animation, conditions and so on go on that area, where it lies; ending the spell leaves your
+  area as it was.
+
+A spell's area takes its look's own colour (Frost pale blue, Fire orange…), not the spell's colour. Change it in
+Atlas's window and your colour is kept.
 
 Turn it off with **Spells as Atlas areas** in the settings (the add-on then draws spells alone, as before Atlas
 0.15).

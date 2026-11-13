@@ -1,6 +1,6 @@
 {
   "name": "atlas-spell-effects",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "description": "Animated spell areas, walls, light and darkness on Atlas VTT maps, with JB2A's free animations built in. Cast from Atlas statblocks.",
   "private": true,
   "license": "MIT",
