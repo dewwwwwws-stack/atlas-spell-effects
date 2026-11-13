@@ -1131,7 +1131,7 @@ export default class AtlasSpellEffects extends Plugin {
     this.still = 0;
     this.hook();
     if (this.loop) return;
-    if (!this.effects.length && !this.placing) { this.clearPainters(); return; }
+    if (!this.effects.length && !this.placing) { this.clearPainters(); this.chores(); return; }
     const step = () => {
       this.loop = 0;
       this.frame();
@@ -1232,6 +1232,15 @@ export default class AtlasSpellEffects extends Plugin {
       const pp = p, aim = this.settings.showAim ? this.placing?.preview ?? null : null; this.safely('drawing on the TV', () => pp.paint(drawn, now, out, aim)); live.add(doc);
     }
     for (const [k, p] of this.painters) if (!live.has(k)) { p.stop(); this.painters.delete(k); }
+    this.chores();
+  }
+
+  /**
+   * What's kept in step with Atlas whether or not a spell is drawn: its areas, lights, walls and conditions, the
+   * cards of who was hit, the spell's part of Atlas's area window. Run every frame, and on every wake-up when no
+   * spell is on the map (a card closed, an area clicked).
+   */
+  private chores(): void {
     // each on its own: one going wrong never stops the others (lights and walls are kept in step whatever happens)
     this.safely('selection', () => this.paintSelection());
     this.safely('placing with Atlas’s tool', () => this.watchAtlasPlacing());
