@@ -9,7 +9,7 @@ export const STORAGE_TAG = 'spell-effect';
 export const SHAPES: readonly Shape[] = ['radius', 'emanation', 'cone', 'cube', 'line', 'wall'];
 const BLOCKS: readonly WallBlocks[] = ['none', 'sight', 'movement', 'solid'];
 /** The add-on's properties, without their "effect-" prefix. */
-const KEYS = ['area', 'size', 'width', 'angle', 'origin', 'lasting', 'attach', 'animation', 'colour', 'colour-outer', 'opacity', 'target', 'ring', 'round', 'walls', 'light', 'bright', 'dim', 'light-colour', 'menu', 'range', 'conditions', 'unit'] as const;
+const KEYS = ['area', 'size', 'width', 'angle', 'origin', 'lasting', 'attach', 'animation', 'colour', 'colour-outer', 'opacity', 'target', 'ring', 'round', 'walls', 'light', 'bright', 'dim', 'light-colour', 'menu', 'range', 'conditions', 'unit', 'teleport'] as const;
 type Key = (typeof KEYS)[number];
 export const prop = (k: Key): string => 'effect-' + k;
 
@@ -36,6 +36,8 @@ export interface StoredSpell {
   range?: number;
   /** The conditions it gives the creatures inside it (names); missing: not said (read from its text). */
   conditions?: string[];
+  /** How far it teleports its caster (game units); 0: it doesn't; missing: not said (read from its text). */
+  teleport?: number;
 }
 
 /** The game's units now, as a saved spell's sizes are written in ("5 feet": a square's size and its unit). */
@@ -122,11 +124,11 @@ export function storedFrom(path: string, fm: Record<string, unknown>, resolve: (
     lm === 'light' || lm === 'bright' || lm === 'dim' ? { mode: 'light', bright: feet(get(fm, 'bright')), dim: Math.max(feet(get(fm, 'dim')), feet(get(fm, 'bright'))) || area.size, ...(lc ? { colour: lc } : {}) } :
     lm === 'none' || lm === 'no' || lm === 'false' ? null : undefined;
   const col = get(fm, 'colour'), col2 = fm[prop('colour-outer')], op = Number(fm[prop('opacity')]);
-  return { path, name, area, ...(file ? { file } : {}), ...(typeof col === 'string' ? { colour: col } : {}), ...(typeof col2 === 'string' ? { colour2: col2 } : {}), ...(op > 0 && op < 1 ? { alpha: op } : op > 1 && op < 100 ? { alpha: op / 100 } : {}), ...(image ? { image } : {}), ...(yes(get(fm, 'attach')) ? { attach: true } : {}), ...(light !== undefined ? { light } : {}), ...(yes(fm[prop('menu')]) ? { menu: true } : {}), ...(Number(get(fm, 'range')) > 0 ? { range: scaled(Number(get(fm, 'range')), k) } : {}), ...(listOf(get(fm, 'conditions')) ? { conditions: listOf(get(fm, 'conditions'))! } : {}) };
+  return { path, name, area, ...(file ? { file } : {}), ...(typeof col === 'string' ? { colour: col } : {}), ...(typeof col2 === 'string' ? { colour2: col2 } : {}), ...(op > 0 && op < 1 ? { alpha: op } : op > 1 && op < 100 ? { alpha: op / 100 } : {}), ...(image ? { image } : {}), ...(yes(get(fm, 'attach')) ? { attach: true } : {}), ...(light !== undefined ? { light } : {}), ...(yes(fm[prop('menu')]) ? { menu: true } : {}), ...(Number(get(fm, 'range')) > 0 ? { range: scaled(Number(get(fm, 'range')), k) } : {}), ...(listOf(get(fm, 'conditions')) ? { conditions: listOf(get(fm, 'conditions'))! } : {}), ...(get(fm, 'teleport') !== undefined && Number.isFinite(Number(get(fm, 'teleport'))) ? { teleport: scaled(Math.max(0, Number(get(fm, 'teleport'))), k) } : {}) };
 }
 
 /** Writes a spell's defaults into a note's properties (keeps everything else in them; an older note's plain ones are moved over). */
-export function writeDefaults(fm: Record<string, unknown>, s: { area: Area; file?: string | undefined; colour?: string | undefined; colour2?: string | undefined; alpha?: number | undefined; attach?: boolean | undefined; light?: EffectLight | null | undefined; menu?: boolean | undefined; range?: number | undefined; conditions?: string[] | undefined }): void {
+export function writeDefaults(fm: Record<string, unknown>, s: { area: Area; file?: string | undefined; colour?: string | undefined; colour2?: string | undefined; alpha?: number | undefined; attach?: boolean | undefined; light?: EffectLight | null | undefined; menu?: boolean | undefined; range?: number | undefined; conditions?: string[] | undefined; teleport?: number | undefined }): void {
   if (isLegacy(fm)) {
     for (const k of [...KEYS, 'blocks', 'color', 'light-color']) delete fm[k];
     if (Array.isArray(fm['tags'])) { fm['tags'] = (fm['tags'] as unknown[]).filter((t) => String(t).replace(/^#/, '').toLowerCase() !== STORAGE_TAG); if (!(fm['tags'] as unknown[]).length) delete fm['tags']; }
@@ -156,6 +158,7 @@ export function writeDefaults(fm: Record<string, unknown>, s: { area: Area; file
   set('menu', s.menu ? true : undefined);
   set('range', s.range && s.range > 0 ? s.range : undefined);
   set('conditions', s.conditions ? [...s.conditions] : undefined);
+  set('teleport', s.teleport !== undefined ? s.teleport : undefined);
   // the units its sizes are in (read again in another game system's units)
   set('unit', unitNow());
 }

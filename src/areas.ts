@@ -122,6 +122,21 @@ export function rangeOf(spell: SpellEntry): number | null {
   return null;
 }
 
+/**
+ * How far a spell teleports its caster (game units), or null: "you teleport up to 30 feet" (Misty Step), "you
+ * teleport to a location within range" / "teleport yourself … within range" (Dimension Door, Thunder Step: its
+ * range). Not one that teleports others ("you teleport each affected target").
+ */
+export function teleportOf(spell: SpellEntry): number | null {
+  const d = String(spell.descFull ?? '');
+  const m = /\byou\s+teleport(?!\s+(?:each|any|a|an|one|the|that|those|them|it|up to (?:\w+ )?(?:willing|creatures?|targets?))\b)|\bteleport\s+yourself\b/i.exec(d);
+  if (!m) return null;
+  const after = d.slice(m.index, m.index + 160);
+  const up = new RegExp(String.raw`up to (\d+(?:\.\d+)?)\s*-?\s*` + UNIT, 'i').exec(after);
+  if (up) return toGame(num(up[1]), up[2] ?? '');
+  return rangeOf(spell);
+}
+
 /** Whether a spell's effect lasts (anything but Instantaneous). */
 export function lasting(spell: SpellEntry): boolean {
   const d = String(spell.duration ?? '').trim().toLowerCase();

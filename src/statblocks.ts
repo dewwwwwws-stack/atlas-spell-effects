@@ -65,7 +65,11 @@ export const SPELL_TEXT = /spellcast|\bcasts?\b|\bspells?\b|at will|\/day|cantri
 
 const STATBLOCK = '.atlas-statblock, .atlas-sb-sheet, .atlas-statblock-preview-window, [class*="statblock"]';
 /** The add-on's own things on screen: never read for spells. */
-const OWN = '.sfx-caught, .sfx-layer, .sfx-hint, .sfx-castwin, .sfx-edit, .sfx-tool';
+const OWN = '.sfx-caught, .sfx-layer, .sfx-hint, .sfx-castwin, .sfx-edit, .sfx-tool, .sfx-sb-tip';
+/** A spell list's row: its Cast button and its name, one spell a line. */
+const ROW = 'sfx-sb-row';
+/** What's left between a list's spells once each has its own line: commas, "and", "or". */
+const SEP = /^[\s,;]*(?:\b(?:and|or)\b)?[\s,;]*$/i;
 const LIST = '.atlas-sb-spell-list, .atlas-sb-spell-header, .atlas-sb-spells-block';
 const HL = 'sfx-spell';
 /** The Cast button's class (its word is drawn by CSS, so it's no text of the statblock's). */
@@ -140,7 +144,9 @@ export class StatblockLinker {
     if (names.size) {
       const all = [...this.doc.querySelectorAll<HTMLElement>(STATBLOCK)];
       // the outermost of nested ones only (a sheet inside a preview window is read once)
-      const roots = all.filter((el) => !all.some((o) => o !== el && o.contains(el)));
+      // (never the page itself: Atlas marks <body> while a statblock window is shown, with a class that names them)
+      const real = all.filter((el) => el !== this.doc.body && el !== this.doc.documentElement);
+      const roots = real.filter((el) => !real.some((o) => o !== el && o.contains(el)));
       for (const sb of roots) {
         // the add-on's own cards and windows (a spell's name in a title) are no statblocks
         if (sb.closest(OWN)) continue;
@@ -196,7 +202,13 @@ export class StatblockLinker {
     this.obs?.disconnect();
     const left: Hit[] = [];
     try {
-      for (const h of [...hits].sort((a, b) => a.node === b.node ? b.start - a.start : 0)) if (!this.button(h)) left.push(h);
+      this.tidy();
+      const lists = new Set<HTMLElement>();
+      for (const h of [...hits].sort((a, b) => a.node === b.node ? b.start - a.start : 0)) {
+        const list = this.button(h);
+        if (!list) left.push(h); else if (list instanceof HTMLElement) lists.add(list);
+      }
+      for (const l of lists) this.columns(l);
     } finally { this.obs?.takeRecords(); this.watch(); }
     this.hits = left;
     hits = left;
@@ -208,18 +220,33 @@ export class StatblockLinker {
     }
   }
 
-  /** Puts a Cast button in front of a name (once); false where it can't (text React draws). */
-  private button(h: Hit): boolean {
+  /**
+   * Puts a Cast button in front of a name (once). In a spell list, the name and its button get a line of their own
+   * (the list is returned, to be laid out in a column). False where it can't: a name inside a longer text React
+   * draws (React's text is never split; a name that is the whole of it gets its button in front of it).
+   */
+  private button(h: Hit): boolean | HTMLElement {
     const n = h.node;
-    if (!n.parentNode || reacts(n)) return false;
+    if (!n.parentNode) return false;
     const said = n.data.slice(h.start, h.end);
+    const whole = h.start === 0 && bare(n.data) === bare(said);
+    const react = reacts(n);
+    // written as its note writes it ("fire bolt": "Fire Bolt"), where only its capitals differ (text React draws is
+    // left as it is)
+    if (!react && said !== h.link.name && said.length === h.link.name.length && said.toLowerCase() === h.link.name.toLowerCase()) n.replaceData(h.start, said.length, h.link.name);
+    if (react && !whole) return false;
+    const list = !react ? n.parentElement?.closest<HTMLElement>(LIST) ?? null : null;
     // the name is the whole of its text and of the inline elements round it: in front of the outermost of them
     let before: Node = n;
-    if (h.start === 0 && bare(n.data) === bare(n.data.slice(h.start, h.end))) {
-      for (let el = n.parentElement; el && el.matches(WRAP) && !el.matches(STATBLOCK) && !reacts(el) && bare(el.textContent ?? '') === bare(n.data); el = el.parentElement) before = el;
+    if (whole) {
+      for (let el = n.parentElement; el && el.matches(WRAP) && !el.matches(STATBLOCK) && !el.classList.contains(ROW) && (react || !reacts(el)) && bare(el.textContent ?? '') === bare(n.data); el = el.parentElement) before = el;
     } else if (h.start > 0) before = n.splitText(h.start);
+    // in a list: the name alone in its text (what follows it, ", light", stays after it)
+    if (list && before === n && h.end - h.start < n.data.length && h.start === 0) n.splitText(h.end);
+    else if (list && before !== n && before.nodeType === Node.TEXT_NODE && h.end - h.start < (before as Text).data.length) (before as Text).splitText(h.end - h.start);
     const prev = before.previousSibling;
-    if (prev instanceof Element && prev.classList.contains(CAST_BTN) && this.buttons.get(prev)?.key === h.link.key) return true;
+    const mine = (el: Node | null): el is Element => el instanceof Element && el.classList.contains(CAST_BTN) && this.buttons.get(el)?.key === h.link.key;
+    if (mine(prev)) return list ?? true;
     const parent = before.parentElement; if (!parent) return false;
     // made in its own window's document (a popped-out window's too), then put in front of the name
     const b = parent.createSpan({ cls: CAST_BTN });
@@ -238,7 +265,50 @@ export class StatblockLinker {
     b.addEventListener('click', (e) => { const r = b.getBoundingClientRect(); open(e, r.left, r.bottom); });
     b.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { const r = b.getBoundingClientRect(); open(e, r.left, r.bottom); } });
     parent.insertBefore(b, before);
-    return true;
+    if (list) {
+      // its own line: the button and the name together
+      const row = parent.createSpan({ cls: ROW });
+      parent.insertBefore(row, b); row.append(b, before);
+    }
+    return list ?? true;
+  }
+
+  /**
+   * A spell list laid out one spell a line: each Cast button and name on its own row, the commas and "and"s between
+   * them hidden, any other text (its level, a spell the add-on doesn't know) a line of its own.
+   */
+  private columns(list: HTMLElement): void {
+    list.classList.add('sfx-sb-cols');
+    for (const host of new Set(Array.from(list.querySelectorAll('.' + ROW)).map((r) => r.parentElement).filter((p): p is HTMLElement => !!p))) {
+      for (const c of Array.from(host.childNodes)) {
+        if (c.nodeType !== Node.TEXT_NODE) continue;
+        const t = c as Text;
+        if (SEP.test(t.data)) { const sep = host.createSpan({ cls: 'sfx-sb-sep' }); host.insertBefore(sep, t); sep.append(t); continue; }
+        // other text: a line of its own, without the commas round it (they're hidden, not lost)
+        const lead = /^[\s,;]+/.exec(t.data)?.[0] ?? '';
+        const tail = /[\s,;]+$/.exec(t.data.slice(lead.length))?.[0] ?? '';
+        const body = t.data.slice(lead.length, t.data.length - tail.length);
+        const rest = host.createSpan({ cls: ROW + ' is-plain' });
+        host.insertBefore(rest, t);
+        if (lead) { const s1 = host.createSpan({ cls: 'sfx-sb-sep' }); s1.append(lead); host.insertBefore(s1, rest); }
+        if (tail) { const s2 = host.createSpan({ cls: 'sfx-sb-sep' }); s2.append(tail); host.insertBefore(s2, rest.nextSibling); }
+        t.data = body; rest.append(t);
+      }
+    }
+  }
+
+  /**
+   * Buttons whose name is gone (Atlas drew that part again): taken away, their rows with them, so none stands in
+   * front of the wrong thing.
+   */
+  private tidy(): void {
+    for (const b of Array.from(this.doc.querySelectorAll<HTMLElement>('.' + CAST_BTN))) {
+      const next = b.nextSibling;
+      if (next && bare(next.textContent ?? '').startsWith(bare(b.dataset.spell ?? '\u0000'))) continue;
+      const row = b.parentElement?.classList.contains(ROW) ? b.parentElement : null;
+      b.remove();
+      if (row) row.replaceWith(...Array.from(row.childNodes));
+    }
   }
 
   /**

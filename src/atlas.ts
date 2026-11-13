@@ -40,6 +40,8 @@ export interface AtlasState {
   deleteWall: (id: string) => void;
   deleteWalls: (ids: string[]) => void;
   openLightPopover?: (id: string) => void;
+  /** Moves a token (its middle) to a spot on the map. */
+  moveToken?: (id: string, x: number, y: number) => void;
   /** Adds or takes off a condition on these tokens (one store write). */
   setTokensCondition?: (tokenIds: string[], conditionId: string, active: boolean) => void;
   /** Atlas's initiative tracker: whether a fight is on, and its round. */

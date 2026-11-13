@@ -206,3 +206,9 @@ canvas.sfx-cursor-move{cursor:move}
 .sfx-chip-btn{font-size:12px;padding:2px 9px;height:auto;border-radius:999px}
 .sfx-chip-btn.is-on{background:var(--interactive-accent,#8b5cf6);color:var(--text-on-accent,#fff)}
 .sfx-desc{color:var(--text-muted,#999);font-size:12px;margin-top:2px}
+
+/* a spell list, one spell a line: its Cast button and name */
+.sfx-sb-cols .sfx-sb-row{display:flex;align-items:center;gap:0;margin:3px 0 3px .25em}
+.sfx-sb-cols .sfx-sb-row.is-plain{margin-left:.25em}
+.sfx-sb-cols .sfx-sb-sep{display:none}
+.sfx-sb-cols .atlas-sb-spell-level{display:block;margin-bottom:2px}

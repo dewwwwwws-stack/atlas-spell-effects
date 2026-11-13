@@ -225,7 +225,8 @@ kept with saved spells (`effect-colour`, `effect-colour-outer`, `effect-opacity`
 
 ## Casting from Atlas statblocks
 In Atlas's statblocks (Ctrl / ⌘ + hover a token, the side panel, or a statblock note), every spell this
-add-on knows gets a small **Cast** button in front of its name: every spell in your spell notes and saved spells, by its name, its note's `aliases`,
+add-on knows gets a small **Cast** button in front of its name, written as its note writes it ("fire bolt" reads
+"Fire Bolt"), and spell lists show one spell a line: every spell in your spell notes and saved spells, by its name, its note's `aliases`,
 and its name without its inventor ("Hideous Laughter" for "Tasha's Hideous Laughter", as 2024 names it). They're
 found in:
 - spell lists (Atlas's, in a list or in tabs, and Fantasy Statblocks');
@@ -330,13 +331,13 @@ needed. Only what the add-on put on is taken off: a condition the creature had a
 creature that saved stays off while it's still inside. An aura round its caster marks the others in it, not the
 caster.
 
-**Instant spells.** Creatures caught in an instant spell (Fireball, Thunderwave…) are listed on a small card beside
-the map, on your screen only, and get *In a spell* until you've dealt with them. Press **Failed** to give a creature
-the spell's conditions, or **Saved**. **×** finishes everyone left.
+**Instant spells.** The creatures an instant spell hits (Fireball, Thunderwave…) are listed on a small card beside
+the map, on your screen only, and are *In a spell* while it shows. Close it with **×** when you've dealt with them.
+A line, cone or aura from a caster never catches the caster.
 
 **A spell's conditions** are read from its text ("has the Restrained condition", "falls Prone"; not the ones it ends
 or guards against), and Darkness gives Blinded. Change them in the cast window's **Conditions** row, which shows
-your collection's conditions. They're kept with a saved spell as `effect-conditions`.
+your collection's conditions (lasting spells). They're kept with a saved spell as `effect-conditions`.
 
 Turn it all off with **Mark creatures in spells** in the settings.
 
@@ -350,6 +351,13 @@ Pathfinder 2e, 10 in Old-School Essentials and Cairn, 3 in Cyberpunk RED. Dagger
 and Draw Steel have no fixed round, so they count rounds only, as do your own systems until you set one. Change any
 of them with **Round length** in the settings (*6 seconds*, *10 s*, *1 minute*…; empty: rounds only). It's kept for
 each game system.
+
+## Teleporting
+Spells that teleport their caster (Misty Step, Far Step, Dimension Door, Thunder Step: "you teleport…") move the
+token. Cast it, click the caster (if it isn't known from their statblock or selected), and how far they can go shows
+round them; click where they go. Its animation plays where they leave and where they arrive, and the token lands in
+the grid's squares, never further than it can go. It's Atlas's own move, so Ctrl+Z puts it back. Turn it on or off
+for any spell, and set how far, with **Teleports the caster** in the cast window (kept as `effect-teleport`).
 
 ## Recent spells, and casting with no target
 - The last five spells you cast are at the top of ✨'s menu (*Cast Fireball again*) and of the cast window.

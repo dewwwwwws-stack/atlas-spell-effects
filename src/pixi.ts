@@ -177,12 +177,13 @@ function drawnCanvas(e: Effect, w: number, h: number): HTMLCanvasElement {
   g.translate(cw / 2, ch / 2); g.scale(k, k);
   const glow = Math.max(w, h) * 0.03;
   if (e.outline) {
-    // its edge, dashed, in its outer colour, over a faint wash of its inner one
+    // its edge, dashed, in its outer colour, over a faint wash of its inner one (none on the players' preview of
+    // where you aim: on a dark floor the wash looked like light, and showed the floor under it)
     g.beginPath();
     if (e.shape === 'radius' || e.shape === 'emanation') g.arc(0, 0, Math.min(w, h) / 2, 0, Math.PI * 2);
     else if (e.shape === 'cone') { g.moveTo(-w / 2, 0); g.lineTo(w / 2, -h / 2); g.lineTo(w / 2, h / 2); g.closePath(); }
     else g.rect(-w / 2, -h / 2, w, h);
-    g.fillStyle = rgba(c1, 0.16); g.fill();
+    if (e.id !== AIM) { g.fillStyle = rgba(c1, 0.16); g.fill(); }
     const lw = Math.max(3 / k, Math.max(w, h) * 0.012);
     g.setLineDash([lw * 3, lw * 2]); g.lineJoin = 'round';
     g.strokeStyle = 'rgba(0,0,0,0.55)'; g.lineWidth = lw * 1.8; g.stroke();     // a dark edge under it: seen on any floor
@@ -383,7 +384,7 @@ export class PixiPainter {
       const s = this.world.scale(e.map); if (!s) continue;
       const tok = e.token ? this.world.token(e.map, e.token) : null;
       if (e.token && !tok) continue;
-      const look = [e.file ?? '', e.colour, e.colour2 ?? '', e.shape, e.closed ? 1 : 0, e.outline ? 'o' : '', onCreature(e) ? 'c' : '', e.shape === 'wall' ? JSON.stringify(e.points ?? []) + (e.width ?? '') : ''].join('|');
+      const look = [e.file ?? '', e.colour, e.colour2 ?? '', e.shape, e.closed ? 1 : 0, e.outline ? (e.id === AIM ? 'a' : 'o') : '', onCreature(e) ? 'c' : '', e.shape === 'wall' ? JSON.stringify(e.points ?? []) + (e.width ?? '') : ''].join('|');
       let it = this.items.get(e.id);
       if (it && it.look !== look) { this.drop(e.id); it = undefined; }
       if (!it) { it = this.make(e, look); const into = onCreature(e) && this.over ? this.over : root; it.node.label = e.id === AIM ? AIM : 'sfx-effect'; this.items.set(e.id, it); into.addChild(it.node); }

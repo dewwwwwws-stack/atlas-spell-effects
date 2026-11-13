@@ -11,7 +11,7 @@ import { IN_SPELL_ID, IN_SPELL, ROUND_SECS, idsOf, upFor, timeOf, secondsOf, spe
 import { call, field, type AtlasAssets, type Tab, type AtlasView, type AtlasViewport, type AtlasState, type CanvasNode, type PlayersView, type Measurement } from './atlas';
 import { FolderSuggest, BaseSuggest } from './suggest';
 import { SpellNames, StatblockLinker, type SpellLink } from './statblocks';
-import { areaOf, targetOf, fallbackArea, describe, rangeOf, setRules, unitLabel, square, squares, fromFeet, type GameUnitType, type Area, type Shape, type SpellEntry, type WallBlocks } from './areas';
+import { areaOf, targetOf, fallbackArea, describe, rangeOf, teleportOf, setRules, unitLabel, square, squares, fromFeet, type GameUnitType, type Area, type Shape, type SpellEntry, type WallBlocks } from './areas';
 import { indexFiles, indexFile, matchesFor, coloursOf, search, nearestLength, type EffectFile } from './library';
 import { isStored, storedFrom, writeDefaults, clearDefaults, baseFile, noteName, unitFactor, unitNow, type StoredSpell } from './storage';
 import { looksLikeSpell, spellFromNote } from './notes';
@@ -32,7 +32,7 @@ const uid = () => 'fx' + Date.now().toString(36) + Math.random().toString(36).sl
 
 /** A preset, from versions before 1.4: made into a saved spell (a note of its own) when the add-on loads. */
 export interface Preset { id: string; name: string; of: string; area: Area; file?: string; colour: string; colour2?: string; alpha?: number; attach?: boolean; light?: EffectLight | null }
-interface Remembered { conditions?: string[]; range?: number; unit?: string; angle?: number; target?: 'on' | 'bolt'; self?: boolean; colour2?: string; alpha?: number; file?: string; colour?: string; shape?: Shape; size?: number; width?: number; from?: 'caster' | 'point'; lasting?: boolean; light?: EffectLight | null; ring?: number; round?: boolean; blocks?: WallBlocks }
+interface Remembered { teleport?: number; conditions?: string[]; range?: number; unit?: string; angle?: number; target?: 'on' | 'bolt'; self?: boolean; colour2?: string; alpha?: number; file?: string; colour?: string; shape?: Shape; size?: number; width?: number; from?: 'caster' | 'point'; lasting?: boolean; light?: EffectLight | null; ring?: number; round?: boolean; blocks?: WallBlocks }
 interface Settings {
   folders: string;                 // vault folders with effect files, comma-separated; '' = any folder named like JB2A or "Spell Effects"
   remember: Record<string, Remembered>;
@@ -53,13 +53,13 @@ interface Settings {
   showRounds: boolean;             // how long each lasting spell has been up, by Atlas's initiative, beside it
   roundSecs: Record<string, number>; // a round's length in seconds you set, for each game system (Atlas's preset id); 0: rounds only; none: the system's own
   marks: Mark[];                   // the conditions the add-on put on creatures (and takes off again)
-  caught: Caught[];                // creatures caught in instant spells, still to resolve
+  caught: Caught[];                // creatures hit by instant spells, shown till you close their card
   recent: Pending[];               // the spells cast last, newest first
 }
 /** A condition the add-on keeps on a creature for a spell: `on` (put on by it), `off` (you took it off while the creature was still inside), `theirs` (it had it already). */
 interface Mark { map: string; from: string; token: string; cond: string; state: 'on' | 'off' | 'theirs' }
-/** Creatures caught in an instant spell (Fireball), to resolve: each failed or saved. */
-interface Caught { id: string; map: string; name: string; conditions: string[]; tokens: { id: string; name: string; state: 'open' | 'failed' | 'saved' }[] }
+/** Creatures hit by an instant spell (Fireball): a card of them, till you close it. */
+interface Caught { id: string; map: string; name: string; tokens: { id: string; name: string }[] }
 const DEFAULTS: Settings = { folders: '', remember: {}, lasting: [], snap: true, storage: 'Spell Storage', bases: [], presets: [], jb2aFolder: 'JB2A_DnD5e', jb2aOffer: true, noteSpells: true, orphanLights: [], coneAngle: 0, artTrim: {}, showAim: false, aimLook: 'outline', markCreatures: true, showRounds: true, roundSecs: {}, marks: [], caught: [], recent: [] };
 
 /** A spell to pick in the cast window: a saved one, or a spell note (from a Base or found in the vault). */
@@ -67,14 +67,14 @@ export interface Choice { key: string; name: string; source: 'stored' | 'note'; 
 
 
 /** What is being cast: the area and look, before it is placed. */
-interface Pending { name: string; key: string; area: Area; file?: string; colour: string; colour2?: string; alpha?: number; attach?: boolean; light?: EffectLight; /** How far from its caster it can be cast (feet, from the edge of their space). */ range?: number; /** The conditions it gives the creatures inside it (names). */ conditions?: string[] }
+interface Pending { name: string; key: string; area: Area; file?: string; colour: string; colour2?: string; alpha?: number; attach?: boolean; light?: EffectLight; /** How far from its caster it can be cast (feet, from the edge of their space). */ range?: number; /** The conditions it gives the creatures inside it (names). */ conditions?: string[]; /** It teleports its caster up to this far (game units). */ teleport?: number }
 /** A spell's remembered choices in the game's units now (remembered in another game system's: the same squares). */
 function inUnitsNow(r: Remembered | undefined): Remembered | undefined {
   if (!r) return r;
   const k = unitFactor(r.unit); if (k === 1) return r;
   const sc = (v: number | undefined) => (v === undefined ? v : Math.round(v * k * 100) / 100);
   const light = r.light ? { ...r.light, bright: sc(r.light.bright) ?? 0, dim: sc(r.light.dim) ?? 0 } : r.light;
-  return { ...r, size: sc(r.size), width: sc(r.width), ring: sc(r.ring), light, unit: unitNow() };
+  return { ...r, size: sc(r.size), width: sc(r.width), ring: sc(r.ring), light, ...(r.teleport ? { teleport: sc(r.teleport) } : {}), unit: unitNow() };
 }
 /** The conditions part of an effect made from a pending spell. */
 const condsOf = (p: Pending): { conditions?: string[] } => (p.conditions?.length ? { conditions: [...p.conditions] } : {});
@@ -750,7 +750,7 @@ export default class AtlasSpellEffects extends Plugin {
   }
 
   /** Saves a spell's defaults onto its own note's properties (a note in the folder for your own effects, for one without). */
-  async storeSpell(c: { name: string; stored?: StoredSpell; entry?: SpellEntry; notePath?: string }, d: { area: Area; file?: string | undefined; colour?: string | undefined; colour2?: string | undefined; alpha?: number | undefined; attach?: boolean | undefined; light?: EffectLight | null | undefined; menu?: boolean | undefined; range?: number | undefined; conditions?: string[] | undefined }): Promise<string> {
+  async storeSpell(c: { name: string; stored?: StoredSpell; entry?: SpellEntry; notePath?: string }, d: { area: Area; file?: string | undefined; colour?: string | undefined; colour2?: string | undefined; alpha?: number | undefined; attach?: boolean | undefined; light?: EffectLight | null | undefined; menu?: boolean | undefined; range?: number | undefined; conditions?: string[] | undefined; teleport?: number | undefined }): Promise<string> {
     const vault = this.app.vault;
     let file: TFile | null = null;
     // the spell's own note (a stored one, or the one its Base or the vault shows)
@@ -1355,7 +1355,7 @@ export default class AtlasSpellEffects extends Plugin {
         }
         if (marker) for (const c of this.settings.caught) {
           if (c.map !== map) continue;
-          for (const k of c.tokens) if (k.state === 'open' && tokens[k.id]) want.set(`caught:${c.id}|${k.id}|${IN_SPELL_ID}`, { from: 'caught:' + c.id, token: k.id, cond: IN_SPELL_ID });
+          for (const k of c.tokens) if (tokens[k.id]) want.set(`caught:${c.id}|${k.id}|${IN_SPELL_ID}`, { from: 'caught:' + c.id, token: k.id, cond: IN_SPELL_ID });
         }
       }
       const has = (token: string, cond: string) => (tokens[token]?.conditions ?? []).includes(cond);
@@ -1392,63 +1392,49 @@ export default class AtlasSpellEffects extends Plugin {
     if (changed) this.saveSoon();
   }
 
-  /** An instant spell (Fireball) just went off: the creatures caught in it, to deal with (a card, and "In a spell" on them). */
+  /** An instant spell (Fireball) just went off: the creatures it hit (a card, and "In a spell" on them till it's closed). */
   private catchIn(e: Effect): void {
     if (!this.settings.markCreatures || e.lasting || e.bolt || e.outline || e.on) return;
     const t = this.atlasTabs().find((x) => this.mapOf(x) === e.map); if (!t) return;
     const ids = this.insideOf(t, e); if (!ids.length) return;
-    this.settings.caught.push({ id: e.id, map: e.map, name: e.name, conditions: [...(e.conditions ?? [])], tokens: ids.map((id) => ({ id, name: this.tokenName(t, id), state: 'open' as const })) });
+    this.settings.caught.push({ id: e.id, map: e.map, name: e.name, tokens: ids.map((id) => ({ id, name: this.tokenName(t, id) })) });
     this.saveSoon();
   }
 
-  /**
-   * What happened to a creature caught in an instant spell: `failed` (it gets the spell's conditions), `saved`, or
-   * `all`: everyone left is done with (nothing more given). The card goes once no one is left.
-   */
-  resolveCaught(id: string, token: string | null, how: 'failed' | 'saved'): void {
-    const c = this.settings.caught.find((x) => x.id === id); if (!c) return;
-    const t = this.atlasTabs().find((x) => this.mapOf(x) === c.map);
-    for (const k of c.tokens) {
-      if (k.state !== 'open' || (token !== null && k.id !== token)) continue;
-      k.state = how;
-      if (how === 'failed' && t && c.conditions.length) {
-        const st = t.store.getState(); const ids = idsOf(c.conditions, this.conditionDefs(t));
-        // given by you (as if from the token's menu): stays until you take it off
-        if (typeof st.setTokensCondition === 'function') this.untracked(t, () => { for (const cond of ids) st.setTokensCondition!([k.id], cond, true); });
-      }
-    }
-    if (c.tokens.every((k) => k.state !== 'open')) this.settings.caught = this.settings.caught.filter((x) => x !== c);
+  /** An instant spell's card closed: done with (its "In a spell" marks come off). */
+  closeCaught(id: string): void {
+    this.settings.caught = this.settings.caught.filter((x) => x.id !== id);
     this.saveSoon(); this.wake();
   }
 
-  /** The cards of creatures caught in instant spells, over each map they're on (yours only). */
+  /**
+   * The cards of creatures hit by instant spells, over each map they're on (yours only). Kept in the tab's own
+   * frame, outside Atlas's map (whose pointer handling would take the clicks), over its top right.
+   */
   paintCaught(): void {
     for (const t of this.atlasTabs()) {
-      const parent = t.canvas.parentElement; if (!parent) continue;
+      const host = t.view.containerEl ?? t.canvas.parentElement; if (!host) continue;
       const list = this.settings.caught.filter((c) => c.map === this.mapOf(t));
-      let box = parent.querySelector<HTMLElement>(':scope > .sfx-caught');
+      let box = host.querySelector<HTMLElement>(':scope > .sfx-caught');
       if (!list.length) { box?.remove(); continue; }
       const key = JSON.stringify(list);
       if (box && box.dataset.k === key) continue;
-      if (!box) box = parent.createDiv({ cls: 'sfx-caught' });
+      if (!box) {
+        if ((host.ownerDocument.defaultView ?? window).getComputedStyle(host).position === 'static') host.setCssStyles({ position: 'relative' });
+        box = host.createDiv({ cls: 'sfx-caught' });
+        // its clicks are its own: nothing under it (the map) hears them
+        for (const ev of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'dblclick', 'wheel', 'contextmenu'] as const) box.addEventListener(ev, (e) => e.stopPropagation());
+      }
       box.dataset.k = key; box.empty();
       for (const c of list) {
         const card = box.createDiv({ cls: 'sfx-caught-card' });
         const head = card.createDiv({ cls: 'sfx-caught-head' });
         setIcon(head.createSpan({ cls: 'sfx-caught-icon' }), 'sparkles');
         head.createSpan({ cls: 'sfx-caught-title', text: c.name });
-        const open = c.tokens.filter((k) => k.state === 'open').length;
-        head.createSpan({ cls: 'sfx-caught-count', text: `${open} to resolve` });
-        const x = head.createEl('button', { cls: 'clickable-icon sfx-caught-x', attr: { 'aria-label': 'Done with everyone' } }); setIcon(x, 'x');
-        x.onclick = () => this.resolveCaught(c.id, null, 'saved');
-        if (c.conditions.length) card.createDiv({ cls: 'sfx-caught-gives', text: `On a failed save: ${c.conditions.join(', ')}` });
-        for (const k of c.tokens) {
-          const row = card.createDiv({ cls: 'sfx-caught-row is-' + k.state });
-          row.createSpan({ cls: 'sfx-caught-name', text: k.name });
-          if (k.state !== 'open') { row.createSpan({ cls: 'sfx-caught-done', text: k.state === 'failed' ? 'Failed' : 'Saved' }); continue; }
-          const f = row.createEl('button', { text: 'Failed', cls: 'sfx-caught-btn' }); f.onclick = () => this.resolveCaught(c.id, k.id, 'failed');
-          const sv = row.createEl('button', { text: 'Saved', cls: 'sfx-caught-btn' }); sv.onclick = () => this.resolveCaught(c.id, k.id, 'saved');
-        }
+        head.createSpan({ cls: 'sfx-caught-count', text: `${c.tokens.length} hit` });
+        const x = head.createEl('button', { cls: 'clickable-icon sfx-caught-x', attr: { 'aria-label': 'Close' } }); setIcon(x, 'x');
+        x.addEventListener('click', () => this.closeCaught(c.id));
+        for (const k of c.tokens) card.createDiv({ cls: 'sfx-caught-row' }).createSpan({ cls: 'sfx-caught-name', text: k.name });
       }
     }
   }
@@ -1755,6 +1741,108 @@ export default class AtlasSpellEffects extends Plugin {
     return { reach, ring: { id: 'preview-range', map: this.mapOf(tab), name: pending.name, shape: 'radius', size: reach / ppf, at: { x: caster.x, y: caster.y }, colour: pending.colour, lasting: false, started: 0 } };
   }
 
+  /**
+   * A spell that teleports its caster (Misty Step, Dimension Door): the caster (from the statblock, or clicked),
+   * how far they can go shown round them, then a click where they go. Its animation plays where they leave and where
+   * they arrive, and the token moves there (Atlas's own move: Ctrl+Z puts it back), its space on the grid.
+   */
+  teleportCast(tab: Tab, pending: Pending, casterToken?: string): void {
+    const doc = tab.canvas.ownerDocument;
+    const hint = (tab.canvas.parentElement ?? doc.body).createDiv({ cls: 'sfx-hint' });
+    const reach = pending.teleport ?? 0;
+    let caster: { id: string; x: number; y: number; r: number } | null = null;
+    const say = () => { hint.textContent = `${pending.name}: ` + (caster ? `click where ${this.tokenName(tab, caster.id)} teleports to (up to ${reach} ${unitLabel()})` : 'click the token that teleports') + '   ·   Esc to stop'; };
+    const toWorld = (e: PointerEvent | MouseEvent): Point | null => {
+      const r = tab.canvas.getBoundingClientRect();
+      if (e.clientX < r.left || e.clientY < r.top || e.clientX > r.right || e.clientY > r.bottom) return null;
+      const p = call<Point>(tab.viewport, 'toWorld', e.clientX - r.left, e.clientY - r.top);
+      return p && Number.isFinite(p.x) ? { x: p.x, y: p.y } : null;
+    };
+    const ppf = pxPerFoot(this.scaleOf(tab));
+    const map = this.mapOf(tab);
+    // where the token lands: within reach of where it stands (middle to middle), its space on the grid
+    const landing = (p: Point, ev?: { altKey?: boolean }): Point | null => {
+      if (!caster) return null;
+      const max = reach * ppf;
+      const clamp = (q: Point): Point => { const dx = q.x - caster!.x, dy = q.y - caster!.y, d = Math.hypot(dx, dy); return d <= max || d === 0 ? q : { x: caster!.x + dx * max / d, y: caster!.y + dy * max / d }; };
+      const tok = t0();
+      const cells = Math.max(1, Math.round(typeof tok?.size === 'number' && tok.size > 0 ? tok.size : 1));
+      const cell = this.scaleOf(tab).cell;
+      const snap = (q: Point): Point => {
+        if (!this.snapOn(ev)) return q;
+        // an odd-sized token's middle sits in a square's middle, an even one's on a corner
+        if (cells % 2 === 0) return this.snapPoint(tab, q, ev);
+        const c = this.snapPoint(tab, { x: q.x - cell / 2, y: q.y - cell / 2 }, ev);
+        return { x: c.x + cell / 2, y: c.y + cell / 2 };
+      };
+      let q = snap(clamp(p));
+      // snapped past its reach: a square nearer
+      for (let i = 0; i < 4 && Math.hypot(q.x - caster.x, q.y - caster.y) > max + 0.5; i++) {
+        const d = Math.hypot(q.x - caster.x, q.y - caster.y);
+        q = snap({ x: caster.x + (q.x - caster.x) * (d - cell) / d, y: caster.y + (q.y - caster.y) * (d - cell) / d });
+      }
+      return Math.hypot(q.x - caster.x, q.y - caster.y) <= max + 0.5 ? q : { x: caster.x, y: caster.y };
+    };
+    const t0 = () => (caster ? tab.store.getState()?.objects?.tokens?.[caster.id] : undefined);
+    const ghost = (q: Point): Effect => ({ id: 'preview', map, name: pending.name, shape: 'radius', size: (caster?.r ?? 0) / ppf, at: q, colour: pending.colour, ...(pending.colour2 ? { colour2: pending.colour2 } : {}), outline: true, lasting: false, started: 0 });
+    const ring = (): Effect | null => (caster ? { id: 'preview-range', map, name: pending.name, shape: 'radius', size: reach + caster.r / ppf, at: { x: caster.x, y: caster.y }, colour: pending.colour, lasting: false, started: 0 } : null);
+    const choose = (id: string): boolean => {
+      const at = this.tokenOf(tab, id); if (!at) return false;
+      caster = { id, x: at.x, y: at.y, r: at.r };
+      if (this.placing) this.placing.range = ring();
+      say(); this.wake();
+      return true;
+    };
+    const move = (e: PointerEvent) => {
+      const p = toWorld(e); if (!p || !this.placing) return;
+      const q = landing(p, e);
+      this.placing.preview = q ? ghost(q) : null;
+    };
+    const down = (e: PointerEvent) => {
+      const p = toWorld(e); if (!p || !this.placing) return;
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+      if (e.button === 2) { this.placing.stop(); return; }
+      if (e.button !== 0) return;
+      if (!caster) { const tok = this.tokenAt(tab, p); if (tok) choose(tok.id); return; }
+      const q = landing(p, e); const from = { x: caster.x, y: caster.y }; const id = caster.id;
+      this.placing.stop();
+      if (!q) return;
+      this.teleportTo(tab, pending, id, from, q);
+    };
+    const swallow = (e: Event) => { const pe = e as PointerEvent; if (toWorld(pe)) { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); } };
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); this.placing?.stop(); } };
+    const opts = { capture: true } as AddEventListenerOptions;
+    doc.addEventListener('pointermove', move, opts);
+    doc.addEventListener('pointerdown', down, opts);
+    doc.addEventListener('pointerup', swallow, opts);
+    doc.addEventListener('click', swallow, opts);
+    doc.addEventListener('contextmenu', swallow, opts);
+    doc.addEventListener('keydown', key, opts);
+    const stop = () => {
+      for (const [ev, fn] of [['pointermove', move], ['pointerdown', down], ['pointerup', swallow], ['click', swallow], ['contextmenu', swallow], ['keydown', key]] as const) doc.removeEventListener(ev, fn as EventListener, opts);
+      hint.remove();
+      if (this.placing?.tab === tab) this.placing = null;
+    };
+    this.placing = { tab, pending, caster: null, preview: null, stop: () => { stop(); this.bars(); this.wake(); }, hint, range: null };
+    // the caster: the statblock's creature, or the one token selected
+    const sel = (tab.store.getState()?.selectedIds ?? []).filter((id: string) => tab.store.getState()?.objects?.tokens?.[id]);
+    if (!(casterToken && choose(casterToken)) && !(sel.length === 1 && choose(sel[0]))) say();
+    this.wake();
+  }
+
+  /** The teleport itself: its animation where they leave and where they arrive, and the token moved there. */
+  teleportTo(tab: Tab, pending: Pending, id: string, from: Point, to: Point): void {
+    const at = this.tokenOf(tab, id); const st = tab.store.getState();
+    if (!at || typeof st.moveToken !== 'function') { new Notice('Atlas Spell Effects: couldn’t move that token.'); return; }
+    const ppf = pxPerFoot(this.scaleOf(tab));
+    const map = this.mapOf(tab);
+    const puff = (p: Point): Effect => ({ id: uid(), map, name: pending.name, shape: 'radius', size: at.r / ppf, at: { x: p.x, y: p.y }, colour: pending.colour, ...(pending.colour2 ? { colour2: pending.colour2 } : {}), ...(pending.alpha ? { alpha: pending.alpha } : {}), ...(pending.file ? { file: pending.file } : {}), bolt: true, lasting: false, started: Date.now() });
+    this.cast(puff(from));
+    if (Math.hypot(to.x - from.x, to.y - from.y) < 1) return;
+    st.moveToken(id, to.x, to.y);
+    this.cast(puff(to));
+  }
+
   /** Click the caster / aim / click the spot on the Atlas map, then it plays. */
   place(pending: Pending, casterToken?: string): void {
     const tab = this.atlasTab();
@@ -1764,6 +1852,7 @@ export default class AtlasSpellEffects extends Plugin {
     // the spells cast last, newest first (the same spell once)
     this.settings.recent = [pending, ...this.settings.recent.filter((r) => r.name !== pending.name || r.key !== pending.key)].slice(0, RECENT);
     this.saveSoon();
+    if (pending.teleport && pending.teleport > 0) { this.teleportCast(tab, pending, casterToken); return; }
     if (pending.area.shape === 'wall') { this.drawWall(tab, pending); return; }
     if (pending.area.target) { this.castAt(tab, pending, casterToken); return; }
     const a = pending.area;
@@ -2509,6 +2598,8 @@ class CastModal extends Modal {
   private conditions: string[] = [];
   /** How far from its caster it can be cast (game units): from its text, or as saved. */
   private range: number | undefined;
+  /** How far it teleports its caster (game units); 0: it doesn't. */
+  private teleport = 0;
   /** Cast from a statblock: its creature is the caster. */
   casterToken: string | undefined;
   private query = '';
@@ -2540,6 +2631,7 @@ class CastModal extends Modal {
       this.light = st.light !== undefined ? st.light : lightOf(c.entry ?? null, this.area);
       this.conditions = st.conditions ?? spellConditions(c.entry ?? null, P.conditionNames());
       this.range = st.range ?? (c.entry ? rangeOf(c.entry) ?? undefined : undefined);
+      this.teleport = st.teleport ?? (c.entry ? teleportOf(c.entry) ?? 0 : 0);
       this.saved = `Saved in ${st.path}`;
     } else if (c) {
       const entry = await P.noteEntry(c);
@@ -2556,8 +2648,9 @@ class CastModal extends Modal {
       this.light = r && r.light !== undefined ? r.light : lightOf(entry, this.area);
       this.conditions = r?.conditions ?? spellConditions(entry, P.conditionNames());
       this.range = entry ? rangeOf(entry) ?? undefined : undefined;
+      this.teleport = r?.teleport ?? (entry ? teleportOf(entry) ?? 0 : 0);
     } else {
-      this.name = 'Effect'; this.light = null; this.conditions = []; this.range = undefined;
+      this.name = 'Effect'; this.light = null; this.conditions = []; this.range = undefined; this.teleport = 0;
     }
     this.render();
   }
@@ -2721,7 +2814,8 @@ class CastModal extends Modal {
 
     if (this.area.shape === 'wall') wallsPicker(body, this.area.blocks, this.area.lasting, (b) => { this.area.blocks = b; this.render(); });
     lightPicker(body, this.light, this.area.lasting, (l) => { this.light = l; this.render(); });
-    if (this.area.target !== 'bolt') this.conditionsPicker(body);
+    if (this.area.target !== 'bolt' && this.area.lasting) this.conditionsPicker(body);
+    this.teleportPicker(body);
 
     lookPicker(body.createDiv(), bottom, { app: this.app, plugin: P, name: this.name === 'Effect' ? '' : this.name, shape: this.area.shape, angle: this.area.angle ?? P.coneAngle(), size: this.area.size, file: this.file, colour: this.colour, colour2: this.colour2, alpha: this.alpha, fileQuery: this.fileQuery,
       set: (c, re) => {
@@ -2738,7 +2832,7 @@ class CastModal extends Modal {
     foot.createSpan({ cls: 'sfx-saved', text: this.saved });
     // saving: one kind of thing, a saved spell (kept in a note's effect-… properties)
     const st = this.choice?.stored;
-    const look = () => ({ area: { ...this.area }, file: this.file, colour: this.colour, colour2: this.colour2, alpha: this.alpha, attach: this.attach, light: this.light, range: this.range, conditions: [...this.conditions] });
+    const look = () => ({ area: { ...this.area }, file: this.file, colour: this.colour, colour2: this.colour2, alpha: this.alpha, attach: this.attach, light: this.light, range: this.range, conditions: [...this.conditions], teleport: this.teleport });
     const keep = async (btn: { disabled: boolean }, c: { name: string; stored?: StoredSpell; entry?: SpellEntry; notePath?: string }, menu: boolean | undefined) => {
       btn.disabled = true;
       try {
@@ -2789,10 +2883,18 @@ class CastModal extends Modal {
       if (!(await P.ensureFile(this.file))) this.file = undefined;
       P.indexVault();
       const key = this.choice?.entry?.key ?? this.choice?.key ?? 'effect';
-      if (this.choice && !this.choice.stored) P.remember(key, { unit: unitNow(), ...(this.file ? { file: this.file } : {}), colour: this.colour, ...(this.colour2 ? { colour2: this.colour2 } : {}), ...(this.alpha ? { alpha: this.alpha } : {}), shape: this.area.shape, size: this.area.size, ...(this.area.width ? { width: this.area.width } : {}), ...(this.area.angle ? { angle: this.area.angle } : {}), from: this.area.from, lasting: this.area.lasting, light: this.light, ...(this.area.ring ? { ring: this.area.ring } : {}), ...(this.area.round ? { round: true } : {}), ...(this.area.blocks ? { blocks: this.area.blocks } : {}), ...(this.area.target ? { target: this.area.target } : {}), ...(this.area.self ? { self: true } : {}), conditions: [...this.conditions] });
+      if (this.choice && !this.choice.stored) P.remember(key, { unit: unitNow(), ...(this.file ? { file: this.file } : {}), colour: this.colour, ...(this.colour2 ? { colour2: this.colour2 } : {}), ...(this.alpha ? { alpha: this.alpha } : {}), shape: this.area.shape, size: this.area.size, ...(this.area.width ? { width: this.area.width } : {}), ...(this.area.angle ? { angle: this.area.angle } : {}), from: this.area.from, lasting: this.area.lasting, light: this.light, ...(this.area.ring ? { ring: this.area.ring } : {}), ...(this.area.round ? { round: true } : {}), ...(this.area.blocks ? { blocks: this.area.blocks } : {}), ...(this.area.target ? { target: this.area.target } : {}), ...(this.area.self ? { self: true } : {}), conditions: [...this.conditions], teleport: this.teleport });
       const range = this.range;
-      return { name: this.name, key, ...(range ? { range } : {}), ...(this.conditions.length && this.area.target !== 'bolt' ? { conditions: [...this.conditions] } : {}), area: { ...this.area }, ...(this.file ? { file: this.file } : {}), colour: this.colour, ...(this.colour2 ? { colour2: this.colour2 } : {}), ...(this.alpha ? { alpha: this.alpha } : {}), ...(this.attach ? { attach: true } : {}), ...(this.light ? { light: { ...this.light } } : {}) };
+      return { name: this.name, key, ...(range ? { range } : {}), ...(this.conditions.length && this.area.target !== 'bolt' ? { conditions: [...this.conditions] } : {}), area: { ...this.area }, ...(this.file ? { file: this.file } : {}), colour: this.colour, ...(this.colour2 ? { colour2: this.colour2 } : {}), ...(this.alpha ? { alpha: this.alpha } : {}), ...(this.attach ? { attach: true } : {}), ...(this.light ? { light: { ...this.light } } : {}), ...(this.teleport > 0 ? { teleport: this.teleport } : {}) };
   }
+  /** Whether it teleports its caster, and how far (from its text: "you teleport up to 30 feet"). */
+  private teleportPicker(body: HTMLElement): void {
+    const row = new Setting(body.createDiv({ cls: 'sfx-teleport' })).setName('Teleports the caster')
+      .setDesc(this.teleport > 0 ? `Up to ${this.teleport} ${unitLabel()}: click the caster, then where they go. The token moves (Ctrl+Z puts it back).` : 'Off: the caster stays where they are.');
+    row.addToggle((t) => t.setValue(this.teleport > 0).onChange((v) => { this.teleport = v ? (this.choice?.entry ? teleportOf(this.choice.entry) ?? this.range ?? 30 : this.range ?? 30) : 0; this.render(); }));
+    if (this.teleport > 0) row.addText((t) => { t.inputEl.type = 'number'; t.inputEl.addClass('sfx-num'); t.setValue(String(this.teleport)); t.onChange((v) => { const n = Number(v); if (n > 0) this.teleport = n; }); });
+  }
+
   /** The conditions it gives creatures inside it: the collection's, each on or off (pre-set from its text). */
   private conditionsPicker(body: HTMLElement): void {
     const P = this.plugin;
@@ -2801,9 +2903,7 @@ class CastModal extends Modal {
     const names = P.conditionNames();
     const desc = box.createDiv({ cls: 'sfx-desc' });
     if (!names.length) { desc.setText('Open an Atlas map to choose the conditions this spell gives (its collection’s game system has them).'); return; }
-    desc.setText(this.area.lasting
-      ? 'Creatures inside it get these (and “In a spell”) while they’re in it; take one off a creature that saves.'
-      : 'Creatures caught in it are listed to resolve: those that fail their save get these.');
+    desc.setText('Creatures inside it get these (and “In a spell”) while they’re in it; take one off a creature that saves.');
     const chips = box.createDiv({ cls: 'sfx-chips' });
     // ones it gives that this collection doesn't have still show, so they aren't lost
     for (const n of [...names, ...this.conditions.filter((c) => !names.some((x) => x.toLowerCase() === c.toLowerCase()))]) {
@@ -2988,7 +3088,7 @@ class EffectSettings extends PluginSettingTab {
       .addToggle((t) => t.setValue(s.snap).onChange((v) => { void (async () => { s.snap = v; await p.save(); })(); }));
     new Setting(el).setName('Spell AoE player preview').setDesc('While you place a spell, the players’ screen shows its area’s outline, in its colours, so they can see what it will cover before you cast it. Also in the ✨ button’s menu.')
       .addToggle((t) => t.setValue(s.showAim).onChange((v) => { void (async () => { s.showAim = v; await p.save(); p.wake(); })(); }));
-    new Setting(el).setName('Mark creatures in spells').setDesc('Creatures inside a lasting spell get Atlas’s “In a spell” condition (added to your collection’s conditions), and the conditions the spell gives (Silence: Deafened), while they’re in it. Creatures caught in an instant spell (Fireball) are listed beside the map to resolve: Failed gives them its conditions. Only what the add-on put on is taken off again.')
+    new Setting(el).setName('Mark creatures in spells').setDesc('Creatures inside a lasting spell get Atlas’s “In a spell” condition (added to your collection’s conditions), and the conditions the spell gives (Silence: Deafened), while they’re in it. Creatures hit by an instant spell (Fireball) are listed on a card beside the map till you close it. Only what the add-on put on is taken off again.')
       .addToggle((t) => t.setValue(s.markCreatures).onChange((v) => { void (async () => { s.markCreatures = v; await p.save(); p.wake(); })(); }));
     new Setting(el).setName('Spell turn tracker').setDesc('During a fight in Atlas’s initiative tracker, each lasting spell shows how many rounds it has been up beside it (“Round 3”), on your screen only. Spells never end on their own.')
       .addToggle((t) => t.setValue(s.showRounds).onChange((v) => { void (async () => { s.showRounds = v; await p.save(); p.wake(); })(); }));
