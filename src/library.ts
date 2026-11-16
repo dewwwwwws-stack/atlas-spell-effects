@@ -2,6 +2,7 @@
 // JB2A names its files like "Library/3rd_Level/Fireball/FireballExplosion_01_Orange_800x800.webm": words run
 // together (CamelCase) and apart (_), colours are words, ray lengths are "15ft". The add-on only reads the names.
 import type { Shape } from './areas';
+import { elementsOf, type Element } from './elements';
 
 export const EFFECT_EXT = ['webm', 'mp4', 'webp', 'gif', 'png', 'apng'];
 
@@ -110,6 +111,42 @@ export function matchesFor(spellName: string, shape: Shape | null, files: readon
     if (out.length >= limit) break;
   }
   return out;
+}
+
+/** Words an animation of each element may be named with. */
+const ELEMENTS: Record<Element, string[]> = {
+  fire: ['fire', 'flame', 'burn'], cold: ['cold', 'ice', 'frost', 'snow'], lightning: ['lightning', 'electric'], acid: ['acid'],
+  poison: ['poison', 'toxic'], radiant: ['radiant', 'holy', 'divine'], necrotic: ['necrotic', 'unholy'], thunder: ['thunder', 'sonic'], psychic: ['psychic'], force: ['force'],
+};
+/** What a spell or ability is made of, as words to find its animation by (see elements.ts), the surest first. */
+export function hintsOf(text: string | undefined, name?: string): string[] {
+  const out: string[] = [];
+  for (const e of elementsOf(name, text)) for (const w of ELEMENTS[e]) if (!out.includes(w)) out.push(w);
+  return out;
+}
+
+/**
+ * The animation a spell or ability starts with: one named after it; else one of its shape that fits what it is
+ * (its own name's words, or `hints`: a Fire Breath's cone, not Cone of Cold's). A cone or a line with nothing to go
+ * by gets none (any one of them would be some other spell's): it's drawn as its area, and one can be picked.
+ */
+export function defaultFor(name: string, shape: Shape | null, files: readonly EffectFile[], hints: readonly string[] = []): EffectFile | null {
+  const all = matchesFor(name, shape, files, 400);
+  if (all[0]?.why === 'name') return all[0].file;
+  if (!shape) return null;
+  const mine = keyWords(name).filter((w) => w.length >= 3 && !SHAPE_WORDS[shape].includes(w));
+  const other = shape === 'cone' ? ['line'] : shape === 'line' ? ['cone'] : [];
+  let best: EffectFile | null = null, top = 0;
+  for (const m of all) {
+    const words = [...m.file.words, ...m.file.folderWords];
+    if (other.some((o) => m.file.words.includes(o))) continue;
+    const has = (h: string) => words.some((w) => w.startsWith(h));
+    // (its own name's words count most; then the first kind of damage it does)
+    const score = mine.filter(has).length * 100 + (hints.length ? Math.max(0, ...hints.map((h, i) => (has(h) ? 50 - i : 0))) : 0);
+    if (score > top) { top = score; best = m.file; }
+  }
+  if (best) return best;
+  return shape === 'cone' || shape === 'line' ? null : all[0]?.file ?? null;
 }
 
 /** The colours an effect comes in (its family), each with its file; for a line or cone, the one made closest to `feet`. */

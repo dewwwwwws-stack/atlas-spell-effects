@@ -6,6 +6,7 @@
 // its first point to its second, as wide as its width. An aura is a circle that follows a token, reaching `aura`
 // game units past its space.
 
+import { elementsOf, type Element } from './elements';
 import type { Box, Effect, Point } from './geometry';
 
 /** Atlas's looks for an area (drawn in its own colour). */
@@ -112,16 +113,13 @@ export function lookOf(spell: { name?: string; descFull?: string; damageInflict?
   if (!spell) return null;
   const name = String(spell.name ?? '');
   const text = String(spell.descFull ?? '');
-  // the damage it does: its first kind with a look ("Bludgeoning damage plus Cold damage": Frost)
-  const kinds = [...text.matchAll(/(\w+) damage/gi)].map((m) => m[1]);
-  const dmg = (Array.isArray(spell.damageInflict) ? spell.damageInflict.join(' ') : String(spell.damageInflict ?? '')) + ' ' + (kinds.find((k) => /^(fire|cold|lightning|radiant|necrotic)$/i.test(k)) ?? '');
+  // what it's made of (its kinds of damage, as its game system writes them): the first with a look
+  const LOOKS: Partial<Record<Element, AreaLook>> = { fire: 'fire', cold: 'frost', lightning: 'lightning', radiant: 'radiance', necrotic: 'shadow' };
+  // (a spell list's own "damageInflict", where it has one: surer than its text)
+  const given = (Array.isArray(spell.damageInflict) ? spell.damageInflict.map((d) => String(d ?? '')) : String(spell.damageInflict ?? '').split(/[^\p{L}]+/u)).filter(Boolean).map((d) => `${d} damage`).join(', ');
   if (/darkness/i.test(name) || /magical darkness/i.test(text)) return 'shadow';
   if (/\b(fog|mist|cloud|smoke|steam)\b/i.test(name)) return 'mist';
-  if (/\bfire\b/i.test(dmg)) return 'fire';
-  if (/\bcold\b/i.test(dmg)) return 'frost';
-  if (/\blightning\b/i.test(dmg)) return 'lightning';
-  if (/\bradiant\b/i.test(dmg)) return 'radiance';
-  if (/\bnecrotic\b/i.test(dmg)) return 'shadow';
+  for (const e of [...(given ? elementsOf('', given) : []), ...elementsOf(name, text)]) { const l = LOOKS[e]; if (l) return l; }
   return null;
 }
 

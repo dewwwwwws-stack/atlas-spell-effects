@@ -222,3 +222,16 @@ canvas.sfx-cursor-move{cursor:move}
 .sfx-pop-btn { flex: 1; font-size: var(--font-ui-small, 13px); }
 
 .sfx-sb-cast.is-ability::before{content:'Use'}
+
+/* what a statblock's Cast / Use button will look like, shown beside it */
+.sfx-sb-peek{position:fixed;z-index:var(--layer-tooltip,70);display:flex;gap:10px;align-items:center;width:260px;padding:8px;border:1px solid var(--background-modifier-border);border-radius:var(--radius-m,8px);background:var(--background-primary);box-shadow:var(--shadow-s);pointer-events:none;font:var(--font-ui-small,13px)/1.35 var(--font-interface,system-ui);color:var(--text-normal)}
+.sfx-peek-art{position:relative;flex:0 0 80px;height:80px;border-radius:var(--radius-s,4px);background:var(--background-secondary);overflow:hidden;display:flex;align-items:center;justify-content:center}
+.sfx-peek-art video,.sfx-peek-art img{width:100%;height:100%;object-fit:contain}
+.sfx-peek-shape{width:64px;height:64px;background:color-mix(in srgb,var(--sfx-peek,#ff8a2a) 45%,transparent);border:2px solid var(--sfx-peek,#ff8a2a);box-sizing:border-box}
+.sfx-peek-shape.is-radius,.sfx-peek-shape.is-emanation{border-radius:50%}
+.sfx-peek-shape.is-cone{border:0;background:var(--sfx-peek,#ff8a2a);opacity:.7;clip-path:polygon(0 50%,92% 12%,100% 50%,92% 88%)}
+.sfx-peek-shape.is-line,.sfx-peek-shape.is-wall{height:12px}
+.sfx-peek-text{min-width:0;flex:1}
+.sfx-peek-name{font-weight:var(--font-semibold,600);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sfx-peek-line{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sfx-peek-swatch{margin-top:4px;width:28px;height:6px;border-radius:3px;background:var(--sfx-peek,#ff8a2a)}

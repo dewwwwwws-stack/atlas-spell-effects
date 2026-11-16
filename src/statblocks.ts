@@ -107,6 +107,8 @@ export class StatblockLinker {
     private readonly menu: (link: SpellLink, how: { statblock: HTMLElement; x: number; y: number }) => void = () => {},
     /** A statblock seen (each look): its window's token can be noted while the pointer that opened it is fresh. */
     private readonly seen: (statblock: HTMLElement) => void = () => {},
+    /** The pointer over a Cast button (its look is shown beside it), or off it (null). */
+    private readonly peek: (link: SpellLink | null, how: { statblock: HTMLElement; rect: DOMRect } | null) => void = () => {},
   ) {}
 
   start(): void {
@@ -282,6 +284,8 @@ export class StatblockLinker {
     const quiet = (e: Event) => { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); };
     b.addEventListener('pointerdown', quiet);
     b.addEventListener('mousedown', quiet);
+    b.addEventListener('pointerenter', () => { const sb = b.closest<HTMLElement>(STATBLOCK); const l = this.buttons.get(b); if (sb && l) this.peek(l, { statblock: sb, rect: b.getBoundingClientRect() }); });
+    b.addEventListener('pointerleave', () => this.peek(null, null));
     b.addEventListener('click', (e) => { const r = b.getBoundingClientRect(); open(e, r.left, r.bottom); });
     b.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { const r = b.getBoundingClientRect(); open(e, r.left, r.bottom); } });
     parent.insertBefore(b, before);

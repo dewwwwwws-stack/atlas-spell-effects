@@ -13,7 +13,7 @@ import { call, field, type AtlasAssets, type Tab, type AtlasView, type AtlasView
 import { FolderSuggest, BaseSuggest } from './suggest';
 import { SpellNames, StatblockLinker, type SpellLink } from './statblocks';
 import { areaOf, abilityEntry, targetOf, fallbackArea, describe, rangeOf, teleportOf, setRules, unitLabel, square, squares, fromFeet, type GameUnitType, type Area, type Shape, type SpellEntry, type WallBlocks } from './areas';
-import { indexFiles, indexFile, matchesFor, coloursOf, search, nearestLength, type EffectFile } from './library';
+import { indexFiles, indexFile, matchesFor, defaultFor, hintsOf, coloursOf, search, nearestLength, type EffectFile } from './library';
 import { isStored, storedFrom, writeDefaults, clearDefaults, baseFile, noteName, unitFactor, unitNow, type StoredSpell } from './storage';
 import { looksLikeSpell, spellFromNote } from './notes';
 import { lightOf, placedLights, adoptLook, lightKey, LIGHT_COLOUR, type EffectLight } from './lights';
@@ -54,6 +54,8 @@ interface Settings {
   coneAngle: number;               // a cone's angle when a spell doesn't say; 0: the game system's, from Atlas
   markCreatures: boolean;          // "In a spell" and a spell's conditions on the creatures inside it
   showRounds: boolean;             // how long each lasting spell has been up, by Atlas's initiative, beside it
+  /** Every spell's and ability's area goes through walls (each one's own choice aside). */
+  throughWalls: boolean;
   atlasAreas: boolean;             // each spell one of Atlas's own areas too (Atlas 0.15 on)
   areas: Record<string, { map: string; effect: string; mine: boolean }>; // those areas (by their Atlas id), to take away with their spells
   roundSecs: Record<string, number>; // a round's length in seconds you set, for each game system (Atlas's preset id); 0: rounds only; none: the system's own
@@ -65,7 +67,7 @@ interface Settings {
 interface Mark { map: string; from: string; token: string; cond: string; state: 'on' | 'off' | 'theirs' }
 /** Creatures hit by an instant spell (Fireball): a card of them, till you close it. */
 interface Caught { id: string; map: string; name: string; tokens: { id: string; name: string }[] }
-const DEFAULTS: Settings = { folders: '', remember: {}, abilities: {}, lasting: [], snap: true, storage: 'Spell Storage', bases: [], presets: [], jb2aFolder: 'JB2A_DnD5e', jb2aOffer: true, noteSpells: true, orphanLights: [], coneAngle: 0, artTrim: {}, showAim: false, aimLook: 'outline', markCreatures: true, showRounds: true, atlasAreas: true, areas: {}, roundSecs: {}, marks: [], caught: [], recent: [] };
+const DEFAULTS: Settings = { folders: '', remember: {}, abilities: {}, lasting: [], snap: true, storage: 'Spell Storage', bases: [], presets: [], jb2aFolder: 'JB2A_DnD5e', jb2aOffer: true, noteSpells: true, orphanLights: [], coneAngle: 0, artTrim: {}, showAim: false, aimLook: 'outline', markCreatures: true, showRounds: true, atlasAreas: true, throughWalls: false, areas: {}, roundSecs: {}, marks: [], caught: [], recent: [] };
 
 /** A spell to pick in the cast window: a saved one, or a spell note (from a Base or found in the vault). */
 export interface Choice { key: string; name: string; source: 'stored' | 'note'; entry?: SpellEntry; stored?: StoredSpell; notePath?: string; /** A creature's ability from a statblock (Fire Breath), not a spell. */ ability?: boolean }
@@ -580,7 +582,7 @@ export default class AtlasSpellEffects extends Plugin {
     const docs = new Set<Document>([document, ...this.docs()]);
     for (const d of docs) {
       if (this.linkers.has(d) || !d.body) continue;
-      const l = new StatblockLinker(d, () => this.spellNames(), (link, how) => void this.castFromStatblock(link, how), (link, how) => void this.statblockMenu(link, how), (sb) => { if (sb.closest('.atlas-statblock-preview-window')) this.tokenOfStatblock(sb); });
+      const l = new StatblockLinker(d, () => this.spellNames(), (link, how) => void this.castFromStatblock(link, how), (link, how) => void this.statblockMenu(link, how), (sb) => { if (sb.closest('.atlas-statblock-preview-window')) this.tokenOfStatblock(sb); }, (link, how) => this.peekButton(link, how));
       l.start(); this.linkers.set(d, l);
     }
     for (const [d, l] of this.linkers) if (!docs.has(d) || !d.defaultView) { l.stop(); this.linkers.delete(d); }
@@ -669,7 +671,20 @@ export default class AtlasSpellEffects extends Plugin {
     const here = tok && tab && this.mapOf(tok.tab) === this.mapOf(tab) ? tok : null;
     const who = here ? this.tokenName(here.tab, here.id) : null;
     const range = p.range && p.range > 0 ? `${p.range} ${unitLabel()}` : '';
+    this.peekButton(null, null);
+    // pressed again (its menu open, or just shut by this very press): cast straight away, its usual way
+    const key = `${link.key}|${link.name}`, last = this.sbMenu;
+    if (last && last.key === key && (last.open || Date.now() - last.hidden < 600)) {
+      this.sbMenu = null;
+      if (last.open) last.menu.hide();
+      if (!this.atlasTab()) { new Notice('Atlas Spell Effects: open an Atlas map first.'); return; }
+      this.place(p, here?.id);
+      return;
+    }
     const menu = new Menu();
+    const mine = { key, open: true, hidden: 0, menu };
+    this.sbMenu = mine;
+    menu.onHide(() => { mine.open = false; mine.hidden = Date.now(); });
     menu.addItem((i) => i.setTitle([who ?? 'No caster on the map', range].filter(Boolean).join('   ·   ')).setIcon('user').setDisabled(true));
     menu.addItem((i) => i.setTitle(castWord(p, who)).setIcon('wand-sparkles').onClick(() => {
       if (!this.atlasTab()) { new Notice('Atlas Spell Effects: open an Atlas map first.'); return; }
@@ -696,8 +711,56 @@ export default class AtlasSpellEffects extends Plugin {
         menu.addItem((i) => i.setTitle(`No one within ${p.range} ${unitLabel()}`).setIcon('crosshair').setDisabled(true));
       }
     }
-    menu.addItem((i) => i.setTitle('Open in the cast window…').setIcon('sliders-horizontal').onClick(() => { m.casterToken = tok?.id; m.open(); }));
+    menu.addItem((i) => i.setTitle('Edit look…').setIcon('palette').onClick(() => { m.casterToken = tok?.id; m.open(); }));
     menu.showAtPosition({ x: how.x, y: how.y }, how.statblock.ownerDocument);
+  }
+
+  /** The statblock button's menu last opened (pressed again: it casts). */
+  private sbMenu: { key: string; open: boolean; hidden: number; menu: Menu } | null = null;
+  private peekSeq = 0;
+
+  /**
+   * The pointer over a statblock's Cast or Use button: a small card beside it of what it will look like (its
+   * animation playing, or its area's shape in its colour), its area and look. Off it (null): gone.
+   */
+  peekButton(link: SpellLink | null, how: { statblock: HTMLElement; rect: DOMRect } | null): void {
+    const seq = ++this.peekSeq;
+    for (const d of this.docs()) d.querySelectorAll('.sfx-sb-peek').forEach((el) => el.remove());
+    document.querySelectorAll('.sfx-sb-peek').forEach((el) => el.remove());
+    if (!link || !how) return;
+    window.setTimeout(() => { void (async () => {
+      if (seq !== this.peekSeq) return;
+      const c = this.choiceOf(link); if (!c) return;
+      const m = new CastModal(this.app, this);
+      await m.pick(c);
+      if (seq !== this.peekSeq || !how.statblock.isConnected) return;
+      const v = m.view();
+      const doc = how.statblock.ownerDocument, win = doc.defaultView ?? window;
+      const card = doc.body.createDiv({ cls: 'sfx-sb-peek' });
+      const art = card.createDiv({ cls: 'sfx-peek-art' });
+      const ef = v.file ? this.files.find((f) => f.path === v.file) : undefined;
+      const tf = v.file ? this.app.vault.getAbstractFileByPath(v.file) : null;
+      const lookColour = v.look && v.look in LOOK_COLOURS ? LOOK_COLOURS[v.look as AreaLook] : v.colour;
+      if (ef?.remote) { if (ef.thumb) { const i = art.createEl('img'); i.src = ef.thumb; i.onerror = () => i.remove(); } }
+      else if (tf instanceof TFile && ef?.video) { const vid = art.createEl('video'); vid.muted = true; vid.loop = true; vid.autoplay = true; vid.src = this.app.vault.getResourcePath(tf); void vid.play()?.catch?.(() => undefined); }
+      else if (tf instanceof TFile) { const i = art.createEl('img'); i.src = this.app.vault.getResourcePath(tf); }
+      else {
+        // no animation: its area's shape, in its colour
+        const sh = art.createDiv({ cls: `sfx-peek-shape is-${v.area.target ? 'emanation' : v.area.shape}` });
+        sh.setCssProps({ '--sfx-peek': lookColour });
+      }
+      const text = card.createDiv({ cls: 'sfx-peek-text' });
+      text.createDiv({ cls: 'sfx-peek-name', text: v.name });
+      text.createDiv({ cls: 'sfx-peek-line', text: describe(v.area) + (v.area.lasting ? ' · stays' : '') });
+      const bits = [v.look && v.look in LOOK_NAMES ? `${LOOK_NAMES[v.look as AreaLook]} look` : '', ef ? ef.name.replace(/_\d+x\d+$/, '').replace(/_/g, ' ') : 'No animation (drawn as its area)'].filter(Boolean);
+      text.createDiv({ cls: 'sfx-peek-line sfx-muted', text: bits.join(' · ') });
+      const sw = text.createDiv({ cls: 'sfx-peek-swatch' }); sw.setCssProps({ '--sfx-peek': lookColour });
+      // beside the button, kept on screen
+      const w = 260, h = 96;
+      const left = Math.max(8, Math.min(how.rect.right + 10, win.innerWidth - w - 8));
+      const top = Math.max(8, Math.min(how.rect.top - 8, win.innerHeight - h - 8));
+      card.setCssStyles({ left: `${Math.round(left)}px`, top: `${Math.round(how.rect.right + 10 + w > win.innerWidth ? how.rect.bottom + 8 : top)}px` });
+    })(); }, 220);
   }
 
   /** A spell's animation played once on its caster, at no one. */
@@ -1373,7 +1436,8 @@ export default class AtlasSpellEffects extends Plugin {
         if (!want) continue;
         if (this.fitCone(e, t)) changed = true;
         // through walls, the GM's alone: as chosen in the cast window
-        const opts = { walls: e.throughWalls ? false : undefined, hidden: e.hidden ? true : undefined };
+        const pierce = !!e.throughWalls || this.settings.throughWalls;
+        const opts = { walls: pierce ? false : undefined, hidden: e.hidden ? true : undefined };
         const optsKey = JSON.stringify(opts);
         const light = this.areaLightOf(t, e, want);
         const lightKey = JSON.stringify(light);
@@ -1387,7 +1451,7 @@ export default class AtlasSpellEffects extends Plugin {
         }
         if (!e.measure) {
           const made: { id: string | null } = { id: null };
-          this.untracked(t, () => { made.id = st.addMeasure!({ ...want, ...(e.throughWalls ? { walls: false } : {}), ...(e.hidden ? { hidden: true } : {}), ...(light ? { light } : {}), ...(look ? { effect: look } : {}) }); });
+          this.untracked(t, () => { made.id = st.addMeasure!({ ...want, ...(pierce ? { walls: false } : {}), ...(e.hidden ? { hidden: true } : {}), ...(light ? { light } : {}), ...(look ? { effect: look } : {}) }); });
           const id = made.id;
           if (typeof id === 'string' && id) {
             e.measure = id; this.settings.areas[id] = { map, effect: e.id, mine: true };
@@ -3102,7 +3166,7 @@ class CastModal extends Modal {
       this.area = { shape: r?.shape ?? a?.shape ?? 'radius', size: r?.size ?? a?.size ?? squares(4), ...((r?.width ?? a?.width) ? { width: r?.width ?? a?.width } : {}), ...(r?.angle ? { angle: r.angle } : {}), from: r?.from ?? a?.from ?? 'point', lasting: r?.lasting ?? a?.lasting ?? false,
         ...((r?.ring ?? a?.ring) ? { ring: r?.ring ?? a?.ring } : {}), ...(r?.round ? { round: true } : {}), ...((r?.blocks ?? a?.blocks) ? { blocks: r?.blocks ?? a?.blocks } : {}), ...((r ? r.target : a?.target) ? { target: (r ? r.target : a?.target)! } : {}), ...((r ? r.self : a?.self) ? { self: true } : {}) };
       if (this.area.target === 'on' && !r) this.area.size = a?.size ?? 0;
-      this.file = r ? r.file : matchesFor(c.name, this.area.shape, P.files, 1)[0]?.file.path;
+      this.file = r ? r.file : defaultFor(c.name, this.area.shape, P.files, hintsOf(entry?.descFull, c.name))?.path;
       if (r?.colour) this.colour = r.colour;
       this.colour2 = r?.colour2; this.alpha = r?.alpha;
       this.attach = false;
@@ -3357,6 +3421,11 @@ class CastModal extends Modal {
     };
   }
 
+  /** What's set up now, to be shown (nothing fetched, nothing remembered). */
+  view(): { name: string; area: Area; file: string | undefined; colour: string; look: string } {
+    return { name: this.name, area: { ...this.area }, file: this.file, colour: this.colour, look: this.look };
+  }
+
   /** The choices made here, to be remembered. */
   memo(): Remembered {
     return { unit: unitNow(),...(this.file ? { file: this.file } : {}), colour: this.colour, ...(this.colour2 ? { colour2: this.colour2 } : {}), ...(this.alpha ? { alpha: this.alpha } : {}), shape: this.area.shape, size: this.area.size, ...(this.area.width ? { width: this.area.width } : {}), ...(this.area.angle ? { angle: this.area.angle } : {}), from: this.area.from, lasting: this.area.lasting, light: this.light, ...(this.area.ring ? { ring: this.area.ring } : {}), ...(this.area.round ? { round: true } : {}), ...(this.area.blocks ? { blocks: this.area.blocks } : {}), ...(this.area.target ? { target: this.area.target } : {}), ...(this.area.self ? { self: true } : {}), conditions: [...this.conditions], teleport: this.teleport, look: this.look, atlas: { ...this.atlas } };
@@ -3395,7 +3464,8 @@ class CastModal extends Modal {
       });
     new Setting(box).setName('Light').setDesc('The spell’s (its text, or the Light above), the one Atlas gives its look (Fire flickers, Radiance shines, Shadow darkens), or none.')
       .addDropdown((d) => d.addOptions({ spell: 'The spell’s', atlas: 'Atlas’s for its look', none: 'None' }).setValue(this.atlas.areaLight ?? 'spell').onChange((v) => set('areaLight', v === 'atlas' || v === 'none' ? v : undefined)));
-    new Setting(box).setName('Stops at walls').addToggle((tg) => tg.setValue(!this.atlas.throughWalls).onChange((v) => set('throughWalls', !v || undefined)));
+    if (this.plugin.settings.throughWalls) new Setting(box).setName('Stops at walls').setDesc('Off for every area: “Areas go through walls” is on in the add-on’s settings.').addToggle((tg) => tg.setValue(false).setDisabled(true));
+    else new Setting(box).setName('Stops at walls').addToggle((tg) => tg.setValue(!this.atlas.throughWalls).onChange((v) => set('throughWalls', !v || undefined)));
     new Setting(box).setName('Players see it').addToggle((tg) => tg.setValue(!this.atlas.hidden).onChange((v) => set('hidden', !v || undefined)));
     if (toolShapeOf(this.area)) new Setting(box).setName('Place with Atlas’s Measure tool').setDesc('Draw it with Atlas’s own tool (its snapping, its cone) instead of aiming here.')
       .addToggle((tg) => tg.setValue(!!this.atlas.tool).onChange((v) => set('tool', v || undefined)));
@@ -3655,6 +3725,7 @@ class EffectSettings extends PluginSettingTab {
     map.push({ name: 'Snap to grid', desc: 'Spheres, cubes and wall corners land on the nearest grid corner, as the rules place them (Alt: the other way, once).', render: (st) => { st.addToggle((t) => t.setValue(s.snap).onChange((v) => { void (async () => { s.snap = v; await p.save(); })(); })); } });
     map.push(toggle('Spell AoE player preview', 'While you place a spell, the players’ screen shows its area’s outline, in its colours, so they can see what it will cover before you cast it. Also in the ✨ button’s menu.', () => s.showAim, (v) => { s.showAim = v; }));
     map.push(toggle('Spells as Atlas areas', 'Each spell you cast is one of Atlas’s own areas too (Atlas 0.15 or later): Atlas draws it (with its Fire, Frost… look), lights it, counts the creatures in it as far as walls let it, saves it with the scene and shows it to online players. The animation plays over it. Change or delete the area in Atlas and the spell follows.', () => s.atlasAreas, (v) => { s.atlasAreas = v; }));
+    map.push(toggle('Areas go through walls', 'Every spell’s and ability’s area ignores walls: it’s drawn at its full size and counts the creatures behind them (a dragon’s breath through a pillar). Off: an area stops at walls, as Atlas’s do, unless “Stops at walls” is turned off for that spell in the cast window. Needs “Spells as Atlas areas”.', () => s.throughWalls, (v) => { s.throughWalls = v; }));
     map.push(toggle('Mark creatures in spells', 'Creatures inside a lasting spell get Atlas’s “In a spell” condition (added to your collection’s conditions), and the conditions the spell gives (Silence: Deafened), while they’re in it. Creatures hit by an instant spell (Fireball) are listed on a card beside the map till you close it. Only what the add-on put on is taken off again.', () => s.markCreatures, (v) => { s.markCreatures = v; }));
     map.push(toggle('Spell turn tracker', 'During a fight in Atlas’s initiative tracker, each lasting spell shows how many rounds it has been up beside it (“Round 3”), on your screen only. Spells never end on their own.', () => s.showRounds, (v) => { s.showRounds = v; }));
     // a round's length: the game system's, as you set it (game systems differ; some have none)

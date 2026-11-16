@@ -292,7 +292,13 @@ If it can't tell, it asks you to click the caster's token first.
   far away they are (*Goblin · 25 ft*). Pick one and it's cast on them at once, from the caster, no clicking on
   the map. (More than twelve: the rest are clicked on the map.)
 - **Cast with no target**: its animation once on the caster;
-- **Open in the cast window…**, with that spell picked, so you can change it first.
+- **Edit look…**: the cast window, with that spell or ability picked, to change its animation, colours and so on
+  (and save them).
+
+Press the button **a second time** (instead of picking from its menu) and it's cast straight away in its usual way:
+a dragon's breath to aim from the dragon, a blast to click where it goes. **Point at the button** and a small card
+beside it shows what it will look like: its animation playing (or its area's shape in its colour), its area and
+its look.
 
 The buttons only sit beside the statblock's text; nothing in it is changed. Where Atlas draws a statblock's text
 itself rather than as markdown, the name is underlined instead and a click on it casts it (Shift-click: the cast
@@ -319,7 +325,9 @@ a dragon's Fire Breath (*60-foot Cone*), a beholder's Antimagic Cone, *a 30-foot
 feet of the dragon*. The button works like Cast: aim or place it from the creature's token, or open it in the cast
 window to pick its animation and save it. What's read from the ability's own text in the statblock:
 - its shape and size, and how far away it can be put (*within 120 feet*, *range 120 ft.*);
-- its look, from its damage (Fire, Cold, Lightning, Radiant, Necrotic);
+- its look and its first animation, from its damage, as your game system writes it: *Fire damage*, Pathfinder's
+  *electricity* and *void*, Draw Steel's *holy* and *corruption*; or, where damage has no kind (Old-School
+  Essentials, Shadowdark, Cairn…), from the words round it (*a cone of fire*, *Frost Breath*);
 - whether it stays on the map (*lasts for 1 minute*, *Until the start of its next turn, that area…*);
 - a list of effects in one ability (*1: Clinging Flames. … 2: Freezing Waves. …*): a button for each.
 
@@ -407,6 +415,10 @@ All of it is kept with a saved spell (`effect-draw`, `effect-area-light`, `effec
 
 A burst's animation (Fireball's explosion) is grown so the blast itself reaches the edge of its circle; JB2A's
 art leaves empty room round it. Stray sparks may go a little past the edge.
+
+**Walls:** Atlas stops an area at walls. To have one spell go through them, turn off *Stops at walls* for it in
+the cast window. To have every spell's and ability's area go through them, turn on **Areas go through walls** in
+the add-on's settings.
 
 A cone is drawn the way Atlas draws cones (your game's cone angle, with a rounded end unless its rules make cones
 flat), so where you aim it is exactly where its area lands.

@@ -1,10 +1,12 @@
 ## New
 
-- **Use buttons for abilities that aren't spells.** Any ability in a statblock whose text names an area (a dragon's Fire Breath, a beholder's Antimagic Cone, an aura, a blast at a point) gets a **Use** button. It works like Cast: aim or place it from the creature's token, or open it in the cast window. Its shape, size, range, look and whether it lasts are read from the ability's own text.
-- An ability that lists several effects (*1: Clinging Flames… 2: Freezing Waves…*) gets a button for each.
-- **Save an ability's look.** Open an ability in the cast window and press **Save**. It's kept as an ability, not a spell: no spell note, and it isn't in your spell lists. Every statblock with an ability of that name then uses what you saved, each with its own shape and size.
+- **Areas go through walls** (Settings → Spell Effects). Turn it on and every spell's and ability's area ignores walls: drawn at its full size, counting the creatures behind them. Off (as before), an area stops at walls unless *Stops at walls* is turned off for that spell in the cast window.
+
+- **Press a Cast or Use button twice to cast straight away.** The first press opens its menu as before; a second press casts it the usual way (a breath to aim from the dragon, a blast to click where it goes).
+- **Edit look…** in the button's menu opens the cast window to change the animation and colours (it replaces *Open in the cast window…*).
+- **Point at a Cast or Use button to see what it will look like:** a small card with its animation, its area and its look.
 
 ## Fixes
 
-- **Dragging a token with an aura no longer grabs the aura's light.** The light's marker sat on top of the token and took the click. The token is now what you pick up. In Atlas's lighting tool the light can still be clicked as usual.
-- A spell's look now comes from its first damage type that has one (*Bludgeoning plus Cold*: Frost).
+- **Cones and lines no longer all start with Cone of Cold (or a lightning bolt).** A spell or ability with no animation named after it now starts with one that fits it: Fire Breath gets the fire breath, as a cone or a line to match. One with nothing to go by (Sleep Breath) starts with no animation, just its area; you can still pick one in the cast window.
+- **Looks and animations are picked for every game system Atlas supports,** not just D&D. Pathfinder's electricity, sonic, vitality and void, and Draw Steel's holy and corruption, are read as lightning, thunder, radiant and necrotic. In systems where damage has no kind (Old-School Essentials, Shadowdark, Cairn, Cyberpunk RED, Daggerheart, Call of Cthulhu), the words round it are read: *a cone of fire*, *a cloud of chlorine gas*, *Frost Breath*.
