@@ -33,7 +33,7 @@ export interface Area {
   lasting: boolean;
 }
 
-export interface SpellEntry { key: string; name: string; range?: string; duration?: string; descFull?: string; desc?: string; level?: number; school?: string }
+export interface SpellEntry { key: string; name: string; range?: string; duration?: string; descFull?: string; desc?: string; level?: number; school?: string; /** A creature's ability read from its statblock (Fire Breath), not a spell. */ ability?: boolean }
 
 const num = (s: string | undefined): number => { const n = Number(s); return Number.isFinite(n) && n > 0 ? n : 0; };
 
@@ -157,7 +157,8 @@ export function areaOf(spell: SpellEntry): Area | null {
   look(/(\d+)-foot-wide,?\s+(\d+)-foot-long\s+Line/i, (m) => ({ shape: 'line', size: num(m[2]), width: num(m[1]), from: 'caster', lasting: last }));
   look(/\bLine\b[^.]*?(\d+) feet long and (\d+) feet wide/i, (m) => ({ shape: 'line', size: num(m[1]), width: num(m[2]), from: 'caster', lasting: last }));
   look(/(\d+)-foot Cone/i, (m) => ({ shape: 'cone', size: num(m[1]), from: 'caster', lasting: last }));
-  look(/(\d+)-foot Emanation/i, (m) => ({ shape: 'emanation', size: num(m[1]), from: 'caster', lasting: last }));
+  // (an ability's "Emanation originating from and including the target": round the creature it's used on)
+  look(/(\d+)-foot Emanation(\s+originating from (?:and including )?(?:the|that|a) (?:target|creature)\b)?/i, (m) => ({ shape: 'emanation', size: num(m[1]), from: 'caster', lasting: last, ...(spell.ability && m[2] ? { target: 'on' as const } : {}) }));
   look(/(\d+)-foot[- ]radius/i, (m) => ({ shape: 'radius', size: num(m[1]), from: self ? 'caster' : 'point', lasting: last }));
   look(/(\d+)-foot Cube/i, (m) => ({ shape: 'cube', size: num(m[1]), from: self || /Cube originating from you/i.test(text) ? 'caster' : 'point', lasting: last }));
   // Walls: "a wall up to 60 feet long, 20 feet high, and 1 foot thick, or a ringed wall up to 20 feet in diameter",
@@ -180,6 +181,9 @@ export function areaOf(spell: SpellEntry): Area | null {
   found.sort((x, y) => x.at - y.at);
   if (found.length && found[0].area.size > 0) return found[0].area;
   let m: RegExpExecArray | null;
+  // an ability with no shape named: "each creature within 120 feet of the dragon"
+  if (spell.ability && (m = new RegExp(String.raw`\b(?:each|every|all|any)\b[^.]*?\bwithin (\d+(?:\.\d+)?)\s*-?\s*` + UNIT + String.raw`\s+of\s+(?:the|it|its|him|her|them|that)\b`, 'i').exec(text)))
+    return { shape: 'emanation', size: toGame(num(m[1]), m[2]), from: 'caster', lasting: last };
   // the sheet's own short form when the text has none: "S:15-ft rad", "S:15ft cone", "S:15ft cube", "S:60-ft line"
   if ((m = /^S:(\d+)-?ft\s*(rad|cone|cube|line)/i.exec(range))) {
     const k = m[2].toLowerCase();
@@ -261,4 +265,25 @@ export function describe(a: Area): string {
     case 'line': return `${n(a.size)} × ${n(a.width ?? square())} ${u} line`;
     case 'wall': return a.round && a.ring ? `${n(a.ring)} ${u} ring wall` : `${n(a.size)} ${u} wall`;
   }
+}
+
+/**
+ * A creature's ability with an area, from its own text in its statblock (nothing is looked up): Fire Breath's
+ * "60-foot Cone", "a 30-foot-radius Sphere centered on a point … within 120 feet". Null when its text names no
+ * area. It lasts when its text says so ("lasts for 1 minute", "Until the start of its next turn, that area…").
+ */
+export function abilityEntry(name: string, text: string): SpellEntry | null {
+  const t = text.replace(/\s+/g, ' ').trim();
+  const nm = name.replace(/\s+/g, ' ').trim();
+  if (!t || !nm) return null;
+  const within = new RegExp(String.raw`\b(?:point|space|location|ground|creature|target)\b[^.]*?\bwithin (\d+)\s*-?\s*` + UNIT, 'i').exec(t)
+    ?? new RegExp(String.raw`\brange (\d+)(?:\/\d+)?\s*` + UNIT, 'i').exec(t);
+  const last = /\blasts? (?:for|until)\b|\b(?:until|during)\b[^.]*\b(?:that|the|this) (?:area|movement|emanation|cone|sphere|cube|cylinder|line|cloud|zone|aura)\b/i.test(t);
+  const e: SpellEntry = { key: '', name: nm, range: '', duration: last ? 'Lasting' : 'Instantaneous', descFull: t, ability: true };
+  const a = areaOf(e);
+  if (!a || !(a.size > 0)) return null;
+  // how far away it can be put: a point's (not "each creature within 120 feet of it", which is its area)
+  if (within && (a.from === 'point' || a.target) && toGame(num(within[1]), within[2]) !== a.size) e.range = `${within[1]} ${within[2]}`;
+  e.key = `ability:${nm.toLowerCase()}:${a.shape}:${a.size}`;
+  return e;
 }

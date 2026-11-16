@@ -12,7 +12,7 @@ import { IN_SPELL_ID, IN_SPELL, ROUND_SECS, idsOf, upFor, timeOf, secondsOf, spe
 import { call, field, type AtlasAssets, type Tab, type AtlasView, type AtlasViewport, type AtlasState, type CanvasNode, type PlayersView, type Measurement } from './atlas';
 import { FolderSuggest, BaseSuggest } from './suggest';
 import { SpellNames, StatblockLinker, type SpellLink } from './statblocks';
-import { areaOf, targetOf, fallbackArea, describe, rangeOf, teleportOf, setRules, unitLabel, square, squares, fromFeet, type GameUnitType, type Area, type Shape, type SpellEntry, type WallBlocks } from './areas';
+import { areaOf, abilityEntry, targetOf, fallbackArea, describe, rangeOf, teleportOf, setRules, unitLabel, square, squares, fromFeet, type GameUnitType, type Area, type Shape, type SpellEntry, type WallBlocks } from './areas';
 import { indexFiles, indexFile, matchesFor, coloursOf, search, nearestLength, type EffectFile } from './library';
 import { isStored, storedFrom, writeDefaults, clearDefaults, baseFile, noteName, unitFactor, unitNow, type StoredSpell } from './storage';
 import { looksLikeSpell, spellFromNote } from './notes';
@@ -37,6 +37,8 @@ interface Remembered { atlas?: AtlasChoices; look?: string; teleport?: number; c
 interface Settings {
   folders: string;                 // vault folders with effect files, comma-separated; '' = any folder named like JB2A or "Spell Effects"
   remember: Record<string, Remembered>;
+  /** Saved abilities (not spells), by name: how every statblock's Fire Breath looks. Their shape and size come from each statblock's own text. */
+  abilities: Record<string, Remembered>;
   lasting: Effect[];               // lasting effects, kept between sessions
   snap: boolean;
   storage: string;                 // the folder for new spell notes (effects of your own)
@@ -63,10 +65,10 @@ interface Settings {
 interface Mark { map: string; from: string; token: string; cond: string; state: 'on' | 'off' | 'theirs' }
 /** Creatures hit by an instant spell (Fireball): a card of them, till you close it. */
 interface Caught { id: string; map: string; name: string; tokens: { id: string; name: string }[] }
-const DEFAULTS: Settings = { folders: '', remember: {}, lasting: [], snap: true, storage: 'Spell Storage', bases: [], presets: [], jb2aFolder: 'JB2A_DnD5e', jb2aOffer: true, noteSpells: true, orphanLights: [], coneAngle: 0, artTrim: {}, showAim: false, aimLook: 'outline', markCreatures: true, showRounds: true, atlasAreas: true, areas: {}, roundSecs: {}, marks: [], caught: [], recent: [] };
+const DEFAULTS: Settings = { folders: '', remember: {}, abilities: {}, lasting: [], snap: true, storage: 'Spell Storage', bases: [], presets: [], jb2aFolder: 'JB2A_DnD5e', jb2aOffer: true, noteSpells: true, orphanLights: [], coneAngle: 0, artTrim: {}, showAim: false, aimLook: 'outline', markCreatures: true, showRounds: true, atlasAreas: true, areas: {}, roundSecs: {}, marks: [], caught: [], recent: [] };
 
 /** A spell to pick in the cast window: a saved one, or a spell note (from a Base or found in the vault). */
-export interface Choice { key: string; name: string; source: 'stored' | 'note'; entry?: SpellEntry; stored?: StoredSpell; notePath?: string }
+export interface Choice { key: string; name: string; source: 'stored' | 'note'; entry?: SpellEntry; stored?: StoredSpell; notePath?: string; /** A creature's ability from a statblock (Fire Breath), not a spell. */ ability?: boolean }
 
 
 /** What is being cast: the area and look, before it is placed. */
@@ -219,6 +221,7 @@ export default class AtlasSpellEffects extends Plugin {
     const down = (ev: PointerEvent) => {
       if (this.placing || ev.button !== 0) return;
       const at = tabAt(ev); if (!at) return;
+      this.dodgeLights(at.t, at.p);
       // the picked effect's controls: the size badge's − and +, or a control to drag (turn, size, a wall corner)
       const target = ev.target as HTMLElement | null;
       const sel = this.selected?.ids.length === 1 ? this.effects.find((e) => e.id === this.selected!.ids[0]) : null;
@@ -626,10 +629,22 @@ export default class AtlasSpellEffects extends Plugin {
     return t ?? null;
   }
 
+  /**
+   * What a statblock's button casts: the spell, or (an ability: Fire Breath) its area read from its own text there.
+   * (An ability is no spell: it's in no spell list, and saving it keeps a preset by its name, not a spell note.)
+   */
+  private choiceOf(link: SpellLink): Choice | null {
+    if (link.ability === undefined) return this.choices().find((x) => x.key === link.key) ?? null;
+    const entry = abilityEntry(link.name, link.ability);
+    return entry ? { key: entry.key, name: link.name, source: 'note', entry, ability: true } : null;
+  }
+  /** A saved ability's key: its name, any case. */
+  abilityKey(name: string): string { return name.replace(/\s+/g, ' ').trim().toLowerCase(); }
+
   /** A spell clicked in a statblock: cast it (its creature as the caster), or Shift: open it in the cast window. */
   async castFromStatblock(link: SpellLink, how: { shift: boolean; statblock: HTMLElement }): Promise<void> {
     const tok = this.tokenOfStatblock(how.statblock);
-    const c = this.choices().find((x) => x.key === link.key) ?? null;
+    const c = this.choiceOf(link);
     if (!c) return;
     const m = new CastModal(this.app, this);
     await m.pick(c);
@@ -645,7 +660,7 @@ export default class AtlasSpellEffects extends Plugin {
    */
   async statblockMenu(link: SpellLink, how: { statblock: HTMLElement; x: number; y: number }): Promise<void> {
     const tok = this.tokenOfStatblock(how.statblock);
-    const c = this.choices().find((x) => x.key === link.key) ?? null;
+    const c = this.choiceOf(link);
     if (!c) return;
     const m = new CastModal(this.app, this);
     await m.pick(c);
@@ -1829,6 +1844,37 @@ export default class AtlasSpellEffects extends Plugin {
   private untracked(t: Tab, fn: () => void): void {
     const h = t.store?.temporal?.getState?.();
     if (h && typeof h.untracked === 'function') h.untracked(fn); else fn();
+  }
+
+  /**
+   * A press on a token that carries a spell's light (an aura's, at its middle): the token is what's pressed, not the
+   * light's marker on top of it (Atlas would take the marker, and drag the light off its spell). The light steps
+   * aside while Atlas looks at the press, and is back at once. Not in Atlas's lighting tool, where lights are worked
+   * on: there the marker is pressed as ever.
+   */
+  private dodgeLights(t: Tab, p: Point): void {
+    const st = t.store.getState?.(); if (!st || typeof st.updateLight !== 'function' || st.activeTool === 'wall') return;
+    const tok = this.tokenAt(t, p); if (!tok) return;
+    const map = this.mapOf(t), lights = st.objects?.lights ?? {};
+    const at = this.tokenOf(t, tok.id); if (!at) return;
+    const back: { id: string; x: number; y: number }[] = [];
+    for (const e of this.effects) {
+      if (e.map !== map || e.token !== tok.id) continue;
+      for (const id of e.lightIds ?? []) {
+        const l = lights[id];
+        if (l && Math.hypot(l.x - at.x, l.y - at.y) <= at.r + 1) back.push({ id, x: l.x, y: l.y });
+      }
+    }
+    if (!back.length) return;
+    this.untracked(t, () => { for (const b of back) st.updateLight(b.id, { x: b.x + 1e7, y: b.y + 1e7 }); });
+    const restore = () => {
+      const now = t.store.getState?.(); if (!now) return;
+      const have = back.filter((b) => { const l = now.objects?.lights?.[b.id]; return !!l && l.x > 5e6; });
+      // (where its token is by now: a press that already moved it)
+      if (have.length) this.untracked(t, () => { for (const b of have) now.updateLight(b.id, { x: b.x, y: b.y }); });
+      this.wake();
+    };
+    window.setTimeout(restore, 0);
   }
 
   /** Brings each effect's Atlas light up to date: made, moved, changed, removed. */
@@ -3039,8 +3085,19 @@ class CastModal extends Modal {
       this.saved = `Saved in ${st.path}`;
     } else if (c) {
       const entry = await P.noteEntry(c);
-      const r = entry ? inUnitsNow(P.settings.remember[entry.key]) : undefined;
       const a = entry ? areaOf(entry) ?? targetOf(entry) ?? fallbackArea(entry) : null;
+      // an ability: its saved preset (by name, for every statblock), with this statblock's own shape and size
+      const preset = c.ability ? P.settings.abilities[P.abilityKey(c.name)] : undefined;
+      let r = entry ? inUnitsNow(preset ?? P.settings.remember[entry.key]) : undefined;
+      if (preset && r && a) {
+        const same = r.shape === a.shape;
+        r = { ...r, shape: a.shape, size: a.size, from: a.from };
+        delete r.width; delete r.ring; delete r.round; delete r.target; delete r.self;
+        if (!same) { delete r.angle; delete r.blocks; }
+        if (a.target) r.target = a.target;
+        if (a.self) r.self = true;
+      }
+      if (preset) this.saved = 'Saved ability';
       this.name = c.name;
       this.area = { shape: r?.shape ?? a?.shape ?? 'radius', size: r?.size ?? a?.size ?? squares(4), ...((r?.width ?? a?.width) ? { width: r?.width ?? a?.width } : {}), ...(r?.angle ? { angle: r.angle } : {}), from: r?.from ?? a?.from ?? 'point', lasting: r?.lasting ?? a?.lasting ?? false,
         ...((r?.ring ?? a?.ring) ? { ring: r?.ring ?? a?.ring } : {}), ...(r?.round ? { round: true } : {}), ...((r?.blocks ?? a?.blocks) ? { blocks: r?.blocks ?? a?.blocks } : {}), ...((r ? r.target : a?.target) ? { target: (r ? r.target : a?.target)! } : {}), ...((r ? r.self : a?.self) ? { self: true } : {}) };
@@ -3131,7 +3188,7 @@ class CastModal extends Modal {
     if (this.choice) ht.createEl('h3', { text: this.name });
     else { const n = ht.createEl('input', { type: 'text', value: this.name, placeholder: 'Name' }); n.oninput = () => { this.name = n.value || 'Effect'; }; }
     const acts = head.createDiv({ cls: 'sfx-head-actions' });
-    ht.createSpan({ cls: 'sfx-chip', text: this.choice?.source === 'stored' ? 'Saved' : this.choice?.source === 'note' ? 'Spell note' : 'Your own effect' });
+    ht.createSpan({ cls: 'sfx-chip', text: this.choice?.ability ? (P.settings.abilities[P.abilityKey(this.name)] ? 'Saved ability' : 'Ability') : this.choice?.source === 'stored' ? 'Saved' : this.choice?.source === 'note' ? 'Spell note' : 'Your own effect' });
 
     // the settings scroll; the colour and the buttons stay in view below them
     const body = pane.createDiv({ cls: 'sfx-body' });
@@ -3266,13 +3323,28 @@ class CastModal extends Modal {
       mc.onclick = () => { void keep(mc, { name: st.name, stored: st }, !st.menu); };
       acts.prepend(mc);
     }
-    const sp = foot.createEl('button', { text: 'Save as new…' });
+    if (this.choice?.ability) {
+      // an ability (not a spell): a preset by its name, kept with the add-on's settings, for every statblock that has it
+      const k = P.abilityKey(this.name);
+      if (P.settings.abilities[k]) {
+        const del = acts.createEl('button', { cls: 'clickable-icon sfx-icon-btn sfx-danger', attr: { 'aria-label': 'Delete saved ability' } }); setIcon(del, 'trash-2');
+        del.title = `Deletes what’s saved for ${this.name}; it’s read from each statblock’s text again`;
+        del.onclick = () => new ConfirmModal(this.app, `Delete “${this.name}”?`, 'Its saved animation, colours and choices go. The ability stays in its statblocks, read from their text.', 'Delete', async () => {
+          delete P.settings.abilities[k]; delete P.settings.remember[this.choice?.entry?.key ?? ''];
+          await P.save(); const c = this.choice; await this.pick(c); this.saved = `Deleted “${this.name}”`; this.render();
+        }).open();
+      }
+      const store = foot.createEl('button', { text: P.settings.abilities[k] ? 'Save changes' : 'Save' });
+      store.title = `From now on, ${this.name} looks like this in every statblock that has it (its shape and size still come from each statblock). Saved as an ability, not a spell.`;
+      store.onclick = async () => { P.settings.abilities[k] = this.memo(); await P.save(); this.saved = 'Saved ability'; this.render(); };
+    }
+    const sp = this.choice?.ability ? createEl('button') : foot.createEl('button', { text: 'Save as new…' });
     sp.title = `Keeps all of this as a spell of its own, under a new name (a note in ${P.storageFolder()}): a blue Fireball, a small Darkness…`;
     sp.onclick = () => new NameModal(this.app, this.choice ? `${this.name} (${describe(this.area)})` : this.name, async (name) => {
       await keep(sp, { name, ...(this.choice?.entry ? { entry: this.choice.entry } : {}) }, true);
     }).open();
     const target = st?.path ?? this.choice?.notePath;
-    const store = foot.createEl('button', { text: st ? 'Save changes' : 'Save' });
+    const store = this.choice?.ability ? createEl('button') : foot.createEl('button', { text: st ? 'Save changes' : 'Save' });
     store.title = target ? `From now on, ${this.name} is cast like this (kept in ${target}, as its effect-… properties)` : `Keeps this as a spell of your own: a note in ${P.storageFolder()}`;
     store.onclick = () => { void keep(store, { name: this.name, ...(st ? { stored: st } : {}), ...(this.choice?.entry ? { entry: this.choice.entry } : {}), ...(this.choice?.notePath ? { notePath: this.choice.notePath } : {}) }, st ? st.menu : !this.choice); };
     const go = foot.createEl('button', { cls: 'mod-cta', text: 'Place on the map' });
@@ -3285,13 +3357,18 @@ class CastModal extends Modal {
     };
   }
 
+  /** The choices made here, to be remembered. */
+  memo(): Remembered {
+    return { unit: unitNow(),...(this.file ? { file: this.file } : {}), colour: this.colour, ...(this.colour2 ? { colour2: this.colour2 } : {}), ...(this.alpha ? { alpha: this.alpha } : {}), shape: this.area.shape, size: this.area.size, ...(this.area.width ? { width: this.area.width } : {}), ...(this.area.angle ? { angle: this.area.angle } : {}), from: this.area.from, lasting: this.area.lasting, light: this.light, ...(this.area.ring ? { ring: this.area.ring } : {}), ...(this.area.round ? { round: true } : {}), ...(this.area.blocks ? { blocks: this.area.blocks } : {}), ...(this.area.target ? { target: this.area.target } : {}), ...(this.area.self ? { self: true } : {}), conditions: [...this.conditions], teleport: this.teleport, look: this.look, atlas: { ...this.atlas } };
+  }
+
   /** What is set up now, ready to place (its animation fetched first; a spell's choices remembered). */
   async pending(): Promise<Pending> {
       const P = this.plugin;
       if (!(await P.ensureFile(this.file))) this.file = undefined;
       P.indexVault();
       const key = this.choice?.entry?.key ?? this.choice?.key ?? 'effect';
-      if (this.choice && !this.choice.stored) P.remember(key, { unit: unitNow(), ...(this.file ? { file: this.file } : {}), colour: this.colour, ...(this.colour2 ? { colour2: this.colour2 } : {}), ...(this.alpha ? { alpha: this.alpha } : {}), shape: this.area.shape, size: this.area.size, ...(this.area.width ? { width: this.area.width } : {}), ...(this.area.angle ? { angle: this.area.angle } : {}), from: this.area.from, lasting: this.area.lasting, light: this.light, ...(this.area.ring ? { ring: this.area.ring } : {}), ...(this.area.round ? { round: true } : {}), ...(this.area.blocks ? { blocks: this.area.blocks } : {}), ...(this.area.target ? { target: this.area.target } : {}), ...(this.area.self ? { self: true } : {}), conditions: [...this.conditions], teleport: this.teleport, look: this.look, atlas: { ...this.atlas } });
+      if (this.choice && !this.choice.stored) P.remember(key, this.memo());
       const range = this.range;
       return { name: this.name, key, ...(range ? { range } : {}), ...(this.conditions.length && this.area.target !== 'bolt' ? { conditions: [...this.conditions] } : {}), area: { ...this.area }, ...(this.file ? { file: this.file } : {}), colour: this.colour, ...(this.colour2 ? { colour2: this.colour2 } : {}), ...(this.alpha ? { alpha: this.alpha } : {}), ...(this.attach ? { attach: true } : {}), ...(this.light ? { light: { ...this.light } } : {}), ...(this.teleport > 0 ? { teleport: this.teleport } : {}), ...(this.look ? { look: this.look } : {}), ...(Object.keys(this.atlas).length ? { atlas: { ...this.atlas } } : {}) };
   }

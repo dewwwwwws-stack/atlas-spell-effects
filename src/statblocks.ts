@@ -5,8 +5,10 @@
 // CSS Custom Highlight API), and a click on one casts it. A statblock opened from a token on the map knows its
 // token: that creature is the caster.
 
+import { abilityEntry } from './areas';
+
 /** A spell a name in a statblock stands for. */
-export interface SpellLink { key: string; name: string }
+export interface SpellLink { key: string; name: string; /** A creature's ability, not a spell: its own text in the statblock. */ ability?: string }
 
 const norm = (s: string): string => s.toLowerCase().replace(/[’']/g, "'").replace(/\s+/g, ' ').trim();
 const bare = (s: string): string => norm(s.replace(/\([^)]*\)/g, '').replace(/[\s.:;,*]+$/g, ''));
@@ -137,6 +139,12 @@ export class StatblockLinker {
   /** Looks again soon (a statblock opened, or redrew itself). */
   soon(): void { window.clearTimeout(this.timer); this.timer = window.setTimeout(() => this.scan(), 120); }
 
+  /** The statblocks on the page: the outermost of nested ones (never the page itself). */
+  private roots(): HTMLElement[] {
+    const real = [...this.doc.querySelectorAll<HTMLElement>(STATBLOCK)].filter((el) => el !== this.doc.body && el !== this.doc.documentElement);
+    return real.filter((el) => !real.some((o) => o !== el && o.contains(el)));
+  }
+
   /** Finds the spell names in every statblock and underlines them. */
   scan(): void {
     const names = this.names();
@@ -209,6 +217,7 @@ export class StatblockLinker {
         if (!list) left.push(h); else if (list instanceof HTMLElement) lists.add(list);
       }
       for (const l of lists) this.columns(l);
+      this.abilities(this.roots());
     } finally { this.obs?.takeRecords(); this.watch(); }
     this.hits = left;
     hits = left;
@@ -248,12 +257,23 @@ export class StatblockLinker {
     const mine = (el: Node | null): el is Element => el instanceof Element && el.classList.contains(CAST_BTN) && this.buttons.get(el)?.key === h.link.key;
     if (mine(prev)) return list ?? true;
     const parent = before.parentElement; if (!parent) return false;
+    const b = this.put(parent, before, h.link, said || h.link.name);
+    if (list) {
+      // its own line: the button and the name together
+      const row = parent.createSpan({ cls: ROW });
+      parent.insertBefore(row, b); row.append(b, before);
+    }
+    return list ?? true;
+  }
+
+  /** A Cast (an ability's: Use) button made and put in front of `before`; `said` is the text it stands before. */
+  private put(parent: HTMLElement, before: Node, link: SpellLink, said: string): HTMLElement {
     // made in its own window's document (a popped-out window's too), then put in front of the name
-    const b = parent.createSpan({ cls: CAST_BTN });
+    const b = parent.createSpan({ cls: CAST_BTN + (link.ability !== undefined ? ' is-ability' : '') });
     b.setAttribute('role', 'button'); b.tabIndex = 0;
-    b.setAttribute('aria-label', `Cast ${h.link.name}`);
-    b.dataset.spell = said || h.link.name;
-    this.buttons.set(b, h.link);
+    b.setAttribute('aria-label', `${link.ability !== undefined ? 'Use' : 'Cast'} ${link.name}`);
+    b.dataset.spell = said;
+    this.buttons.set(b, link);
     const open = (e: Event, x: number, y: number) => {
       e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
       const sb = b.closest<HTMLElement>(STATBLOCK); const link = this.buttons.get(b);
@@ -265,12 +285,57 @@ export class StatblockLinker {
     b.addEventListener('click', (e) => { const r = b.getBoundingClientRect(); open(e, r.left, r.bottom); });
     b.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { const r = b.getBoundingClientRect(); open(e, r.left, r.bottom); } });
     parent.insertBefore(b, before);
-    if (list) {
-      // its own line: the button and the name together
-      const row = parent.createSpan({ cls: ROW });
-      parent.insertBefore(row, b); row.append(b, before);
+    return b;
+  }
+
+  /**
+   * A creature's abilities with an area (Fire Breath's cone, an aura): a Use button in front of each one's name.
+   * Atlas's own entries (a name, then its text; a list in it, each "1: Clinging Flames. …" its own), and in other
+   * statblocks a paragraph or list item that starts with its name in bold or italics. One whose name is a spell
+   * keeps its Cast button.
+   */
+  private abilities(roots: HTMLElement[]): void {
+    const keep = new Set<Element>();
+    const lead = (t: string): string | null => /^\s*(?:\d+\s*[:.)]\s*)?(\p{Lu}[^.:!?\n]{1,48}?)\s*(?:\([^)]*\))?\s*[.:]\s/u.exec(t)?.[1] ?? null;
+    const clean = (t: string): string => t.replace(/\([^)]*\)/g, '').replace(/^[\s\d:.)]+(?=\p{L})/u, '').replace(/[\s.:;,*]+$/g, '').trim();
+    for (const sb of roots) {
+      if (sb.closest(OWN) || sb.closest('.sfx-modal, .modal')) continue;
+      const units: { anchor: Node; name: string; text: string }[] = [];
+      for (const tr of Array.from(sb.querySelectorAll<HTMLElement>('.atlas-sb-trait'))) {
+        if (tr.matches('.atlas-sb-pane-entry-editor') || tr.closest(LIST)) continue;
+        const nameEl = tr.querySelector(':scope > .atlas-sb-trait-name'); if (!nameEl) continue;
+        let own = tr.textContent ?? '';
+        for (const li of Array.from(tr.querySelectorAll('li'))) {
+          const t = li.textContent ?? '', nm = lead(t);
+          const first = Array.from(li.childNodes).find((c) => !(c instanceof Element && c.classList.contains(CAST_BTN)));
+          if (!nm || !first || !abilityEntry(nm, t)) continue;
+          units.push({ anchor: first, name: nm, text: t }); own = own.replace(t, ' ');
+        }
+        const nm = clean(nameEl.textContent ?? '');
+        if (nm && !/spellcasting/i.test(nm)) units.push({ anchor: nameEl, name: nm, text: own });
+      }
+      for (const blk of Array.from(sb.querySelectorAll<HTMLElement>('p, li'))) {
+        if (blk.closest('.atlas-sb-trait, ' + LIST + ', ' + OWN)) continue;
+        const el = Array.from(blk.children).find((c) => !c.classList.contains(CAST_BTN));
+        if (!el || !el.matches('strong, em, b')) continue;
+        const t = blk.textContent ?? '', nm = clean(el.textContent ?? '');
+        if (nm.length < 3 || nm.length > 60 || !t.trimStart().startsWith((el.textContent ?? '').trim())) continue;
+        units.push({ anchor: el, name: nm, text: t });
+      }
+      for (const u of units) {
+        if (!abilityEntry(u.name, u.text)) continue;
+        const link: SpellLink = { key: 'ability:' + norm(u.name), name: u.name, ability: u.text };
+        const prev = u.anchor.previousSibling;
+        if (prev instanceof Element && prev.classList.contains(CAST_BTN)) {
+          // there already (its text kept up to date); a spell of that name keeps its own button
+          if (prev.classList.contains('is-ability')) { this.buttons.set(prev, link); keep.add(prev); }
+          continue;
+        }
+        const parent = u.anchor.parentElement; if (!parent) continue;
+        keep.add(this.put(parent, u.anchor, link, u.anchor.textContent ?? u.name));
+      }
     }
-    return list ?? true;
+    for (const b of Array.from(this.doc.querySelectorAll('.' + CAST_BTN + '.is-ability'))) if (!keep.has(b)) b.remove();
   }
 
   /**

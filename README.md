@@ -313,6 +313,24 @@ window).
 
 Only spells the add-on knows (your spell notes, see *Spells: your Bases*) are clickable.
 
+**Abilities that aren't spells:** an ability whose text names an area gets a **Use** button in front of its name:
+a dragon's Fire Breath (*60-foot Cone*), a beholder's Antimagic Cone, *a 30-foot-radius Sphere centered on a point
+… within 120 feet*, an Emanation, a Cube, a Line, a Cylinder (drawn as its circle), or *each creature within 120
+feet of the dragon*. The button works like Cast: aim or place it from the creature's token, or open it in the cast
+window to pick its animation and save it. What's read from the ability's own text in the statblock:
+- its shape and size, and how far away it can be put (*within 120 feet*, *range 120 ft.*);
+- its look, from its damage (Fire, Cold, Lightning, Radiant, Necrotic);
+- whether it stays on the map (*lasts for 1 minute*, *Until the start of its next turn, that area…*);
+- a list of effects in one ability (*1: Clinging Flames. … 2: Freezing Waves. …*): a button for each.
+
+**Saving an ability:** open it in the cast window, pick its animation, colours and so on, and press **Save**. It's
+kept as an *ability*, by its name, with the add-on's settings: not as a spell, so it makes no spell note and isn't
+in your spell lists. From then on every statblock with an ability of that name uses what you saved (an adult
+dragon's Fire Breath and a young one's alike), each with its own shape and size from its own text. The bin in the
+cast window deletes what's saved.
+
+Nothing else about the ability is worked out: saves and damage are yours to run.
+
 ## Your game system
 The add-on reads the game system of the map's collection from Atlas (**Settings → Atlas Spell Effects** shows what it
 found, by name), so there's nothing to set up. It works with every system built into Atlas: D&D 5e, Pathfinder 2e,

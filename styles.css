@@ -220,3 +220,5 @@ canvas.sfx-cursor-move{cursor:move}
 .sfx-pop-icon svg { width: 14px; height: 14px; }
 .sfx-pop-buttons { display: flex; gap: 6px; flex-wrap: wrap; }
 .sfx-pop-btn { flex: 1; font-size: var(--font-ui-small, 13px); }
+
+.sfx-sb-cast.is-ability::before{content:'Use'}

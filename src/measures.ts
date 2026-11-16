@@ -112,7 +112,9 @@ export function lookOf(spell: { name?: string; descFull?: string; damageInflict?
   if (!spell) return null;
   const name = String(spell.name ?? '');
   const text = String(spell.descFull ?? '');
-  const dmg = (Array.isArray(spell.damageInflict) ? spell.damageInflict.join(' ') : String(spell.damageInflict ?? '')) + ' ' + (/(\w+) damage/i.exec(text)?.[1] ?? '');
+  // the damage it does: its first kind with a look ("Bludgeoning damage plus Cold damage": Frost)
+  const kinds = [...text.matchAll(/(\w+) damage/gi)].map((m) => m[1]);
+  const dmg = (Array.isArray(spell.damageInflict) ? spell.damageInflict.join(' ') : String(spell.damageInflict ?? '')) + ' ' + (kinds.find((k) => /^(fire|cold|lightning|radiant|necrotic)$/i.test(k)) ?? '');
   if (/darkness/i.test(name) || /magical darkness/i.test(text)) return 'shadow';
   if (/\b(fog|mist|cloud|smoke|steam)\b/i.test(name)) return 'mist';
   if (/\bfire\b/i.test(dmg)) return 'fire';
