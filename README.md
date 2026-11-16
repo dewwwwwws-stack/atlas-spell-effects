@@ -51,7 +51,10 @@ Settings → Community plugins → Browse → search **Spell Effects** → Insta
   again). A spell of your own (*Save as new…*) gets a note, and a Base, in its own folder (*Spell Storage*);
   *Delete* puts that note in Obsidian's bin. It never deletes or changes anything else.
 - **Atlas:** it reads the open map (grid, tokens, view) and adds lights and walls for lasting effects when you ask
-  for them. It removes those again when the effect ends, and doesn't add them to your undo history. It relies on
+  for them. It removes those again when the effect ends, and doesn't add them to your undo history. A spell that
+  is difficult terrain adds a map feature of its shape, and a summoned thing adds a token (its picture, a small
+  coloured disc, is saved in `Spell Effects/Summoned`); both go when the spell ends. Spells that push, pull or
+  teleport move tokens with Atlas's own move, so Ctrl+Z puts each back. It relies on
   Atlas's internals, so an Atlas update can break something until this add-on is updated.
 
 ## Animations
@@ -248,6 +251,11 @@ from opening it to closing it, is one step.
 Effects drawn without an animation have an **Inner** colour (the heart) and an **Outer** colour (the edge and glow),
 and every effect has an **Opacity** slider. They're in the cast window and the double-click editor, and they're
 kept with saved spells (`effect-colour`, `effect-colour-outer`, `effect-opacity`).
+
+**Motion:** a drawn area that stays on the map can move as you like: **Gentle glow** (as ever), **Still**,
+**Breathing** (swelling and sinking), **Pulsing** (fading in and out), **Shimmering** or **Flickering**, each
+**Slow**, **Normal** or **Fast**. Pick it beside the colours; the sample tile shows it. Kept as `effect-motion`
+(`breathe`, `pulse-fast`, `shimmer-slow`…).
 
 ## Casting from Atlas statblocks
 In Atlas's statblocks (Ctrl / ⌘ + hover a token, the side panel, or a statblock note), every spell this
@@ -463,6 +471,33 @@ token. Cast it, click the caster (if it isn't known from their statblock or sele
 round them; click where they go. Its animation plays where they leave and where they arrive, and the token lands in
 the grid's squares, never further than it can go. It's Atlas's own move, so Ctrl+Z puts it back. Turn it on or off
 for any spell, and set how far, with **Teleports the caster** in the cast window (kept as `effect-teleport`).
+
+## What else a spell can do
+Each of these is read from the spell's or ability's own text and can be changed, and saved, under **Also** in the
+cast window. Only the ones that fit the spell's kind are shown.
+
+- **Pushes or pulls** (Thunderwave: "pushed 10 feet away"; Thorn Whip: "pull … up to 10 feet"). When it's cast, the
+  creatures in its area (or its target) are moved that far straight away from where it comes from (the caster, or a
+  blast's middle), or towards it, no nearer than touching. Tokens land in the grid's squares. Walls and other
+  tokens aren't checked, and neither are saves: Ctrl+Z puts back anyone who shouldn't have moved.
+  `effect-push` (a minus number pulls).
+- **How many** (Magic Missile's three darts, Scorching Ray's three rays, Meteor Swarm's four points). Click that
+  many targets, the same one twice for two on it; it stops by itself after the last. Areas are placed one after
+  another. `effect-count`.
+- **More with the caster's level** (Eldritch Blast: "two beams at level 5, three beams at level 11…"). Cast from a
+  statblock, the caster's level is read from its note's properties (`level`, or `class: Warlock 5`), and it makes
+  that many. Where no level is found it makes one; set **How many** by hand.
+- **Leaps on** (Chain Lightning: "leap from that target to as many as three other targets … within 30 feet"). After
+  the bolt reaches its target, bolts go on from it to the nearest other creatures in reach (not back to the
+  caster). They're picked for you, nearest first. `effect-chain`, `effect-chain-range`.
+- **A thing that can be moved** (Spiritual Weapon, Flaming Sphere, Mage Hand: "you can move the weapon up to 20
+  feet"). It's put on the map as a token of its own, named after the spell, with the spell's animation and light on
+  it. Drag it like any token (players can, online). Ending the spell takes the token away; deleting the token ends
+  the spell. `effect-summon`.
+- **Difficult terrain** (Spike Growth, Entangle, Web, Grease). While it lasts, its area is a map feature in Atlas
+  marked as difficult terrain, named after the spell: Atlas's movement ruler counts it by your game's rule. It
+  follows the area if you move it and goes when the spell ends. Map features are the GM's alone. Needs Atlas 0.15.
+  `effect-terrain`.
 
 ## Recent spells, and casting with no target
 - The last five spells you cast are at the top of ✨'s menu (*Cast Fireball again*) and of the cast window.

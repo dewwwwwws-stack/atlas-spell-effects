@@ -35,7 +35,7 @@ export interface Area {
 
 export interface SpellEntry { key: string; name: string; range?: string; duration?: string; descFull?: string; desc?: string; level?: number; school?: string; /** A creature's ability read from its statblock (Fire Breath), not a spell. */ ability?: boolean }
 
-const num = (s: string | undefined): number => { const n = Number(s); return Number.isFinite(n) && n > 0 ? n : 0; };
+export const num = (s: string | undefined): number => { const n = Number(s); return Number.isFinite(n) && n > 0 ? n : 0; };
 
 /**
  * The game system's measures, from Atlas (the map's collection's rules). Every size the add-on keeps is in the
@@ -99,7 +99,7 @@ export function toGame(value: number, word: string): number {
 /** Feet (as 5e text writes them) in game units. */
 export const fromFeet = (feet: number): number => toGame(feet, 'feet');
 
-const UNIT = String.raw`(foot|feet|ft\.?|'|’|′|kilometers?|kilometres?|km|meters?|metres?|m|miles?|yards?|yds?|squares?)(?![a-z])`;
+export const UNIT = String.raw`(foot|feet|ft\.?|'|’|′|kilometers?|kilometres?|km|meters?|metres?|m|miles?|yards?|yds?|squares?)(?![a-z])`;
 /** A range band's size in game units, by its name ("Very Close"), or 0. */
 function bandSize(name: string): number { const k = name.trim().toLowerCase(); const b = rules.bands.find((x) => x.name.toLowerCase() === k); return b ? squares(b.squares) : 0; }
 const bandsRe = (): string => rules.bands.map((b) => b.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');

@@ -1,12 +1,11 @@
 ## New
 
-- **Areas go through walls** (Settings → Spell Effects). Turn it on and every spell's and ability's area ignores walls: drawn at its full size, counting the creatures behind them. Off (as before), an area stops at walls unless *Stops at walls* is turned off for that spell in the cast window.
+- **Pushes and pulls.** Thunderwave, Thorn Whip and the like move the creatures they catch (or their target) away from or towards the caster. Ctrl+Z puts each back.
+- **How many.** Magic Missile's three darts, Scorching Ray's three rays: click that many targets and it stops by itself. Meteor Swarm's areas are placed one after another.
+- **More with the caster's level.** Eldritch Blast makes two beams at level 5, three at 11, four at 17, when cast from a statblock whose note gives a level.
+- **Chain spells.** Chain Lightning's bolt leaps on from its target to the nearest others in reach.
+- **Summoned things.** Spiritual Weapon, Flaming Sphere, Mage Hand: a token of its own with the spell's animation on it, to drag like any token. Ending the spell takes it away.
+- **Difficult terrain.** Spike Growth, Entangle, Web, Grease: while the spell lasts its area is difficult terrain in Atlas, counted by the movement ruler.
+- **Motion for drawn areas.** A drawn area (no animation) can be still, breathing, pulsing, shimmering or flickering, slow to fast.
 
-- **Press a Cast or Use button twice to cast straight away.** The first press opens its menu as before; a second press casts it the usual way (a breath to aim from the dragon, a blast to click where it goes).
-- **Edit look…** in the button's menu opens the cast window to change the animation and colours (it replaces *Open in the cast window…*).
-- **Point at a Cast or Use button to see what it will look like:** a small card with its animation, its area and its look.
-
-## Fixes
-
-- **Cones and lines no longer all start with Cone of Cold (or a lightning bolt).** A spell or ability with no animation named after it now starts with one that fits it: Fire Breath gets the fire breath, as a cone or a line to match. One with nothing to go by (Sleep Breath) starts with no animation, just its area; you can still pick one in the cast window.
-- **Looks and animations are picked for every game system Atlas supports,** not just D&D. Pathfinder's electricity, sonic, vitality and void, and Draw Steel's holy and corruption, are read as lightning, thunder, radiant and necrotic. In systems where damage has no kind (Old-School Essentials, Shadowdark, Cairn, Cyberpunk RED, Daggerheart, Call of Cthulhu), the words round it are read: *a cone of fire*, *a cloud of chlorine gas*, *Frost Breath*.
+All of these are read from the spell's own text and can be changed and saved under **Also** in the cast window.

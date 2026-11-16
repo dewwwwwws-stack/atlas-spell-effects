@@ -6,7 +6,7 @@
 // Container, and a Sprite and Texture from a picture on it. When they can't be found, the overlay (overlay.ts)
 // draws effects instead, as before.
 
-import { boxOf, onCreature, coneLocal, wallPieces, wallPoints, wallThickness, type Box, type Effect, type Point, type Scale, type TokenAt } from './geometry';
+import { boxOf, onCreature, coneLocal, motionAt, wallPieces, wallPoints, wallThickness, type Box, type Effect, type Point, type Scale, type TokenAt } from './geometry';
 import { artInfo, instantMs, FADE_MS, DRAWN_MS, type World } from './overlay';
 import { fitOf, rangedLayout } from './trim';
 import { fromFeet } from './areas';
@@ -404,6 +404,14 @@ export class PixiPainter {
         for (const sp of it.sprites) sp.scale.set(e.shape === 'cone' || e.shape === 'line' ? grow : grow, e.shape === 'cone' || e.shape === 'line' ? 1 : grow);
         animating = true;
       }
+      // a lasting drawn area's own motion (breathing, pulsing…), as chosen for it
+      let grown = 1;
+      if (e.lasting && it.drawn && e.motion && !e.outline) {
+        const mv = motionAt(e.motion, now / 1000);
+        a *= mv.alpha; grown = e.shape === 'wall' ? 1 : mv.scale;
+        if (mv.alpha !== 1 || mv.scale !== 1) animating = true;
+      }
+      if (e.lasting && Math.abs(it.node.scale.x - grown) > 0.0005) it.node.scale.set(grown, grown);
       if (Math.abs(it.node.alpha - a) > 0.002) it.node.alpha = a;
       keep.add(e.id);
     }

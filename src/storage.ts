@@ -2,6 +2,7 @@
 // (your compendium's spell pages, as Atlas's loot bases use item notes), or a note the add-on makes for an effect
 // of your own. Every property is named "effect-…", so none of them clashes with what your spell pages already
 // hold. Notes stored by older versions (plain "area", "size"… and a "spell-effect" tag) are still read.
+import type { More } from './more';
 import { square, fromFeet, currentRules, type Area, type Shape, type WallBlocks } from './areas';
 import type { EffectLight } from './lights';
 
@@ -9,7 +10,7 @@ export const STORAGE_TAG = 'spell-effect';
 export const SHAPES: readonly Shape[] = ['radius', 'emanation', 'cone', 'cube', 'line', 'wall'];
 const BLOCKS: readonly WallBlocks[] = ['none', 'sight', 'movement', 'solid'];
 /** The add-on's properties, without their "effect-" prefix. */
-const KEYS = ['area', 'size', 'width', 'angle', 'origin', 'lasting', 'attach', 'animation', 'colour', 'colour-outer', 'opacity', 'target', 'ring', 'round', 'walls', 'light', 'bright', 'dim', 'light-colour', 'menu', 'range', 'conditions', 'unit', 'teleport', 'look', 'draw', 'area-light', 'walls', 'players', 'tool'] as const;
+const KEYS = ['area', 'size', 'width', 'angle', 'origin', 'lasting', 'attach', 'animation', 'colour', 'colour-outer', 'motion', 'push', 'count', 'chain', 'chain-range', 'summon', 'terrain', 'opacity', 'target', 'ring', 'round', 'walls', 'light', 'bright', 'dim', 'light-colour', 'menu', 'range', 'conditions', 'unit', 'teleport', 'look', 'draw', 'area-light', 'walls', 'players', 'tool'] as const;
 type Key = (typeof KEYS)[number];
 export const prop = (k: Key): string => 'effect-' + k;
 
@@ -23,6 +24,10 @@ export interface StoredSpell {
   colour?: string;
   /** Drawn: the colour at its edge, and how see-through. */
   colour2?: string;
+  /** How its drawn shape moves while it lasts ("breathe", "pulse-fast"…). */
+  motion?: string;
+  /** What else it does: pushes, how many, a chain, a thing it makes, difficult terrain. */
+  more?: More;
   alpha?: number;
   /** Card art (a vault path): the note's "effect-image", or its own "image". */
   image?: string;
@@ -143,11 +148,21 @@ export function storedFrom(path: string, fm: Record<string, unknown>, resolve: (
     lm === 'light' || lm === 'bright' || lm === 'dim' ? { mode: 'light', bright: feet(get(fm, 'bright')), dim: Math.max(feet(get(fm, 'dim')), feet(get(fm, 'bright'))) || area.size, ...(lc ? { colour: lc } : {}) } :
     lm === 'none' || lm === 'no' || lm === 'false' ? null : undefined;
   const col = get(fm, 'colour'), col2 = fm[prop('colour-outer')], op = Number(fm[prop('opacity')]);
-  return { path, name, area, ...(file ? { file } : {}), ...(typeof col === 'string' ? { colour: col } : {}), ...(typeof col2 === 'string' ? { colour2: col2 } : {}), ...(op > 0 && op < 1 ? { alpha: op } : op > 1 && op < 100 ? { alpha: op / 100 } : {}), ...(image ? { image } : {}), ...(yes(get(fm, 'attach')) ? { attach: true } : {}), ...(light !== undefined ? { light } : {}), ...(yes(fm[prop('menu')]) ? { menu: true } : {}), ...(Number(get(fm, 'range')) > 0 ? { range: scaled(Number(get(fm, 'range')), k) } : {}), ...(listOf(get(fm, 'conditions')) ? { conditions: listOf(get(fm, 'conditions'))! } : {}), ...(get(fm, 'teleport') !== undefined && Number.isFinite(Number(get(fm, 'teleport'))) ? { teleport: scaled(Math.max(0, Number(get(fm, 'teleport'))), k) } : {}), ...(typeof get(fm, 'look') === 'string' ? { look: String(get(fm, 'look')).trim().toLowerCase() === 'none' ? '' : String(get(fm, 'look')).trim().toLowerCase() } : {}), ...atlasFrom(fm) };
+  const mo = get(fm, 'motion');
+  const more: More = {};
+  const n = (key: 'push' | 'count' | 'chain' | 'chain-range'): number => { const v = Number(get(fm, key)); return Number.isFinite(v) ? v : 0; };
+  if (n('push')) more.push = scaled(Math.abs(n('push')), k) * Math.sign(n('push'));
+  if (n('count') > 1) more.count = Math.round(n('count'));
+  if (n('chain') > 0) { more.chain = Math.round(n('chain')); more.chainRange = scaled(n('chain-range') || 30, k); }
+  if (yes(get(fm, 'summon'))) more.summon = true;
+  if (yes(get(fm, 'terrain'))) more.terrain = true;
+  // (a note that says nothing of them: read from the spell's text instead; one that says "no": none)
+  const said = (['push', 'count', 'chain', 'summon', 'terrain'] as const).some((key) => get(fm, key) !== undefined);
+  return { path, name, area, ...(said ? { more } : {}), ...(typeof mo === 'string' && mo.trim() ? { motion: mo.trim().toLowerCase() } : {}), ...(file ? { file } : {}), ...(typeof col === 'string' ? { colour: col } : {}), ...(typeof col2 === 'string' ? { colour2: col2 } : {}), ...(op > 0 && op < 1 ? { alpha: op } : op > 1 && op < 100 ? { alpha: op / 100 } : {}), ...(image ? { image } : {}), ...(yes(get(fm, 'attach')) ? { attach: true } : {}), ...(light !== undefined ? { light } : {}), ...(yes(fm[prop('menu')]) ? { menu: true } : {}), ...(Number(get(fm, 'range')) > 0 ? { range: scaled(Number(get(fm, 'range')), k) } : {}), ...(listOf(get(fm, 'conditions')) ? { conditions: listOf(get(fm, 'conditions'))! } : {}), ...(get(fm, 'teleport') !== undefined && Number.isFinite(Number(get(fm, 'teleport'))) ? { teleport: scaled(Math.max(0, Number(get(fm, 'teleport'))), k) } : {}), ...(typeof get(fm, 'look') === 'string' ? { look: String(get(fm, 'look')).trim().toLowerCase() === 'none' ? '' : String(get(fm, 'look')).trim().toLowerCase() } : {}), ...atlasFrom(fm) };
 }
 
 /** Writes a spell's defaults into a note's properties (keeps everything else in them; an older note's plain ones are moved over). */
-export function writeDefaults(fm: Record<string, unknown>, s: { area: Area; file?: string | undefined; colour?: string | undefined; colour2?: string | undefined; alpha?: number | undefined; attach?: boolean | undefined; light?: EffectLight | null | undefined; menu?: boolean | undefined; range?: number | undefined; conditions?: string[] | undefined; teleport?: number | undefined; look?: string | undefined; atlas?: StoredSpell['atlas'] | undefined }): void {
+export function writeDefaults(fm: Record<string, unknown>, s: { area: Area; file?: string | undefined; colour?: string | undefined; colour2?: string | undefined; motion?: string | undefined; more?: More | undefined; alpha?: number | undefined; attach?: boolean | undefined; light?: EffectLight | null | undefined; menu?: boolean | undefined; range?: number | undefined; conditions?: string[] | undefined; teleport?: number | undefined; look?: string | undefined; atlas?: StoredSpell['atlas'] | undefined }): void {
   if (isLegacy(fm)) {
     for (const k of [...KEYS, 'blocks', 'color', 'light-color']) delete fm[k];
     if (Array.isArray(fm['tags'])) { fm['tags'] = (fm['tags'] as unknown[]).filter((t) => String(t).replace(/^#/, '').toLowerCase() !== STORAGE_TAG); if (!(fm['tags'] as unknown[]).length) delete fm['tags']; }
@@ -168,6 +183,12 @@ export function writeDefaults(fm: Record<string, unknown>, s: { area: Area; file
   set('animation', s.file ? `[[${s.file}]]` : undefined);
   set('colour', s.colour);
   set('colour-outer', s.colour2);
+  set('motion', s.motion || undefined);
+  if (s.more) {
+    // (each one said, so that what its text says isn't read back in over a choice to turn it off)
+    set('push', s.more.push ?? 0); set('count', s.more.count ?? 1); set('chain', s.more.chain ?? 0);
+    set('chain-range', s.more.chain ? s.more.chainRange : undefined); set('summon', !!s.more.summon); set('terrain', !!s.more.terrain);
+  }
   set('opacity', s.alpha !== undefined && s.alpha < 1 ? s.alpha : undefined);
   set('attach', s.attach ? true : undefined);
   set('light', !s.light ? 'none' : s.light.mode === 'darkness' ? 'darkness' : 'light');

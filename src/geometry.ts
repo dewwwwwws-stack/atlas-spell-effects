@@ -80,6 +80,16 @@ export interface Effect {
   hidden?: boolean;
   /** Its Atlas area's colour, given in Atlas (else its look's own). */
   areaColour?: string;
+  /** Pushes those it catches this far (game units) from where it comes from when cast; negative: pulls. */
+  push?: number;
+  /** Its area is difficult terrain while it lasts (kept in Atlas as a map feature). */
+  terrain?: boolean;
+  /** Atlas's map feature that makes its area difficult terrain. */
+  terrainId?: string;
+  /** The token it made on the map (a summoned thing): gone when the spell ends. */
+  summoned?: string;
+  /** How its drawn shape moves while it lasts (see `motionOf`): "breathe", "pulse-fast"…; missing: gently, as ever. */
+  motion?: string;
   /** A cone that ends in an arc (as Atlas draws cones unless the game's rules make them flat). */
   coneRound?: boolean;
 }
@@ -408,5 +418,34 @@ export function hitEffect(e: Pick<Effect, 'shape' | 'angle' | 'coneRound'>, b: B
     }
     default:
       return Math.abs(lx) <= b.w / 2 && Math.abs(ly) <= b.h / 2;
+  }
+}
+
+/** How a drawn area can move while it lasts. */
+export const MOTIONS: readonly [string, string][] = [['', 'Gentle glow'], ['still', 'Still'], ['breathe', 'Breathing'], ['pulse', 'Pulsing'], ['shimmer', 'Shimmering'], ['flicker', 'Flickering']];
+export const MOTION_SPEEDS: readonly [string, string][] = [['slow', 'Slow'], ['', 'Normal'], ['fast', 'Fast']];
+/** A motion as kept ("breathe-fast"): its kind, and how long one round of it takes against the usual (slow 1.8, fast 0.5). */
+export function motionOf(m: string | undefined): { kind: string; speed: string; time: number } {
+  const [kind = '', speed = ''] = String(m ?? '').trim().toLowerCase().split('-');
+  const ok = MOTIONS.some(([k]) => k === kind) ? kind : '';
+  const sp = speed === 'slow' || speed === 'fast' ? speed : '';
+  return { kind: ok, speed: sp, time: sp === 'slow' ? 1.8 : sp === 'fast' ? 0.5 : 1 };
+}
+/** A kind and a speed as kept; undefined for the usual (gentle, normal). */
+export const motionKey = (kind: string, speed: string): string | undefined => (kind || speed ? `${kind || 'glow'}${speed ? '-' + speed : ''}` : undefined);
+/**
+ * A moving drawn area at time `t` (seconds): how see-through (× its own) and how big (× its size). The canvas
+ * painter's; styles.css says the same for the page's.
+ */
+export function motionAt(m: string | undefined, t: number): { alpha: number; scale: number } {
+  const { kind, time } = motionOf(m);
+  const w = (period: number, phase = 0) => Math.sin((2 * Math.PI * t) / (period * time) + phase);
+  switch (kind) {
+    case 'still': return { alpha: 1, scale: 1 };
+    case 'breathe': return { alpha: 0.9 + 0.1 * w(3.6), scale: 1 + 0.035 * w(3.6) };
+    case 'pulse': return { alpha: 0.4 + 0.6 * (0.5 + 0.5 * w(1.6)), scale: 1 };
+    case 'shimmer': return { alpha: 0.84 + 0.16 * ((w(1.1) + w(0.63, 1.3) + w(0.37, 2.1)) / 3), scale: 1 };
+    case 'flicker': { const n = (w(0.31) + w(0.17, 0.9) + w(0.11, 2.4)) / 3; return { alpha: 0.72 + 0.28 * Math.max(-1, Math.min(1, n * 1.6)), scale: 1 + 0.008 * w(0.23) }; }
+    default: return { alpha: 0.89 + 0.11 * w(2.4), scale: 1 };
   }
 }

@@ -28,7 +28,7 @@ export interface AtlasToken {
 export interface AtlasState {
   mapPath?: string;
   grid?: { size?: number; offsetX?: number; offsetY?: number };
-  objects?: { tokens?: Record<string, AtlasToken>; lights?: Record<string, AtlasLight>; walls?: Record<string, AtlasWall>; measures?: Record<string, Record<string, unknown>> };
+  objects?: { tokens?: Record<string, AtlasToken>; lights?: Record<string, AtlasLight>; walls?: Record<string, AtlasWall>; measures?: Record<string, Record<string, unknown>>; mapFeatures?: Record<string, { id?: string; name?: string; polygon?: { x: number; y: number }[] }> };
   selectedIds?: string[];
   activeTool?: string;
   selectionMode?: string;
@@ -44,6 +44,12 @@ export interface AtlasState {
   addMeasure?: (data: Record<string, unknown>) => string | null;
   updateMeasure?: (id: string, changes: Record<string, unknown>) => void;
   deleteMeasure?: (id: string) => void;
+  /** Named areas of a map (Atlas 0.15): difficult terrain among them. */
+  addMapFeatures?: (data: readonly { polygon: { x: number; y: number }[]; name: string; terrain?: { difficult?: true } }[]) => string[];
+  updateMapFeature?: (id: string, changes: { polygon?: { x: number; y: number }[]; name?: string }) => void;
+  deleteMapFeature?: (id: string) => void;
+  addToken?: (data: Record<string, unknown>) => string;
+  deleteToken?: (id: string) => void;
   /** Atlas's Measure tool: its choices (shape, kept, players, colour, look), and the tool in hand. */
   measureTool?: Record<string, unknown>;
   setMeasureTool?: (changes: Record<string, unknown>) => void;

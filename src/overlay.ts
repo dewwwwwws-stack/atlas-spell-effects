@@ -1,7 +1,7 @@
 // Draws effects over a map: the DM's Atlas view and the player window each get a layer laid exactly over the
 // map canvas (turned with the TV), and every effect is an element placed in it from its box in the world.
 // Animations are the vault's files (video or image); without one, the add-on draws the shape itself.
-import { boxOf, onCreature, coneWidth, conePercent, wallPieces, wallPoints, wallThickness, type Controls, type Point, type Box, type Effect, type Scale, type TokenAt } from './geometry';
+import { boxOf, onCreature, coneWidth, conePercent, motionOf, wallPieces, wallPoints, wallThickness, type Controls, type Point, type Box, type Effect, type Scale, type TokenAt } from './geometry';
 import { fromFeet, unitLabel, type Shape } from './areas';
 import { fitOf, type Trim } from './trim';
 
@@ -117,6 +117,7 @@ export class Painter {
     if (e.colour2) el.style.setProperty('--c2', e.colour2);
     if (e.alpha !== undefined && e.alpha < 1) el.style.setProperty('--sfx-alpha', String(Math.max(0.05, e.alpha)));
     el.dataset.look = (e.file ?? '') + '|' + (e.colour ?? '');
+    moving(el, e.motion);
     if (e.shape !== 'wall') this.fill(el, e);                     // a wall's pieces are made as they are placed
     layer.appendChild(el);
     return el;
@@ -302,9 +303,18 @@ export function drawShape(doc: Document, el: HTMLElement, shape: Shape): void {
   }
 }
 
+/** Marks an effect's element with how its drawn shape moves (styles.css does the moving). */
+export function moving(el: HTMLElement, motion: string | undefined): void {
+  const { kind, time } = motionOf(motion);
+  for (const c of Array.from(el.classList)) if (c.startsWith('sfx-m-')) el.classList.remove(c);
+  if (kind || time !== 1) el.classList.add('sfx-m-' + (kind || 'glow'));
+  if (time !== 1) el.style.setProperty('--sfx-mt', String(time)); else el.style.removeProperty('--sfx-mt');
+}
+
 /** A drawn effect as a sample (the cast window's first tile): its shape in its colours, as on the map. */
-export function drawnSample(parent: HTMLElement, shape: Shape, colour: string, colour2: string | undefined, alpha: number | undefined, angle?: number): HTMLElement {
+export function drawnSample(parent: HTMLElement, shape: Shape, colour: string, colour2: string | undefined, alpha: number | undefined, angle?: number, motion?: string): HTMLElement {
   const el = parent.createDiv({ cls: `sfx sfx-${shape} sfx-lasting sfx-sample` });
+  moving(el, motion);
   el.style.setProperty('--c', colour);
   if (colour2) el.style.setProperty('--c2', colour2);
   if (alpha !== undefined && alpha < 1) el.style.setProperty('--sfx-alpha', String(Math.max(0.05, alpha)));
