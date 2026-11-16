@@ -124,21 +124,22 @@ function probeAlpha(v: HTMLVideoElement): AlphaMode | null {
 }
 
 /** A cone's shape, white on clear, soft at its edges: the point at the middle of its left side, its end the right side. */
-let coneCanvas: HTMLCanvasElement | null = null;
-function coneMask(round = false): HTMLCanvasElement {
-  const had = round ? roundCanvas : coneCanvas; if (had) return had;
+const coneCanvases = new Map<string, HTMLCanvasElement>();
+/** A soft-edged cone to cut an animation to its area's shape: a triangle, or round-ended at this cone's own angle (as Atlas draws it). */
+function coneMask(round = false, angle?: number): HTMLCanvasElement {
+  const key = round ? `r${Math.round((angle ?? 0) * 10)}` : 'flat';
+  const had = coneCanvases.get(key); if (had) return had;
   const c = createEl('canvas'); c.width = 256; c.height = 256;
   const g = c.getContext('2d');
   if (g) {
     g.filter = 'blur(5px)'; g.fillStyle = '#fff';
     g.beginPath();
-    coneLocal({ coneRound: round }, 250, 232).forEach((p, i) => { if (i) g.lineTo(127 + p.x, 128 + p.y); else g.moveTo(127 + p.x, 128 + p.y); });
+    coneLocal(round ? { coneRound: true, ...(angle ? { angle } : {}) } : {}, 250, 232).forEach((p, i) => { if (i) g.lineTo(127 + p.x, 128 + p.y); else g.moveTo(127 + p.x, 128 + p.y); });
     g.closePath(); g.fill();
   }
-  if (round) roundCanvas = c; else coneCanvas = c;
+  coneCanvases.set(key, c);
   return c;
 }
-let roundCanvas: HTMLCanvasElement | null = null;
 
 /** The players' view of where the DM aims: its id, and the effect drawn for it (the area, drawn, see-through). */
 const AIM = 'sfx-aim';
@@ -481,7 +482,7 @@ export class PixiPainter {
       const sp = new this.kit.Sprite(tex); sp.anchor.set(0.5); it.node.addChild(sp); it.sprites = [sp];
       // a cone: its art kept inside the cone (soft-edged), whatever shape its picture is
       if (e.shape === 'cone') {
-        const m = new this.kit.Sprite(this.kit.texture(coneMask(!!e.coneRound))); m.anchor.set(0.5); m.label = 'sfx-cone-mask';
+        const m = new this.kit.Sprite(this.kit.texture(coneMask(!!e.coneRound, e.angle))); m.anchor.set(0.5); m.label = 'sfx-cone-mask';
         it.node.addChild(m); (sp as unknown as { mask: unknown }).mask = m;
       }
     }

@@ -216,7 +216,7 @@ export class StatblockLinker {
       const lists = new Set<HTMLElement>();
       for (const h of [...hits].sort((a, b) => a.node === b.node ? b.start - a.start : 0)) {
         const list = this.button(h);
-        if (!list) left.push(h); else if (list instanceof HTMLElement) lists.add(list);
+        if (!list) left.push(h); else if (list !== true) lists.add(list);
       }
       for (const l of lists) this.columns(l);
       this.abilities(this.roots());
@@ -256,7 +256,7 @@ export class StatblockLinker {
     if (list && before === n && h.end - h.start < n.data.length && h.start === 0) n.splitText(h.end);
     else if (list && before !== n && before.nodeType === Node.TEXT_NODE && h.end - h.start < (before as Text).data.length) (before as Text).splitText(h.end - h.start);
     const prev = before.previousSibling;
-    const mine = (el: Node | null): el is Element => el instanceof Element && el.classList.contains(CAST_BTN) && this.buttons.get(el)?.key === h.link.key;
+    const mine = (el: Node | null): el is Element => !!el && el.instanceOf(Element) && el.classList.contains(CAST_BTN) && this.buttons.get(el)?.key === h.link.key;
     if (mine(prev)) return list ?? true;
     const parent = before.parentElement; if (!parent) return false;
     const b = this.put(parent, before, h.link, said || h.link.name);
@@ -311,7 +311,7 @@ export class StatblockLinker {
         let own = tr.textContent ?? '';
         for (const li of Array.from(tr.querySelectorAll('li'))) {
           const t = li.textContent ?? '', nm = lead(t);
-          const first = Array.from(li.childNodes).find((c) => !(c instanceof Element && c.classList.contains(CAST_BTN)));
+          const first = Array.from(li.childNodes).find((c) => !(c.instanceOf(Element) && c.classList.contains(CAST_BTN)));
           if (!nm || !first || !abilityEntry(nm, t)) continue;
           units.push({ anchor: first, name: nm, text: t }); own = own.replace(t, ' ');
         }
@@ -330,7 +330,7 @@ export class StatblockLinker {
         if (!abilityEntry(u.name, u.text)) continue;
         const link: SpellLink = { key: 'ability:' + norm(u.name), name: u.name, ability: u.text };
         const prev = u.anchor.previousSibling;
-        if (prev instanceof Element && prev.classList.contains(CAST_BTN)) {
+        if (prev?.instanceOf(Element) && prev.classList.contains(CAST_BTN)) {
           // there already (its text kept up to date); a spell of that name keeps its own button
           if (prev.classList.contains('is-ability')) { this.buttons.set(prev, link); keep.add(prev); }
           continue;

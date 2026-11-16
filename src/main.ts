@@ -70,6 +70,9 @@ interface Settings {
 interface Mark { map: string; from: string; token: string; cond: string; state: 'on' | 'off' | 'theirs' }
 /** Creatures hit by an instant spell (Fireball): a card of them, till you close it. */
 interface Caught { id: string; map: string; name: string; tokens: { id: string; name: string }[] }
+/** A canvas, whichever window it's in (a popped-out one's too). */
+const isCanvas = (c: unknown): c is HTMLCanvasElement => !!c && typeof (c as Node).instanceOf === 'function' && (c as Node).instanceOf(HTMLCanvasElement);
+
 const DEFAULTS: Settings = { folders: '', made: [], remember: {}, abilities: {}, lasting: [], snap: true, storage: 'Spell Storage', bases: [], presets: [], jb2aFolder: 'JB2A_DnD5e', jb2aOffer: true, noteSpells: true, orphanLights: [], coneAngle: 0, artTrim: {}, showAim: false, aimLook: 'outline', markCreatures: true, showRounds: true, atlasAreas: true, throughWalls: false, areas: {}, roundSecs: {}, marks: [], caught: [], recent: [] };
 
 /** A spell to pick in the cast window: a saved one, or a spell note (from a Base or found in the vault). */
@@ -963,7 +966,7 @@ export default class AtlasSpellEffects extends Plugin {
       const rs = call(view?.serviceManager, 'getRendererService');
       const renderer = call(rs, 'getRenderer'), viewport = call<AtlasViewport>(rs, 'getViewport');
       const canvas = field(call(renderer, 'getAppInstance'), 'canvas');
-      if (!view?.atlasStore || !renderer || !viewport || !(canvas instanceof HTMLCanvasElement)) continue;
+      if (!view?.atlasStore || !renderer || !viewport || !isCanvas(canvas)) continue;
       out.push({ leaf, view, store: view.atlasStore, renderer, viewport, canvas });
     }
     return out;
