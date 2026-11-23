@@ -540,9 +540,24 @@ the table log** also sends each card's results to Atlas's table log when an onli
   so to see them as a bar, add a resource called *Temp HP* in Atlas's resources for your game system: it fills
   when they're given and empties as damage takes them.
 
+**Healing** (Cure Wounds, Healing Word, Mass Cure Wounds…) is rolled once, with the caster's spellcasting modifier
+where the spell says so and more for a higher slot. **Apply healing** raises hit points, never past the maximum.
+Damage that comes later (Moonfire's next turn, Acid Arrow's) isn't added to the first roll, and where you choose a
+type (Spirit Guardians, Fire Shield) one is rolled. Boosts to your hits (Hex, Hunter's Mark) and weapon cantrips
+(Booming Blade) go in an attack card's extra damage box.
+
 Still yours to run: concentration checks, damage from lasting spells each turn (Spirit Guardians, Moonbeam), extra
 darts or beams from a higher slot, and other game systems. Statblocks are read from notes (their properties, or a
 `statblock` block); a token with no note gives "?".
+
+**Ranges.** Distances count as D&D counts them: next to you is 5 ft, and diagonals count the same as straight
+lines. An attack reaches as far as its farthest range ("reach 5 ft. or range 150 ft.": 150 ft). Past its normal
+range it has disadvantage, and past its long range it's marked out of range ("range 150/600 ft."). A ranged attack
+at a creature next to the attacker has disadvantage, unless that creature can't act.
+
+**Attacks followed by a save.** Ice Knife's attack is rolled on its target, then, hit or miss, a second card rolls
+the Dexterity save for the target and every creature within 5 feet. A monster's attack with a damaging rider (a
+spider's poison) rolls its save on a hit only.
 
 **Weapon attacks and one-target abilities.** With rolling on, a statblock's attacks get an **Attack** button (a
 monster's *Bite*, a player's *Longsword*, "Melee: +2 to hit. Hit: 1d6-1 Bludgeoning"), and abilities that make one

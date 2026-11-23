@@ -92,10 +92,10 @@ interface Caught {
 }
 /** A card's row in words: its roll and what came of it ("17+5 = 22 vs AC 15: hit, 14"). */
 function rowText(r: import('./rolls').RollRow, withDamage = true): string {
-  const OUT: Record<string, string> = { crit: 'crit!', hit: 'hit', miss: 'miss', fumble: 'natural 1, miss', failed: 'failed', saved: 'saved', damage: '', unknown: '?' };
+  const OUT: Record<string, string> = { crit: 'crit!', hit: 'hit', miss: 'miss', fumble: 'natural 1, miss', failed: 'failed', saved: 'saved', damage: '', heal: '', unknown: '?' };
   const dice = r.d20 ? `${r.d20.length > 1 ? `[${r.d20.join(', ')}] ` : ''}${r.kept}${r.bonus !== undefined ? `${r.bonus >= 0 ? '+' : ''}${r.bonus} = ${(r.kept ?? 0) + r.bonus}` : ''}${r.against !== undefined ? ` vs ${r.outcome === 'failed' || r.outcome === 'saved' ? 'DC' : 'AC'} ${r.against}` : ''}` : '';
   const out = OUT[r.outcome] ?? '';
-  return [dice, out].filter(Boolean).join(': ') + (withDamage ? `${dice || out ? ', ' : ''}${r.damage} damage${r.why ? ` (${r.why})` : ''}` : '');
+  return [dice, out].filter(Boolean).join(': ') + (withDamage ? `${dice || out ? ', ' : ''}${r.outcome === 'heal' ? `heals ${r.damage}` : `${r.damage} damage`}${r.why ? ` (${r.why})` : ''}` : '');
 }
 
 /** A canvas, whichever window it's in (a popped-out one's too). */
@@ -1924,7 +1924,17 @@ export default class AtlasSpellEffects extends Plugin {
    * leaps on goes from it to the nearest others in reach of it (each its own bolt).
    */
   private afterTarget(t: Tab, pending: Pending, target: string | null, caster: Point | null, casterId?: string): void {
-    if (target && this.settings.rolling && pending.roll) void this.rollOn(t, uid(), pending.name, pending.roll, [target], casterId);
+    if (target && this.settings.rolling && pending.roll) {
+      const after = pending.roll.after;
+      void this.rollOn(t, uid(), pending.name, pending.roll, [target], casterId).then((roll) => {
+        // what follows (Ice Knife's burst, hit or miss; a spider's poison, on a hit): its save for the target and those
+        // near it, on a card of its own
+        if (!after) return;
+        const o = roll?.rows[0]?.outcome;
+        if (after.onHit && (o === 'miss' || o === 'fumble')) return;
+        void this.rollOn(t, uid(), `${pending.name}: ${after.near ? 'burst' : 'save'}`, after, this.near(t, target, after.near ?? 0), casterId);
+      });
+    }
     const m = pending.more; if (!m || !target) return;
     const k = this.tokenOf(t, target); if (!k) return;
     if (m.chain && pending.area.target === 'bolt') {
@@ -2088,17 +2098,21 @@ export default class AtlasSpellEffects extends Plugin {
   }
 
   /** A spell's rolls against these creatures, onto its card (and Atlas's table log, if asked and a table runs). */
-  async rollOn(t: Tab, id: string, name: string, spec: RollSpec, ids: string[], by: string | undefined, edge: Edge = 'normal', slot?: number): Promise<void> {
+  async rollOn(t: Tab, id: string, name: string, spec: RollSpec, ids: string[], by: string | undefined, edge: Edge = 'normal', slot?: number): Promise<CastRoll | null> {
     const caster = await this.statsOfToken(t, by);
     const c0 = by ? this.tokenOf(t, by) : null, ppf = pxPerFoot(this.scaleOf(t));
     const map = this.mapOf(t);
     const targets = await Promise.all(ids.map(async (k) => {
       const tk = this.tokenOf(t, k);
-      const feet = c0 && tk ? Math.max(0, Math.hypot(tk.x - c0.x, tk.y - c0.y) - tk.r - c0.r) / ppf : undefined;
+      // as the rules count it: next to the caster is 5 ft (a square), one square between them 10 ft
+      const feet = c0 && tk ? Math.max(0, Math.max(Math.abs(tk.x - c0.x), Math.abs(tk.y - c0.y)) - tk.r - c0.r) / ppf + square() : undefined;
       const stats = await this.statsOfToken(t, k);
       // Legendary Resistance left today
       if (stats?.legendary) stats.legendary = Math.max(0, stats.legendary - (this.settings.legendary[`${map}|${k}`] ?? 0));
-      return { id: k, name: this.tokenName(t, k), stats, conds: this.condNames(t, k), ...(feet !== undefined ? { feet: feet + 0.01 > 5 ? feet : Math.min(feet, 5) } : {}) };
+      const hp = ((t.store.getState()?.objects?.tokens?.[k] as { resources?: Record<string, { current: number; max: number }> } | undefined)?.resources ?? {});
+      const hk = ['hp', 'health', 'hitpoints'].find((x) => hp[x]);
+      const hurt = !!hk && hp[hk].max > 0 && hp[hk].current < hp[hk].max;
+      return { id: k, name: this.tokenName(t, k), stats, conds: this.condNames(t, k), ...(feet !== undefined ? { feet: Math.round(feet * 10) / 10 } : {}), ...(hurt ? { hurt } : {}) };
     }));
     const level = this.levelOf(t, by);
     const roll = rollAgainst(spec, caster, targets, { level, edge, slot: slot ?? null, ...(by ? { casterConds: this.condNames(t, by) } : {}) });
@@ -2107,6 +2121,7 @@ export default class AtlasSpellEffects extends Plugin {
     if (at >= 0) this.settings.caught[at] = c; else this.settings.caught.push(c);
     this.saveSoon(); this.wake();
     if (this.settings.rollPost) void this.postRoll(c);
+    return roll;
   }
 
   /** A card's rolls as one line each, posted to Atlas's table log (as the GM), when a table is running. */
@@ -2162,10 +2177,11 @@ export default class AtlasSpellEffects extends Plugin {
       const key = ['hp', 'health', 'hitpoints'].find((k) => res[k]);
       const tmp = this.tempOf(t, r.id);
       let left = r.damage, temp = tmp.value;
-      // temporary hit points go first; new ones replace old if more (they don't add up)
-      if (left > 0 && temp > 0) { const used = Math.min(temp, left); temp -= used; left -= used; }
+      // temporary hit points go first; new ones replace old if more (they don't add up) (healing never touches them)
+      if (left > 0 && temp > 0 && r.outcome !== 'heal') { const used = Math.min(temp, left); temp -= used; left -= used; }
       if ((r.temp ?? 0) > temp) temp = r.temp ?? 0;
       if (left > 0 && !key) { missing++; continue; }
+      if (key && left > 0 && r.outcome === 'heal') { res[key] = { ...res[key], current: Math.min(res[key].max, res[key].current + left) }; left = 0; }
       if (key && left > 0) res[key] = { ...res[key], current: Math.max(0, res[key].current - left) };
       // the bar: full when given, emptying as they're used; gone (no maximum) once none are left
       if (temp !== tmp.value || (r.temp ?? 0) > 0) res[tmp.key] = temp > 0 ? { current: temp, max: (r.temp ?? 0) >= temp && (r.temp ?? 0) > tmp.value ? temp : Math.max(tmp.max, temp) } : { current: 0, max: 0 };
@@ -2223,6 +2239,7 @@ export default class AtlasSpellEffects extends Plugin {
           if (r.why) left.createSpan({ cls: 'sfx-roll-why', text: r.why });
           if (r.note) left.createSpan({ cls: 'sfx-roll-why', text: r.note });
           if (r.extra?.length) left.createSpan({ cls: 'sfx-roll-why', text: r.extra.join(', ') });
+          if (r.outcome === 'heal') left.createSpan({ cls: 'sfx-roll-why', text: r.applied ? 'healed' : 'heals (change the amount at the right)' });
           if (r.temp) left.createSpan({ cls: 'sfx-roll-why', text: `gains ${r.temp} temporary hit points` });
           const had = t3 ? this.tempOf(t3, r.id).value : 0;
           if (had > 0 && r.damage > 0 && !r.applied) left.createSpan({ cls: 'sfx-roll-why', text: `${had} temporary hit points go first` });
@@ -2241,14 +2258,15 @@ export default class AtlasSpellEffects extends Plugin {
             }
           }
           const dmg = row.createEl('input', { cls: 'sfx-roll-input', attr: { type: 'number', min: '0', 'aria-label': `Damage to ${r.name}` } });
-          dmg.value = String(r.damage); dmg.disabled = !!r.applied; if (!r.damage && (r.temp || !c.spec?.damage.length)) dmg.hidden = true;
+          dmg.value = String(r.damage); dmg.disabled = !!r.applied; if (!r.damage && (r.temp || (!c.spec?.damage.length && !c.spec?.weapon))) dmg.hidden = true;
+          dmg.setAttribute('aria-label', `${r.outcome === 'heal' ? 'Healing' : 'Damage'} to ${r.name}`);
           dmg.addEventListener('change', () => { const n = Math.max(0, Math.round(Number(dmg.value) || 0)); r.damage = n; dmg.value = String(n); this.saveSoon(); box.dataset.k = JSON.stringify(list); });
         }
         const acts = card.createDiv({ cls: 'sfx-roll-acts' });
         const act = (text: string, fn: () => void, cls = '') => { const b = acts.createEl('button', { cls: 'sfx-roll-btn ' + cls, text }); b.dataset.act = '1'; this.caughtActs.set(b, fn); return b; };
         const left = c.roll.rows.some((r) => !r.applied && (r.damage > 0 || (r.temp ?? 0) > 0));
         // (nothing to apply where it deals no damage and gives no hit points: a grapple, a charm)
-        if (c.spec?.damage.length !== 0 || c.roll.rows.some((r) => r.temp)) act(left ? (c.roll.rows.some((r) => r.damage > 0) ? 'Apply damage' : 'Give temp HP') : 'Applied', () => this.applyRoll(c.id), 'mod-cta').toggleAttribute('disabled', !left);
+        if (c.spec?.damage.length !== 0 || c.spec?.weapon || c.roll.rows.some((r) => r.temp || r.damage > 0)) act(left ? (c.spec?.kind === 'heal' ? 'Apply healing' : c.roll.rows.some((r) => r.damage > 0) ? 'Apply damage' : 'Give temp HP') : 'Applied', () => this.applyRoll(c.id), 'mod-cta').toggleAttribute('disabled', !left);
         const again = (edge: Edge, slot = c.slot) => () => { const t2 = this.atlasTabs().find((x) => this.mapOf(x) === c.map); if (t2 && c.spec) void this.rollOn(t2, c.id, c.name, c.spec, c.tokens.map((k) => k.id), c.by, edge, slot); };
         // a higher slot (a spell that does more with one): rolled again at it
         if (c.spec?.level && (c.spec.upcast || c.spec.tempUp) && !c.roll.rows.some((r) => r.applied)) {
@@ -3021,6 +3039,20 @@ export default class AtlasSpellEffects extends Plugin {
     } else this.cast(fx);
   }
 
+  /** A creature and those within `feet` of it (as the rules count: next to it, 5 ft). */
+  near(t: Tab, id: string, feet: number): string[] {
+    const k = this.tokenOf(t, id); if (!k) return [id];
+    const ppf = pxPerFoot(this.scaleOf(t));
+    const out = [id];
+    for (const o of Object.keys(t.store.getState()?.objects?.tokens ?? {})) {
+      if (o === id) continue;
+      const p = this.tokenOf(t, o); if (!p) continue;
+      const gap = Math.max(0, Math.max(Math.abs(p.x - k.x), Math.abs(p.y - k.y)) - p.r - k.r) / ppf + square();
+      if (feet > 0 && gap <= feet + 0.5) out.push(o);
+    }
+    return out;
+  }
+
   /** The creatures a targeted spell could go on: in its range of the caster, nearest first (no caster: everyone). */
   targetsFor(t: Tab, pending: Pending, caster?: string): { id: string; name: string; ft: number | null }[] {
     const toks = t.store.getState()?.objects?.tokens ?? {};
@@ -3031,9 +3063,10 @@ export default class AtlasSpellEffects extends Plugin {
     for (const id of Object.keys(toks)) {
       if (id === caster) continue;
       const k = this.tokenOf(t, id); if (!k) continue;
-      const gap = c ? Math.max(0, Math.hypot(k.x - c.x, k.y - c.y) - c.r - k.r) : 0;
-      if (gap > reach + 0.5) continue;
-      out.push({ id, name: this.tokenName(t, id), ft: c ? Math.round(gap / ppf / square()) * square() : null });
+      // how far, as the rules count it: the squares to its space, its own counted (next to it: 5 ft)
+      const gap = c ? Math.max(0, Math.max(Math.abs(k.x - c.x), Math.abs(k.y - c.y)) - c.r - k.r) : 0;      // (diagonals count as straight, as D&D counts them)
+      if (gap + square() * ppf > reach + 0.5 * ppf) continue;
+      out.push({ id, name: this.tokenName(t, id), ft: c ? Math.round(gap / ppf / square()) * square() + square() : null });
     }
     return out.sort((x, y) => (x.ft ?? 0) - (y.ft ?? 0) || x.name.localeCompare(y.name));
   }
@@ -4022,7 +4055,8 @@ class CastModal extends Modal {
       const spec = rollSpecOf(this.choice?.entry?.descFull ?? this.choice?.entry?.desc);
       if (spec) {
         const lv = Number(this.choice?.entry?.level);
-        if (lv > 0 && lv <= 9) spec.level = lv;
+        if (lv > 0 && lv <= 9) { spec.level = lv; if (spec.after) spec.after.level ??= lv; }
+        if (spec.after) spec.after.spell = !this.choice?.ability;
         spec.spell = !this.choice?.ability;
         // a magic weapon's attack: "+2 Greatsword", "Frost Brand (Very Rare)", "magic weapon" in its text
         if (this.choice?.entry?.plain === 'attack' && /(?:^|\s)\+\d\b|\((?:uncommon|rare|very rare|legendary|artifact|artefact)\)|\bmagic(?:al)? (?:weapon|attack)/i.test(`${this.choice.name} ${this.choice.entry.descFull ?? ''}`)) spec.magic = true;

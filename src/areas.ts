@@ -294,8 +294,11 @@ export function abilityEntry(name: string, text: string): SpellEntry | null {
       && !/\ballows? (?:it|you|them) to make\b|\bwhen (?:it|you) (?:make|succeed|fail)/i.test(t);
     if (!attack && !save) return null;
     e.plain = attack ? 'attack' : 'save'; e.key = `ability:${nm.toLowerCase()}:${e.plain}`;
-    const reach = new RegExp(String.raw`\b(?:reach|range) (\d+)(?:\/\d+)?\s*` + UNIT, 'i').exec(t);
-    if (reach) e.range = `${reach[1]} ${reach[2]}`;
+    // how far it can go: the farthest of its reach and its ranges ("reach 5 ft. or range 150 ft.": 150;
+    // "range 80/320 ft.": 320, with disadvantage past 80)
+    const far = Math.max(r?.reach ?? 0, r?.short ?? 0, r?.long ?? 0);
+    if (far > 0) e.range = `${far} ft.`;
+    else if (within) e.range = `${within[1]} ${within[2]}`;                 // a save at one creature "within 60 feet"
     return e;
   }
   // how far away it can be put: a point's (not "each creature within 120 feet of it", which is its area)

@@ -16,8 +16,25 @@ export interface RollSpec {
   conds?: string[];
   /** A magic weapon's attack (a +2 Greatsword, a Very Rare one): it gets past resistances to nonmagical attacks. */
   magic?: boolean;
+  /** An attack's reach, and its normal and long range ("reach 5 ft. or range 20/60 ft."), in feet; a ranged one. */
+  reach?: number; short?: number; long?: number; ranged?: boolean;
+  /**
+   * What follows the attack, hit or miss (Ice Knife's shard explodes: a Dexterity save for the target and each
+   * creature within `near` feet of it).
+   */
+  after?: RollSpec; near?: number;
+  /** (`after`) only on a hit (a spider's poison), not hit or miss (Ice Knife). */
+  onHit?: boolean;
+  /** The damage instead on a creature missing any of its hit points (Toll the Dead: 1d12, not 1d8). */
+  hurt?: DamagePart;
+  /** The damage type the higher slot adds to (else the first). */
+  upcastType?: string;
+  /** A weapon attack made with the spell (Booming Blade): the weapon's damage is yours to add on its card. */
+  weapon?: boolean;
+  /** Healing (Cure Wounds): `damage[0]` is the dice healed (no type), plus the caster's spellcasting modifier. */
+  healMod?: boolean;
   /** An attack roll (and its bonus, where the text gives it: "Ranged Attack Roll: +10"), or a saving throw (and its DC). */
-  kind: 'attack' | 'save' | 'damage';
+  kind: 'attack' | 'save' | 'damage' | 'heal';
   save?: Ability;
   dc?: number;
   bonus?: number;
@@ -45,15 +62,54 @@ const clean = (d: string): string => d.replace(/\s+/g, '').replace(/[−–]/g, 
 export function rollSpecOf(text: string | undefined): RollSpec | null {
   const t = String(text ?? '').replace(/\s+/g, ' ');
   if (!t) return null;
+  // an attack, then a save after it (Ice Knife: "Make a ranged spell attack… Hit or miss, the shard explodes. The
+  // target and each creature within 5 feet of it must succeed on a Dexterity saving throw"): each read on its own
+  const atk = /\b(?:melee|ranged)(?: or ranged)? (?:spell |weapon )?attack\b|\bAttack Roll:/i.exec(t);
+  const sav = /\b(?:Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma) sav(?:ing throw|e)\b|\bSaving Throw:/i.exec(t);
+  if (atk && sav && sav.index > atk.index && !/^\s*$/.test(t.slice(atk.index, sav.index))) {
+    // (from the save's own sentence or clause: "…Piercing damage, and the target must make a DC 11 Constitution saving throw")
+    const cut = Math.max(t.lastIndexOf('. ', sav.index) + 2, t.lastIndexOf(', and ', sav.index) + 6, t.lastIndexOf('; ', sav.index) + 2, atk.index + 1);
+    const first = rollSpecOf(t.slice(0, cut)), then = rollSpecOf(t.slice(cut));
+    // a rider with no damage of its own ("…or have the Prone condition"): the attack alone (its condition is offered on its card)
+    if (first?.kind === 'attack' && then?.kind === 'save' && !then.damage.length) return first;
+    if (first?.kind === 'attack' && then?.kind === 'save') {
+      const near = /\bwithin (\d+) (?:feet|foot|ft\.?) of (?:it|the target|that creature|the creature)\b/i.exec(t.slice(cut));
+      first.after = { ...then, ...(near ? { near: Number(near[1]) } : {}), ...(/\bhit or miss\b/i.test(t) ? {} : { onHit: true }) };
+      // a slot's more dice: whichever part names them
+      if (first.upcast && !then.upcast && /\bslot level above\b/i.test(t.slice(cut))) delete first.upcast;
+      return first;
+    }
+  }
   const damage: DamagePart[] = [];
+  let hurt: DamagePart | undefined;
+  let firstAt = 0, lastEnd = 0;
+  let m0: RegExpExecArray | null;
   // "59 (17d6) Fire damage", "8d6 fire damage", "1d10 + 4 Force damage", "4 (1d8) Piercing damage plus 3 (1d6) Fire damage"
   for (const m of t.matchAll(new RegExp(String.raw`(?:\d+\s*\(\s*` + DICE + String.raw`\s*\)|` + DICE + String.raw`)\s+([A-Za-z]+)\s+damage`, 'gi'))) {
     const dice = clean(m[1] ?? m[2] ?? ''); const type = (m[3] ?? '').toLowerCase();
     if (!dice || type === 'extra' || type === 'additional') continue;
     if (damage.some((d) => d.dice === dice && d.type === type)) continue;
+    // after the first, only what comes with it, in the same sentence ("2d8 Fire damage plus 2d8 Necrotic damage",
+    // "2d10 Bludgeoning damage and 4d6 Cold damage"): not damage at a later turn (Moonfire), from another of its
+    // effects (Storm Sphere's bolt), a choice ("Radiant damage… or Necrotic damage"), or instead of it (Toll the
+    // Dead's 1d12 on one that's hurt: kept apart)
+    if (damage.length) {
+      const at = m.index ?? 0;
+      const from = t.lastIndexOf('. ', at) + 1, to = t.indexOf('. ', at);
+      const sentence = t.slice(from, to < 0 ? undefined : to);
+      if (/\binstead\b/i.test(sentence) && /missing any of its hit points|isn't at (?:its )?full|is damaged/i.test(sentence)) { hurt = { dice, type }; continue; }
+      if (firstAt < from) continue;
+      const between = t.slice(lastEnd, at);
+      if (/\bor\b/i.test(between) && !/\b(?:plus|and)\b/i.test(between)) continue;
+      if (/\binstead\b/i.test(between)) continue;
+      if (/^\s*(?:at the (?:end|start) of (?:its|their|your|the target's) next turn|later|on (?:its|each of its|your) (?:next|subsequent) turns?)/i.test(t.slice(at + m[0].length))) continue;
+    } else firstAt = m.index ?? 0;
+    lastEnd = (m.index ?? 0) + m[0].length;
     damage.push({ dice, type });
     if (damage.length >= 3) break;
   }
+  // a type you choose: "6d6 damage of the chosen type" (no resistance can be judged)
+  if (!damage.length && (m0 = new RegExp(DICE + String.raw`\s+damage of (?:the|a|that) (?:chosen )?type`, 'i').exec(t))) damage.push({ dice: clean(m0[1]), type: '' });
   // a weapon's hit, as players' sheets and 2024 statblocks write it: "Hit: 1d6-1 Bludgeoning", "Hit: 30 Bludgeoning
   // damage", "Hit: 1d8 + 3 piercing plus 1d6 fire"
   const hit = /\bHit:\s*([^]*?)(?=\.\s+(?:[A-Z][a-z]+:|Mastery\b|If\b|The\b|On\b)|$)/i.exec(t)?.[1] ?? '';
@@ -80,18 +136,46 @@ export function rollSpecOf(text: string | undefined): RollSpec | null {
   } else if (/\b(?:melee|ranged) spell attack\b|\bmake (?:a|an) (?:melee|ranged) (?:spell )?attack\b|\bspell attack (?:roll|against)\b/i.test(t)) {
     spec.kind = 'attack';
   }
-  if (spec.kind === 'save') spec.half = /\bhalf (?:as much )?(?:the )?damage\b|\bSuccess:\s*Half damage\b/i.test(t);
+  if (spec.kind === 'attack') {
+    // its reach and ranges: "reach 10 ft.", "range 80/320 ft.", "reach 5 ft. or range 20/60 ft."
+    if ((m = /\breach (\d+)\s*(?:ft\.?|feet)/i.exec(t))) spec.reach = Number(m[1]);
+    if ((m = /\brange (\d+)(?:\s*\/\s*(\d+))?\s*(?:ft\.?|feet)/i.exec(t))) { spec.short = Number(m[1]); if (m[2]) spec.long = Number(m[2]); }
+    if (/\branged (?:spell |weapon )?attack\b/i.test(t) && !/\bmelee or ranged\b/i.test(t)) spec.ranged = true;
+    if (spec.short !== undefined && spec.reach === undefined) spec.ranged = true;
+  }
+  if (spec.kind === 'save') spec.half = /\bhalf (?:as much )?(?:the )?(?:initial )?damage\b|\bSuccess:\s*Half damage\b/i.test(t);
   // a cantrip's damage as levels go up: "levels 5 (2d10), 11 (3d10), and 17 (4d10)" / "at 5th level (2d10)"
   const scale: [number, string][] = [];
-  for (const s of t.matchAll(/\b(\d{1,2})(?:st|nd|rd|th)?(?:\s+level)?\s*\((\d+d\d+)\)/gi)) {
+  for (const s of t.matchAll(/\b(\d{1,2})(?:st|nd|rd|th)?(?:\s+level)?\s*\((\d+d\d+)(?:\s+or\s+\d+d\d+)?\)/gi)) {
     const lv = Number(s[1]); if (lv >= 2 && lv <= 20 && /\blevels?\b/i.test(t)) scale.push([lv, s[2]]);
   }
   if (scale.length) spec.scale = scale.sort((a, b) => a[0] - b[0]);
   // more for a higher slot: "increases by 1d6 for each slot level above 3" / "above 1st"
-  if ((m = /\bincreases? by (\d+d\d+) for each (?:spell )?slot level above (\d+)/i.exec(t))) { spec.upcast = m[1]; spec.level ??= Number(m[2]); }
+  if ((m = /\bincreases? by (\d+d\d+)\b[^.]{0,90}?\bfor each (?:spell )?(?:slot )?level above (\d+)/i.exec(t))) {
+    spec.upcast = m[1]; spec.level ??= Number(m[2]);
+    // which damage grows: "The Fire damage increases by 1d8" (Throw Glaive's second part)
+    const named = new RegExp(String.raw`\b(` + TYPES + String.raw`) damage increases? by\s*$`, 'i').exec(t.slice(Math.max(0, m.index - 40), m.index + 'increases by'.length + 1).replace(/increases? by.*$/i, 'increases by'));
+    if (named) spec.upcastType = named[1].toLowerCase();
+  }
   // temporary hit points: "gain 1d4 + 4 Temporary Hit Points", "5 Temporary Hit Points for each slot level above 1"
   if ((m = new RegExp(String.raw`\b(?:gains?|gets?|has|have)\s+` + String.raw`(\d+d\d+(?:\s*\+\s*\d+)?|\d+)` + String.raw`\s+temporary hit points`, 'i').exec(t))) spec.temp = clean(m[1]);
   if ((m = /\b(\d+) (?:additional |more )?temporary hit points for each (?:spell )?slot level above (\d+)/i.exec(t))) { spec.tempUp = Number(m[1]); spec.level ??= Number(m[2]); }
+  if (hurt) spec.hurt = hurt;
+  // a smite, cast as you hit ("As you hit the target, it takes an extra 1d6 Fire damage from the attack"): its damage,
+  // no roll of its own (a save after it is for what lasts)
+  if (/\bextra (?:\d+\s*\(\s*)?\d+d\d+\)?\s*\w*\s*damage from the attack\b|\bAs you hit\b|\btakes an extra\b[^.]*\bfrom the attack\b/i.test(t) && spec.kind !== 'attack') { spec.kind = 'damage'; delete spec.save; delete spec.dc; delete spec.half; }
+  // a lasting boost to your hits (Hex, Hunter's Mark, Divine Favor: "an extra 1d6 Necrotic damage… whenever you hit"):
+  // nothing to roll when cast (add it on an attack's card, as extra damage)
+  else if (spec.kind === 'damage' && /\buntil the spell ends\b/i.test(t) && /\bextra (?:\d+\s*\(\s*)?\d+d\d+[^.]*\b(?:whenever you hit|on a hit|when you hit|hits? (?:it|a creature) with)/i.test(t)) return null;
+  // a weapon attack made with the spell (Booming Blade, Green-Flame Blade): the weapon's damage is the caster's to
+  // add; what the text rolls happens later or to someone else
+  if (spec.kind === 'attack' && /\b(?:weapon attack's|attack's) normal effects\b|\bmake a melee attack with (?:it|the weapon|that weapon)\b/i.test(t)) { spec.weapon = true; spec.damage = []; delete spec.scale; }
+  // healing: "regains a number of Hit Points equal to 2d8 plus your spellcasting ability modifier", "regains 4d8 Hit Points"
+  if (spec.kind === 'damage' && !damage.length && !spec.temp) {
+    const h = new RegExp(String.raw`\bregains? (?:a number of )?Hit Points equal to ` + DICE + String.raw`(\s*(?:\+|plus)\s*your spellcasting (?:ability )?modifier)?`, 'i').exec(t)
+      ?? new RegExp(String.raw`\bregains? ` + DICE + String.raw`(\s*(?:\+|plus)\s*your spellcasting (?:ability )?modifier)? Hit Points`, 'i').exec(t);
+    if (h) { spec.kind = 'heal'; damage.push({ dice: clean(h[1]), type: '' }); if (h[2]) spec.healMod = true; return spec; }
+  }
   if (spec.kind === 'damage' && !damage.length && !spec.temp) return null;
   return spec;
 }
@@ -116,8 +200,8 @@ export function tempAt(spec: RollSpec, slot?: number | null): string | undefined
 /** Its damage at a caster's level (a cantrip's dice grow) and a slot level (a spell's, upcast); the first part only. */
 export function damageAt(spec: RollSpec, level: number | null | undefined, slot?: number | null): DamagePart[] {
   if (spec.upcast && slot && spec.level && slot > spec.level && spec.damage.length) {
-    const first = spec.damage[0];
-    return [{ dice: addDice(first.dice, spec.upcast, slot - spec.level), type: first.type }, ...spec.damage.slice(1)];
+    const i = Math.max(0, spec.upcastType ? spec.damage.findIndex((d) => d.type === spec.upcastType) : 0);
+    return spec.damage.map((d, k) => (k === i ? { dice: addDice(d.dice, spec.upcast!, slot - spec.level!), type: d.type } : d));
   }
   if (!spec.scale?.length || !level || !spec.damage.length) return spec.damage;
   let dice = '';
@@ -281,7 +365,7 @@ export function statsOf(fields: Record<string, unknown> | null | undefined, text
 
 // ── a roll against each target ──
 
-export type Outcome = 'crit' | 'hit' | 'miss' | 'fumble' | 'failed' | 'saved' | 'damage';
+export type Outcome = 'crit' | 'hit' | 'miss' | 'fumble' | 'failed' | 'saved' | 'damage' | 'heal';
 export interface RollRow {
   id: string;
   name: string;
@@ -349,7 +433,7 @@ export interface CastRoll { header: string; damageText: string; rows: RollRow[];
 export type Edge = 'normal' | 'advantage' | 'disadvantage';
 
 /** A creature a spell is rolled against: its statblock, its conditions (Atlas's, by name or id), how far from the caster (feet). */
-export interface Target { id: string; name: string; stats: Stats | null; conds?: readonly string[]; feet?: number }
+export interface Target { id: string; name: string; stats: Stats | null; conds?: readonly string[]; feet?: number; /** Missing any of its hit points. */ hurt?: boolean }
 
 const has = (conds: readonly string[] | undefined, ...names: string[]): boolean => !!conds?.some((c) => names.some((n) => c.toLowerCase().includes(n)));
 /** Advantage and disadvantage together: neither. */
@@ -369,6 +453,9 @@ function edgeOf(base: Edge, adv: string[], dis: string[]): { edge: Edge; note?: 
  */
 export function rollAgainst(spec: RollSpec, caster: Stats | null, targets: Target[], opts: { level?: number | null; slot?: number | null; edge?: Edge; random?: () => number; casterConds?: readonly string[] } = {}): CastRoll {
   const parts = damageAt(spec, opts.level, opts.slot);
+  // on a creature missing hit points, its other die (Toll the Dead: as many d12s as it has d8s)
+  const hurtParts = spec.hurt && parts.length ? [{ dice: parts[0].dice.replace(/d\d+/, `d${/d(\d+)/.exec(spec.hurt.dice)?.[1] ?? '12'}`), type: spec.hurt.type }, ...parts.slice(1)] : null;
+  const partsOf = (t: Target) => (t.hurt && hurtParts ? hurtParts : parts);
   const base = opts.edge ?? 'normal';
   const throwD20 = (edge: Edge): { r: number[]; k: number } => {
     const r = edge !== 'normal' ? [die(20, opts.random), die(20, opts.random)] : [die(20, opts.random)];
@@ -394,14 +481,24 @@ export function rollAgainst(spec: RollSpec, caster: Stats | null, targets: Targe
       if (has(opts.casterConds, 'prone')) dis.push('caster prone');
       if (has(opts.casterConds, 'restrained')) dis.push('caster restrained');
       if (has(opts.casterConds, 'invisible')) adv.push('caster unseen');
+      // ranges: past its normal range, disadvantage; past its long range, out of reach (yours to judge); a ranged
+      // attack at a creature next to it, disadvantage (a reach that covers it makes it a melee one)
+      const melee = spec.reach !== undefined && t.feet !== undefined && t.feet <= spec.reach + 0.5;
+      let far = '';
+      if (!melee && t.feet !== undefined) {
+        if (spec.long !== undefined && t.feet > spec.long + 0.5) far = `out of range (${Math.round(t.feet)} ft, long range ${spec.long} ft)`;
+        else if (spec.long === undefined && spec.short !== undefined && t.feet > spec.short + 0.5) far = `out of range (${Math.round(t.feet)} ft, range ${spec.short} ft)`;
+        else if (spec.short !== undefined && t.feet > spec.short + 0.5) dis.push(`long range (${Math.round(t.feet)} ft)`);
+        if ((spec.ranged || spec.short !== undefined) && near && !has(t.conds, 'paralyz', 'stunned', 'unconscious', 'petrified', 'incapacitated')) dis.push('ranged, target within 5 ft');      // (unless it can't act)
+      }
       const e = edgeOf(base, adv, dis);
       const { r, k } = throwD20(e.edge);
       const ac = t.stats?.ac;
       let outcome: Outcome | 'unknown' = k === 20 ? 'crit' : k === 1 ? 'fumble' : bonus === undefined || ac === undefined ? 'unknown' : k + bonus >= ac ? 'hit' : 'miss';
-      let note = e.note;
+      let note = [e.note, far].filter(Boolean).join('; ') || undefined;
       if (outcome === 'hit' && near && has(t.conds, 'paralyz', 'unconscious')) { outcome = 'crit'; note = [note, 'crit: paralyzed or unconscious, within 5 ft'].filter(Boolean).join('; '); }
       const hits = outcome === 'crit' || outcome === 'hit' || outcome === 'unknown';
-      const rolled = parts.map((p) => ({ total: rollDice(p.dice, outcome === 'crit', opts.random).total, type: p.type }));
+      const rolled = partsOf(t).map((p) => ({ total: rollDice(p.dice, outcome === 'crit', opts.random).total, type: p.type }));
       const tot = hits ? totalOn(rolled, t.stats, false, magical) : { rolled: 0, damage: 0 };
       return { id: t.id, name: t.name, d20: r, kept: k, ...(bonus !== undefined ? { bonus } : {}), ...(ac !== undefined ? { against: ac } : {}), outcome, ...tot, ...(note ? { note } : {}), ...(hits ? giveTemp() : {}) };
     });
@@ -409,8 +506,11 @@ export function rollAgainst(spec: RollSpec, caster: Stats | null, targets: Targe
   }
   if (spec.kind === 'save') {
     const dc = spec.dc ?? caster?.dc, ab = spec.save ?? 'dex';
-    const rolled = parts.map((p) => ({ total: rollDice(p.dice, false, opts.random).total, type: p.type }));
+    const rolledAll = parts.map((p) => ({ total: rollDice(p.dice, false, opts.random).total, type: p.type }));
+    const rolledHurt = hurtParts ? hurtParts.map((p) => ({ total: rollDice(p.dice, false, opts.random).total, type: p.type })) : null;
+    const rolled = rolledAll;
     const rows = targets.map((t): RollRow => {
+      const rolled = t.hurt && rolledHurt ? rolledHurt : rolledAll;
       const adv: string[] = [], dis: string[] = [];
       if (spec.spell !== false && t.stats?.magicRes) adv.push('Magic Resistance');
       if (ab === 'dex' && has(t.conds, 'restrained')) dis.push('restrained');
@@ -429,6 +529,18 @@ export function rollAgainst(spec: RollSpec, caster: Stats | null, targets: Targe
       return { id: t.id, name: t.name, d20: r, kept: k, ...(bonus !== undefined ? { bonus } : {}), ...(dc !== undefined ? { against: dc } : {}), outcome, ...tot, ...(note ? { note } : {}), ...(lr ? { onSave: saved } : {}), ...(outcome !== 'saved' ? giveTemp() : {}) };
     });
     return { header: head(`${ABILITY_LABEL[ab]} save${dc === undefined ? ' (DC ?)' : ` DC ${dc}`}${spec.half ? ', half on a save' : ''}`), damageText: rolled.length ? `${dmgText}: ${rolled.map((p) => p.total).join(' + ')}` : '', rows, ...(slot ? { slot } : {}) };
+  }
+  if (spec.kind === 'heal') {
+    // healing: its dice (one roll for all), plus the caster's spellcasting modifier where it says so
+    const mod = spec.healMod ? (caster?.hit !== undefined && caster.prof !== undefined ? caster.hit - caster.prof : caster ? Math.max(caster.mods.int ?? -5, caster.mods.wis ?? -5, caster.mods.cha ?? -5) : undefined) : 0;
+    const r = parts[0] ? rollDice(parts[0].dice, false, opts.random) : { total: 0, text: '' };
+    const total = Math.max(0, r.total + (mod ?? 0));
+    return {
+      header: head(spec.healMod && mod === undefined ? 'Healing (+ modifier ?)' : 'Healing'),
+      damageText: `${r.text}${spec.healMod ? ` + ${mod ?? '?'}` : ''}: ${total}`,
+      rows: targets.map((t) => ({ id: t.id, name: t.name, outcome: 'heal' as const, rolled: total, damage: total })),
+      ...(slot ? { slot } : {}),
+    };
   }
   const rolled = parts.map((p) => ({ total: rollDice(p.dice, false, opts.random).total, type: p.type }));
   return {
