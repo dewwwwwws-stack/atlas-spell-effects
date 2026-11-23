@@ -2,7 +2,7 @@
 // Cast from the command palette or the ribbon: pick a spell (your spell list says its area), pick its animation
 // (JB2A or your own files; or one the add-on draws), click the caster / aim / click where it lands. It plays on
 // your map and on the player window (the TV) at the right place and size; lasting ones stay until you end them.
-import { Plugin, Modal, Menu, Notice, PluginSettingTab, Setting, setIcon, TFile, MarkdownView, parseYaml, type App, type TextComponent, type WorkspaceLeaf, type SettingDefinitionItem } from 'obsidian';
+import { FuzzySuggestModal, Plugin, Modal, Menu, Notice, PluginSettingTab, Setting, setIcon, TFile, MarkdownView, parseYaml, type App, type TextComponent, type WorkspaceLeaf, type SettingDefinitionItem } from 'obsidian';
 import { BaseReader, basesReady } from './bases';
 import { jb2aFiles, fetchJb2a, fetchAll } from './jb2a';
 import { measureArt, hasReach, type Trim } from './trim';
@@ -19,6 +19,7 @@ import { areaOf, abilityEntry, targetOf, fallbackArea, describe, rangeOf, telepo
 import { indexFiles, indexFile, matchesFor, defaultFor, hintsOf, coloursOf, search, nearestLength, type EffectFile } from './library';
 import { isStored, storedFrom, writeDefaults, clearDefaults, baseFile, noteName, unitFactor, unitNow, type StoredSpell } from './storage';
 import { looksLikeItem, looksLikeSpell, looksLikeStatblock, spellFromNote } from './notes';
+import { loadSrd, splitNote, type SrdEdition } from './srd';
 import { lightOf, placedLights, adoptLook, lightKey, LIGHT_COLOUR, type EffectLight } from './lights';
 
 import { boxOf, dirTo, hitEffect, MOTIONS, MOTION_SPEEDS, motionOf, motionKey, snapCorner, placeOf, pxPerFoot, attachTo, detach, wallPieces, wallPoints, ringPoints, pathLength, within, controlsOf, stepSize, dragHandle, aims, CONE_ANGLE, coneLocal, type Box, type Effect, type Point, type Scale, type TokenAt } from './geometry';
@@ -57,6 +58,10 @@ interface Settings {
   coneAngle: number;               // a cone's angle when a spell doesn't say; 0: the game system's, from Atlas
   /** Roll attacks, saves and damage when a spell is cast (D&D 5e), shown on its card. */
   rolling: boolean;
+  /** The SRD's spells built in (spells with no note of yours), from this edition; and where its notes are written. */
+  srdSpells: boolean; srdEdition: SrdEdition; srdFolder: string;
+  /** Who it rolls for: everyone, or only creatures that aren't player characters (players roll their own). */
+  rollWho: 'all' | 'npcs';
   /** Post each roll's results to Atlas's table log, when a table is running. */
   rollPost: boolean;
   /** Legendary Resistance used, by map and token ("map|token"): reset by hand on the card. */
@@ -101,14 +106,14 @@ function rowText(r: import('./rolls').RollRow, withDamage = true): string {
 /** A canvas, whichever window it's in (a popped-out one's too). */
 const isCanvas = (c: unknown): c is HTMLCanvasElement => !!c && typeof (c as Node).instanceOf === 'function' && (c as Node).instanceOf(HTMLCanvasElement);
 
-const DEFAULTS: Settings = { folders: '', rolling: false, rollPost: false, above: 'none', legendary: {}, tempResource: 'Temp HP', animations: true, made: [], remember: {}, abilities: {}, lasting: [], snap: true, storage: 'Spell Storage', bases: [], presets: [], jb2aFolder: 'JB2A_DnD5e', jb2aOffer: true, noteSpells: true, orphanLights: [], coneAngle: 0, artTrim: {}, showAim: false, aimLook: 'outline', markCreatures: true, showRounds: true, atlasAreas: true, throughWalls: false, areas: {}, roundSecs: {}, marks: [], caught: [], recent: [] };
+const DEFAULTS: Settings = { folders: '', srdSpells: false, srdEdition: '2024', srdFolder: 'Combat+ SRD', rolling: false, rollWho: 'all', rollPost: false, above: 'none', legendary: {}, tempResource: 'Temp HP', animations: true, made: [], remember: {}, abilities: {}, lasting: [], snap: true, storage: 'Spell Storage', bases: [], presets: [], jb2aFolder: 'JB2A_DnD5e', jb2aOffer: true, noteSpells: true, orphanLights: [], coneAngle: 0, artTrim: {}, showAim: false, aimLook: 'outline', markCreatures: true, showRounds: true, atlasAreas: true, throughWalls: false, areas: {}, roundSecs: {}, marks: [], caught: [], recent: [] };
 
 /** A spell to pick in the cast window: a saved one, or a spell note (from a Base or found in the vault). */
-export interface Choice { key: string; name: string; source: 'stored' | 'note'; entry?: SpellEntry; stored?: StoredSpell; notePath?: string; /** A creature's ability from a statblock (Fire Breath), not a spell. */ ability?: boolean; /** Whose ability it is (its creature's name). */ owner?: string }
+export interface Choice { key: string; name: string; source: 'stored' | 'note'; entry?: SpellEntry; stored?: StoredSpell; notePath?: string; /** A creature's ability from a statblock (Fire Breath), not a spell. */ ability?: boolean; /** Whose ability it is (its creature's name). */ owner?: string; /** A built-in SRD spell (no note of its own). */ srd?: boolean }
 
 
 /** What is being cast: the area and look, before it is placed. */
-interface Pending { name: string; key: string; area: Area; file?: string; colour: string; colour2?: string; /** How its drawn shape moves while it lasts. */ motion?: string; /** What it rolls, from its text. */ roll?: RollSpec; /** A plain attack: rolled at each creature clicked, with nothing drawn. */ plain?: boolean; /** What else it does (pushes, how many, a chain, a thing it makes, difficult terrain). */ more?: More; alpha?: number; attach?: boolean; light?: EffectLight; /** How far from its caster it can be cast (feet, from the edge of their space). */ range?: number; /** The conditions it gives the creatures inside it (names). */ conditions?: string[]; /** It teleports its caster up to this far (game units). */ teleport?: number; /** Atlas's look for its area (fire, frost…); '' or missing: none. */ look?: string; /** Its Atlas area's choices (Atlas 0.15 on). */ atlas?: AtlasChoices }
+interface Pending { name: string; key: string; area: Area; file?: string; colour: string; colour2?: string; /** How its drawn shape moves while it lasts. */ motion?: string; /** What it rolls, from its text. */ roll?: RollSpec; /** A plain attack: rolled at each creature clicked, with nothing drawn. */ plain?: boolean; /** A Multiattack: the attacks it makes, one for each creature clicked, in turn. */ sequence?: { name: string; roll: RollSpec }[]; /** What else it does (pushes, how many, a chain, a thing it makes, difficult terrain). */ more?: More; alpha?: number; attach?: boolean; light?: EffectLight; /** How far from its caster it can be cast (feet, from the edge of their space). */ range?: number; /** The conditions it gives the creatures inside it (names). */ conditions?: string[]; /** It teleports its caster up to this far (game units). */ teleport?: number; /** Atlas's look for its area (fire, frost…); '' or missing: none. */ look?: string; /** Its Atlas area's choices (Atlas 0.15 on). */ atlas?: AtlasChoices }
 /** A spell's Atlas area, as chosen in the cast window: how it's drawn, its light, walls, players, how it's placed. */
 interface AtlasChoices { draw?: 'area' | 'animation'; areaLight?: 'atlas' | 'none'; throughWalls?: boolean; hidden?: boolean; tool?: boolean }
 /** A spell's remembered choices in the game's units now (remembered in another game system's: the same squares). */
@@ -180,11 +185,13 @@ export default class AtlasSpellEffects extends Plugin {
     this.addCommand({ id: 'end', name: 'End a lasting effect…', callback: () => new EndModal(this.app, this).open() });
     this.addCommand({ id: 'end-all', name: 'End every lasting effect on this map', callback: () => this.endAllHere() });
     this.addCommand({ id: 'snap', name: 'Snap effects to the grid on or off', callback: () => { void this.toggleSnap(); } });
+    this.addCommand({ id: 'srd-creatures', name: 'Add SRD creatures to the vault…', callback: () => { void this.pickSrdCreatures(); } });
+    this.addCommand({ id: 'srd-spells', name: 'Add the SRD spells to the vault as notes', callback: () => { void this.writeSrd('spells').then((n) => new Notice(`Combat+: ${n} SRD spell notes added.`)); } });
     this.addCommand({ id: 'reload', name: 'Look again for spell notes and effect files', callback: () => { this.indexVault(); this.indexSpells(); } });
     this.app.workspace.onLayoutReady(() => {
       // from an older version: its Spell Storage folder's Base becomes the first spell Base
       if (firstBases) { const b = `${this.storageFolder()}/${this.storageFolder().split('/').pop()}.base`; if (this.app.vault.getAbstractFileByPath(b)) { this.settings.bases = [b]; void this.save(); } }
-      this.indexVault(); this.indexSpells(); void this.startBases(); this.linkStatblocks(); this.wake();
+      this.indexVault(); this.indexSpells(); void this.readSrd(); void this.startBases(); this.linkStatblocks(); this.wake();
       void this.presetsToSaved();
     });
     this.registerEvent(this.app.vault.on('modify', (f) => { if (this.settings.bases.includes(f.path)) void this.startBases(); }));
@@ -625,7 +632,7 @@ export default class AtlasSpellEffects extends Plugin {
     for (const d of docs) {
       if (this.linkers.has(d) || !d.body) continue;
       const l = new StatblockLinker(d, () => this.spellNames(), (link, how) => void this.castFromStatblock(link, how), (link, how) => void this.statblockMenu(link, how), (sb) => { if (sb.closest('.atlas-statblock-preview-window')) this.tokenOfStatblock(sb); }, (link, how) => this.peekButton(link, how));
-      l.attacks = () => this.settings.rolling;
+      l.attacks = (sb) => { const k = this.settings.rolling && this.settings.rollWho === 'npcs' ? this.tokenOfStatblock(sb) : null; return this.settings.rolling && !(k && this.isPC(k.tab, k.id)); };
       l.start(); this.linkers.set(d, l);
     }
     for (const [d, l] of this.linkers) if (!docs.has(d) || !d.defaultView) { l.stop(); this.linkers.delete(d); }
@@ -680,8 +687,23 @@ export default class AtlasSpellEffects extends Plugin {
    */
   private choiceOf(link: SpellLink): Choice | null {
     if (link.ability === undefined) return this.choices().find((x) => x.key === link.key) ?? null;
+    if (link.multi?.length) {
+      // a Multiattack: its first attack's entry (its reach or range: the longest of them), named for it
+      const entries = link.multi.map((x) => abilityEntry(x.name, x.text)).filter((e): e is SpellEntry => !!e);
+      if (!entries.length) return null;
+      const far = Math.max(0, ...entries.map((e) => parseFloat(String(e.range ?? '')) || 0));
+      const entry: SpellEntry = { ...entries[0], key: `ability:${link.name.toLowerCase()}:multi`, name: link.name, ...(far ? { range: `${far} ft.` } : {}) };
+      return { key: entry.key, name: link.name, source: 'note', entry, ability: true };
+    }
     const entry = abilityEntry(link.name, link.ability);
     return entry ? { key: entry.key, name: link.name, source: 'note', entry, ability: true } : null;
+  }
+  /** A Multiattack's attacks put on its cast: one roll each, in turn (a creature's own attacks: not spells). */
+  private withSequence(p: Pending, link: SpellLink): Pending {
+    if (!link.multi?.length) return p;
+    const seq: { name: string; roll: RollSpec }[] = [];
+    for (const x of link.multi) { const r = rollSpecOf(x.text); if (r) seq.push({ name: x.name, roll: { ...r, spell: false } }); }
+    return seq.length ? { ...p, plain: true, sequence: seq, roll: seq[0].roll } : p;
   }
   /** A saved ability's key: its name, any case. */
   abilityKey(name: string): string { return name.replace(/\s+/g, ' ').trim().toLowerCase(); }
@@ -694,7 +716,7 @@ export default class AtlasSpellEffects extends Plugin {
     const m = new CastModal(this.app, this);
     await m.pick(c);
     if (how.shift) { m.casterToken = tok?.id; m.open(); return; }
-    const p = await m.pending();
+    const p = this.withSequence(await m.pending(), link);
     if (!this.atlasTab()) { new Notice('Combat+: open an Atlas map first.'); return; }
     this.place(p, tok && this.mapOf(tok.tab) === this.mapOf(this.atlasTab()!) ? tok.id : undefined);
   }
@@ -709,7 +731,7 @@ export default class AtlasSpellEffects extends Plugin {
     if (!c) return;
     const m = new CastModal(this.app, this);
     await m.pick(c);
-    const p = await m.pending();
+    const p = this.withSequence(await m.pending(), link);
     const tab = this.atlasTab();
     const here = tok && tab && this.mapOf(tok.tab) === this.mapOf(tab) ? tok : null;
     const who = here ? this.tokenName(here.tab, here.id) : null;
@@ -940,7 +962,57 @@ export default class AtlasSpellEffects extends Plugin {
       this.storedChoices.set(st.path, c); add(c);
     }
     for (const n of this.noteChoices) add(n);
+    // the SRD's, where you have none of that name
+    if (this.settings.srdSpells) for (const c of this.srdChoices) add(c);
     return out;
+  }
+
+  /** A picker of the SRD's creatures (its edition's), or all of them: written as Atlas statblock notes. */
+  async pickSrdCreatures(): Promise<void> {
+    const book = (await loadSrd())[this.settings.srdEdition];
+    const ALL = `All ${Object.keys(book.monsters).length} creatures`;
+    const m = new SrdPicker(this.app, [ALL, ...Object.keys(book.monsters)], (n) => { void this.writeSrd('monsters', n === ALL ? undefined : [n]).then((k) => new Notice(k ? `Combat+: ${k === 1 && n !== ALL ? n : `${k} creatures`} added to ${this.settings.srdFolder}.` : 'Combat+: already in your vault.')); });
+    m.setPlaceholder(`An SRD creature (${book.source}) to add as an Atlas statblock note`);
+    m.open();
+  }
+
+  /** The built-in SRD spells (its edition's), read as spell notes are. */
+  srdChoices: Choice[] = [];
+  private srdRun = 0;
+  /** The built-in SRD spells read again (on, off, or another edition). */
+  async readSrd(): Promise<void> {
+    const run = ++this.srdRun;
+    if (!this.settings.srdSpells) { this.srdChoices = []; this.namesChanged(); return; }
+    let book; try { book = (await loadSrd())[this.settings.srdEdition]; } catch (e) { console.error('Combat+: the built-in SRD could not be read', e); return; }
+    if (run !== this.srdRun || !book) return;
+    const out: Choice[] = [];
+    for (const [name, md] of Object.entries(book.spells)) {
+      const { fm, text } = splitNote(md, parseYaml);
+      const entry = spellFromNote(`srd/${this.settings.srdEdition}/${name}.md`, { ...fm, name }, text);
+      out.push({ key: `srd:${this.settings.srdEdition}:${name.toLowerCase()}`, name, source: 'note', entry, srd: true });
+    }
+    this.srdChoices = out;
+    this.namesChanged();
+  }
+
+  /**
+   * The SRD's notes written into the vault (`kind`: its spells or its creatures; `names`: just these), under the SRD
+   * folder; notes already there are left as they are. The number written.
+   */
+  async writeSrd(kind: 'spells' | 'monsters', names?: string[]): Promise<number> {
+    const book = (await loadSrd())[this.settings.srdEdition];
+    const root = (this.settings.srdFolder.trim() || 'Combat+ SRD').replace(/\/+$/, '');
+    const folder = `${root}/${kind === 'spells' ? 'Spells' : 'Bestiary'} (${book.source})`;
+    const vault = this.app.vault;
+    for (const p of [root, folder]) if (!vault.getAbstractFileByPath(p)) await vault.createFolder(p);
+    let n = 0;
+    for (const [name, md] of Object.entries(book[kind])) {
+      if (names && !names.includes(name)) continue;
+      const path = `${folder}/${noteName(name)}.md`;
+      if (vault.getAbstractFileByPath(path)) continue;
+      await vault.create(path, md); n++;
+    }
+    return n;
   }
 
   /** A spell note's text, read when it is picked. */
@@ -1652,6 +1724,16 @@ export default class AtlasSpellEffects extends Plugin {
     if (done) { this.saveSoon(); this.wake(); }
     return done;
   }
+  /** A player's own save, as they rolled it: its row saved or failed, with its damage then. */
+  ownSave(id: string, token: string, saved: boolean): void {
+    const c = this.settings.caught.find((x) => x.id === id); const r = c?.roll?.rows.find((x) => x.id === token);
+    if (!r?.own || r.applied) return;
+    const d = saved ? r.own.saved : r.own.failed;
+    Object.assign(r, { outcome: saved ? 'saved' : 'failed', rolled: d.rolled, damage: d.damage, note: 'their player rolled' });
+    if (d.why) r.why = d.why; else delete r.why;
+    delete r.own;
+    this.saveSoon(); this.wake();
+  }
   /** A condition put on a creature from a hit card (once; not tracked: you take it off). */
   giveCondition(map: string, token: string, name: string, b?: HTMLElement): void {
     const t = this.atlasTabs().find((x) => this.mapOf(x) === map); const st = t?.store.getState?.();
@@ -1915,6 +1997,13 @@ export default class AtlasSpellEffects extends Plugin {
         const total = [...String(Array.isArray(fm[k]) ? (fm[k] as unknown[]).join(', ') : fm[k]).matchAll(/\b(\d{1,2})\b/g)].reduce((a, m) => a + Number(m[1]), 0);
         if (total > 0 && total <= 30) return total;
       }
+      // a creature without levels: "a 9th-level spellcaster" in its text, else its challenge rating (at least 1), for
+      // its cantrips' damage and beams
+      const all = JSON.stringify(fm);
+      const sc = /\b(\d{1,2})(?:st|nd|rd|th)-level spellcaster\b/i.exec(all);
+      if (sc) return Number(sc[1]);
+      const crv = fm['cr'] ?? fm['challenge'] ?? fm['challenge_rating'];
+      if (crv !== undefined && crv !== null && crv !== '') { const v = String(crv).trim(); const n = /^(\d+)\s*\/\s*(\d+)/.test(v) ? 0 : Number(v.match(/\d+/)?.[0]); return Math.min(30, Math.max(1, n || 1)); }
     }
     return null;
   }
@@ -1924,7 +2013,7 @@ export default class AtlasSpellEffects extends Plugin {
    * leaps on goes from it to the nearest others in reach of it (each its own bolt).
    */
   private afterTarget(t: Tab, pending: Pending, target: string | null, caster: Point | null, casterId?: string): void {
-    if (target && this.settings.rolling && pending.roll) {
+    if (target && this.rollsFor(t, casterId) && pending.roll) {
       const after = pending.roll.after;
       void this.rollOn(t, uid(), pending.name, pending.roll, [target], casterId).then((roll) => {
         // what follows (Ice Knife's burst, hit or miss; a spider's poison, on a hit): its save for the target and those
@@ -1960,8 +2049,9 @@ export default class AtlasSpellEffects extends Plugin {
   /** An instant spell (Fireball) just went off: the creatures it hit (a card, and "In a spell" on them till it's closed). */
   private catchIn(e: Effect): void {
     if (e.lasting || e.bolt || e.outline || e.on) return;
-    if (this.settings.rolling && e.roll) {
-      const t = this.atlasTabs().find((x) => this.mapOf(x) === e.map); if (!t) return;
+    const tr = this.atlasTabs().find((x) => this.mapOf(x) === e.map);
+    if (tr && this.rollsFor(tr, e.rollBy ?? e.caster) && e.roll) {
+      const t = tr;
       const ids = this.insideOf(t, e);
       if (ids.length) void this.rollOn(t, e.id, e.name, e.roll, ids, e.rollBy ?? e.caster);
       return;
@@ -2112,7 +2202,8 @@ export default class AtlasSpellEffects extends Plugin {
       const hp = ((t.store.getState()?.objects?.tokens?.[k] as { resources?: Record<string, { current: number; max: number }> } | undefined)?.resources ?? {});
       const hk = ['hp', 'health', 'hitpoints'].find((x) => hp[x]);
       const hurt = !!hk && hp[hk].max > 0 && hp[hk].current < hp[hk].max;
-      return { id: k, name: this.tokenName(t, k), stats, conds: this.condNames(t, k), ...(feet !== undefined ? { feet: Math.round(feet * 10) / 10 } : {}), ...(hurt ? { hurt } : {}) };
+      const own = this.settings.rollWho === 'npcs' && this.isPC(t, k);
+      return { id: k, name: this.tokenName(t, k), stats, conds: this.condNames(t, k), ...(feet !== undefined ? { feet: Math.round(feet * 10) / 10 } : {}), ...(hurt ? { hurt } : {}), ...(own ? { own } : {}) };
     }));
     const level = this.levelOf(t, by);
     const roll = rollAgainst(spec, caster, targets, { level, edge, slot: slot ?? null, ...(by ? { casterConds: this.condNames(t, by) } : {}) });
@@ -2243,6 +2334,13 @@ export default class AtlasSpellEffects extends Plugin {
           if (r.temp) left.createSpan({ cls: 'sfx-roll-why', text: `gains ${r.temp} temporary hit points` });
           const had = t3 ? this.tempOf(t3, r.id).value : 0;
           if (had > 0 && r.damage > 0 && !r.applied) left.createSpan({ cls: 'sfx-roll-why', text: `${had} temporary hit points go first` });
+          // a player's own save: what they rolled, told to you
+          if (r.own && !r.applied) {
+            for (const [text, saved] of [['Saved', true], ['Failed', false]] as const) {
+              const b = left.createEl('button', { cls: 'sfx-roll-btn sfx-roll-own', text }); b.dataset.act = '1';
+              this.caughtActs.set(b, () => this.ownSave(c.id, r.id, saved));
+            }
+          }
           if (r.onSave && !r.applied) {
             const b = left.createEl('button', { cls: 'sfx-roll-btn sfx-roll-lr', text: 'Use Legendary Resistance' }); b.dataset.act = '1';
             this.caughtActs.set(b, () => this.useLegendary(c.id, r.id));
@@ -2959,7 +3057,7 @@ export default class AtlasSpellEffects extends Plugin {
     let caster: { x: number; y: number } | null = ct ? { x: ct.x, y: ct.y } : null;
     let count = done;
     // how many it makes (darts, rays; more beams as the caster's level goes up): it stops by itself after the last
-    const total = pending.more && ((pending.more.count ?? 1) > 1 || pending.more.steps?.length) ? countAt(pending.more, this.levelOf(tab, casterToken)) : 0;
+    const total = pending.sequence?.length ? pending.sequence.length : pending.more && ((pending.more.count ?? 1) > 1 || pending.more.steps?.length) ? countAt(pending.more, this.levelOf(tab, casterToken)) : 0;
     const ring = (c: { x: number; y: number; r: number } | null) => { if (this.placing) this.placing.range = c ? this.rangeRing(tab, pending, c)?.ring ?? null : null; };
     const toWorld = (e: PointerEvent | MouseEvent): Point | null => {
       const r = tab.canvas.getBoundingClientRect();
@@ -2987,7 +3085,7 @@ export default class AtlasSpellEffects extends Plugin {
         say(); return;
       }
       const fx = effect(uid(), p);
-      if (fx) { this.castTarget(fx, pending); count++; this.afterTarget(tab, pending, this.tokenAt(tab, p)?.id ?? null, caster, casterToken); }
+      if (fx) { this.castTarget(fx, pending); count++; this.afterTarget(tab, this.stepOf(pending, count - 1), this.tokenAt(tab, p)?.id ?? null, caster, casterToken); }
       if (fx && a.self) { this.placing.stop(); return; }          // only the caster: done
       if (fx && total > 1 && count >= total) { this.placing.stop(); return; }          // its last dart, ray or beam: done
       say();
@@ -3039,6 +3137,32 @@ export default class AtlasSpellEffects extends Plugin {
     } else this.cast(fx);
   }
 
+  /**
+   * A player character's token: marked so in Atlas's token library (the one it was placed from, or one sharing its
+   * statblock note).
+   */
+  isPC(t: Tab, id: string): boolean {
+    const tok = t.store.getState()?.objects?.tokens?.[id] as { playerCharacter?: boolean; assetId?: string; imagePath?: string; statblockPath?: string } | undefined;
+    if (!tok) return false;
+    if (tok.playerCharacter === true) return true;
+    const svc = call<{ loadedTokenAssets?: () => { id: string; playerCharacter?: boolean; imagePath?: string; statblockPath?: string }[] }>(t.view.serviceManager, 'getAssetService');
+    let lib: { id: string; playerCharacter?: boolean; imagePath?: string; statblockPath?: string }[] = [];
+    try { lib = typeof svc?.loadedTokenAssets === 'function' ? svc.loadedTokenAssets() : []; } catch { lib = []; }
+    const own = lib.find((a) => (tok.assetId !== undefined && a.id === tok.assetId) || (!!tok.imagePath && a.imagePath === tok.imagePath));
+    if (own) return own.playerCharacter === true;
+    return !!tok.statblockPath && lib.some((a) => a.playerCharacter === true && a.statblockPath === tok.statblockPath);
+  }
+  /** Whether a cast by `caster` is rolled: rolling on, and (NPCs only) not a player character's own. */
+  rollsFor(t: Tab, caster: string | undefined): boolean {
+    return this.settings.rolling && !(this.settings.rollWho === 'npcs' && !!caster && this.isPC(t, caster));
+  }
+
+  /** A Multiattack's attack number `i` (its name and roll); anything else as it is. */
+  private stepOf(p: Pending, i: number): Pending {
+    const s = p.sequence?.[Math.min(i, (p.sequence?.length ?? 1) - 1)];
+    return s ? { ...p, name: `${p.name}: ${s.name}`, roll: s.roll } : p;
+  }
+
   /** A creature and those within `feet` of it (as the rules count: next to it, 5 ft). */
   near(t: Tab, id: string, feet: number): string[] {
     const k = this.tokenOf(t, id); if (!k) return [id];
@@ -3081,9 +3205,9 @@ export default class AtlasSpellEffects extends Plugin {
     const fx = this.targetEffect(t, pending, c ? { x: c.x, y: c.y } : null, uid(), { x: k.x, y: k.y }, target);
     if (!fx) return;
     this.castTarget(fx, pending);
-    this.afterTarget(t, pending, target, c ? { x: c.x, y: c.y } : null, caster);
+    this.afterTarget(t, this.stepOf(pending, 0), target, c ? { x: c.x, y: c.y } : null, caster);
     // more than one to send (Magic Missile's darts): the rest are clicked on the map
-    const total = pending.more && ((pending.more.count ?? 1) > 1 || pending.more.steps?.length) ? countAt(pending.more, this.levelOf(t, caster)) : 0;
+    const total = pending.sequence?.length ? pending.sequence.length : pending.more && ((pending.more.count ?? 1) > 1 || pending.more.steps?.length) ? countAt(pending.more, this.levelOf(t, caster)) : 0;
     if (total > 1) this.castAt(t, pending, caster, 1);
   }
 
@@ -4274,6 +4398,14 @@ class DownloadModal extends Modal {
   onClose(): void { this.contentEl.empty(); }
 }
 
+/** A pick from a list of names (the SRD's creatures). */
+class SrdPicker extends FuzzySuggestModal<string> {
+  constructor(app: App, private readonly items: string[], private readonly chosen: (name: string) => void) { super(app); }
+  getItems(): string[] { return this.items; }
+  getItemText(n: string): string { return n; }
+  onChooseItem(n: string): void { this.chosen(n); }
+}
+
 class EffectSettings extends PluginSettingTab {
   constructor(app: App, private readonly plugin: AtlasSpellEffects) { super(app, plugin); }
   hide(): void { this.plugin.dlListener = null; }
@@ -4306,7 +4438,7 @@ class EffectSettings extends PluginSettingTab {
   private sections(): { heading?: string; rows: { name: string; desc?: string | DocumentFragment; render: (st: Setting) => void }[] }[] {
     const p = this.plugin, s = p.settings;
     type Row = { name: string; desc?: string | DocumentFragment; render: (st: Setting) => void };
-    const main: Row[] = [], spells: Row[] = [], anims: Row[] = [], map: Row[] = [], game: Row[] = [], players: Row[] = [], rolls: Row[] = [];
+    const main: Row[] = [], srd: Row[] = [], spells: Row[] = [], anims: Row[] = [], map: Row[] = [], game: Row[] = [], players: Row[] = [], rolls: Row[] = [];
     // ── spells ──
     spells.push({
       name: 'Spell bases',
@@ -4339,6 +4471,35 @@ class EffectSettings extends PluginSettingTab {
       name: 'Also find spell notes anywhere',
       desc: 'Also count notes outside your Bases as spells when their properties have a school and a level, or they have a “spell” tag.',
       render: (st) => { st.addToggle((t) => t.setValue(s.noteSpells).onChange((v) => { void (async () => { s.noteSpells = v; await p.save(); p.indexSpells(); this.redraw(); })(); })); },
+    });
+
+    // ── the SRD ──
+    const SRD_ATTR = 'Spells and creatures from the System Reference Documents 5.2.1 and 5.1 by Wizards of the Coast LLC, licensed under CC-BY-4.0 (https://creativecommons.org/licenses/by/4.0/legalcode).';
+    srd.push({
+      name: 'Built-in SRD spells',
+      desc: `Every SRD spell can be cast, from the cast window and from statblocks, with no spell note of its own. A note or saved spell of yours with the same name is used instead. ${SRD_ATTR}`,
+      render: (st) => { st.addToggle((t) => t.setValue(s.srdSpells).onChange((v) => { void (async () => { s.srdSpells = v; await p.save(); await p.readSrd(); this.redraw(); })(); })); },
+    });
+    srd.push({
+      name: 'SRD edition',
+      desc: 'Which rules the built-in spells and creatures follow.',
+      render: (st) => { st.addDropdown((d) => d.addOption('2024', 'D&D 2024 (SRD 5.2.1)').addOption('2014', 'D&D 2014 (SRD 5.1)').setValue(s.srdEdition).onChange((v) => { void (async () => { s.srdEdition = v === '2014' ? '2014' : '2024'; await p.save(); await p.readSrd(); })(); })); },
+    });
+    srd.push({
+      name: 'Add SRD notes to your vault',
+      desc: 'Writes the SRD’s creatures as Atlas statblock notes (link a token to one), or its spells as spell notes you can edit, into the folder below. Notes already there are left alone.',
+      render: (st) => {
+        st.addButton((b) => b.setButtonText('Creatures…').onClick(() => { void p.pickSrdCreatures(); }));
+        st.addButton((b) => b.setButtonText('All spells').onClick(() => { void p.writeSrd('spells').then((n) => new Notice(`Combat+: ${n} SRD spell notes added.`)); }));
+      },
+    });
+    srd.push({
+      name: 'SRD folder',
+      desc: 'Where SRD notes are written.',
+      render: (st) => { st.addText((t) => {
+        t.setPlaceholder('Combat+ SRD').setValue(s.srdFolder).onChange((v) => { void (async () => { s.srdFolder = v.trim() || 'Combat+ SRD'; await p.save(); })(); });
+        new FolderSuggest(this.app, t.inputEl, async (v) => { s.srdFolder = v.trim() || 'Combat+ SRD'; await p.save(); });
+      }); },
     });
 
     // ── animations ──
@@ -4394,7 +4555,7 @@ class EffectSettings extends PluginSettingTab {
     map.push(toggle('Spells as Atlas areas', 'Each spell is also one of Atlas’s own areas: lit, saved with the scene, stopped by walls and seen by online players. Move or delete it in Atlas and the spell follows.', () => s.atlasAreas, (v) => { s.atlasAreas = v; }));
     map.push({ name: 'Spells over tokens', desc: 'Draw spells under the tokens, or on top of them. Tokens can still be moved, and their bars and names stay on top either way.', render: (st) => { st.addDropdown((d) => d.addOption('none', 'Under the tokens').addOption('instant', 'Instant spells and bolts over them').addOption('all', 'All over them').setValue(s.above).onChange((v) => { void (async () => { s.above = v === 'all' || v === 'instant' ? v : 'none'; await p.save(); p.wake(); })(); })); } });
     main.push(toggle('Spell effects', 'Play animations for spells and abilities. Off: casting still places the area so you can see who it catches, and rolling, conditions and pushes still work.', () => s.animations, (v) => { s.animations = v; }));
-    main.push({ name: 'Rolling (D&D 5e and 2024 only)', desc: `For D&D 5e (2014) and D&D 2024 only: other game systems aren’t supported yet.${p.systemOf() && !p.systemOf().startsWith('builtin:dnd5e') ? ' Your open map isn’t D&D 5e, so rolls there may be wrong.' : ''} Rolls spells, abilities and weapon attacks against the creatures they hit, using their statblocks, with the results on a card. Apply damage takes it off their HP (Ctrl+Z undoes it). Turns on Attack buttons in statblocks.`, render: (st) => { st.addToggle((t) => t.setValue(s.rolling).onChange((v) => { void (async () => { s.rolling = v; await p.save(); p.wake(); p.rescanStatblocks(); this.redraw(); })(); })); } });
+    main.push({ name: 'Rolling (D&D 5e and 2024 only)', desc: `For D&D 5e (2014) and D&D 2024 only: other game systems aren’t supported yet.${p.systemOf() && !p.systemOf().startsWith('builtin:dnd5e') ? ' Your open map isn’t D&D 5e, so rolls there may be wrong.' : ''} Rolls spells, abilities and weapon attacks against the creatures they hit, using their statblocks, with the results on a card. Apply damage takes it off their HP (Ctrl+Z undoes it). Turns on Attack buttons in statblocks. NPCs only: player characters’ own attacks, spells and saves are left to their players (their saves get Saved and Failed buttons on the card).`, render: (st) => { st.addDropdown((d) => d.addOption('off', 'Off').addOption('npcs', 'NPCs only (players roll their own)').addOption('all', 'Everyone').setValue(!s.rolling ? 'off' : s.rollWho).onChange((v) => { void (async () => { s.rolling = v !== 'off'; if (v === 'npcs' || v === 'all') s.rollWho = v; await p.save(); p.wake(); p.rescanStatblocks(); this.redraw(); })(); })); } });
     if (s.rolling) {
     rolls.push({ name: 'Temporary HP resource', desc: 'Temporary HP is kept in the Atlas resource with this name. Add a resource called this in Atlas to see it as a bar on tokens.', render: (st) => { st.addText((t) => t.setPlaceholder('Temp HP').setValue(s.tempResource).onChange((v) => { void (async () => { s.tempResource = v.trim() || 'Temp HP'; await p.save(); })(); })); } });
     rolls.push(toggle('Post rolls to the table log', 'Also send each card’s rolls to Atlas’s table log when an online table is running.', () => s.rollPost, (v) => { s.rollPost = v; }));
@@ -4447,6 +4608,6 @@ class EffectSettings extends PluginSettingTab {
         t.onChange((v) => { void (async () => { const n = Number(v); if (!v.trim()) s.coneAngle = 0; else if (n >= 1 && n <= 170) s.coneAngle = n; else return; await p.save(); })(); });
       }); },
     });
-    return ([{ rows: main }, { heading: 'Spells', rows: spells }, { heading: 'On the map', rows: map }, { heading: 'Players', rows: players }, { heading: 'Your game', rows: game }, { heading: 'Rolling', rows: rolls }, { heading: 'Animation files', rows: anims }] as { heading?: string; rows: Row[] }[]).filter((x) => x.rows.length);
+    return ([{ rows: main }, { heading: 'Spells', rows: spells }, { heading: 'On the map', rows: map }, { heading: 'Players', rows: players }, { heading: 'Your game', rows: game }, { heading: 'Rolling', rows: rolls }, { heading: 'Built-in SRD (D&D 5e)', rows: srd }, { heading: 'Animation files', rows: anims }] as { heading?: string; rows: Row[] }[]).filter((x) => x.rows.length);
   }
 }

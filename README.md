@@ -39,7 +39,7 @@ Settings → Community plugins → Browse → search **Combat+** (or *Atlas*) �
 ✨ is in Atlas's toolbar.
 
 ## What it reads, writes and downloads
-- **Network:** the only thing it fetches is JB2A's free animations, from JB2A's public GitHub
+- **Network:** the only thing it fetches is JB2A's free animations (the built-in SRD is inside the plugin, not downloaded), from JB2A's public GitHub
   (`raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e`). That happens when you first use an animation, when its
   preview picture shows in the cast window, or when you press *Download everything*. Turn *Offer every JB2A
   animation* off in the settings and it fetches nothing at all. No tracking, no accounts, nothing sent anywhere.
@@ -51,7 +51,8 @@ Settings → Community plugins → Browse → search **Combat+** (or *Atlas*) �
 - **Your vault:** it saves downloaded animations, and a JB2A credit and licence note, in the JB2A folder
   (`JB2A_DnD5e`). *Save* writes `effect-…` properties onto that spell's note (and *Delete* takes them off
   again). A spell of your own (*Save as new…*) gets a note, and a Base, in its own folder (*Spell Storage*);
-  *Delete* puts that note in Obsidian's bin. It never deletes or changes anything else.
+  *Delete* puts that note in Obsidian's bin. **Add SRD notes** (only when you ask) writes SRD creature and spell
+  notes into its own folder (*Combat+ SRD*), never over a note that's there. It never deletes or changes anything else.
 - **Atlas:** it reads the open map (grid, tokens, view) and adds lights and walls for lasting effects when you ask
   for them. It removes those again when the effect ends, and doesn't add them to your undo history. A spell that
   is difficult terrain adds a map feature of its shape, and a summoned thing adds a token (its picture, a small
@@ -500,7 +501,7 @@ pick by the spell's name, as before.
 Rolling is for **D&D 5e (2014) and D&D 2024 only**. Other game systems aren't supported yet: their effects work,
 but leave rolling off.
 
-Turn on **Rolling** at the top of the settings. It and **Spell effects** are separate switches: use either or
+Set **Rolling** at the top of the settings: **Off**, **NPCs only** (player characters' own attacks and spells are left to their players, and their saves get **Saved** and **Failed** buttons on the card), or **Everyone**. Player characters are the tokens marked as such in Atlas's token library. It and **Spell effects** are separate switches: use either or
 both. When a spell or ability is cast, its card rolls:
 - **an attack** against each target's AC: a natural 20 is a crit (its damage dice doubled), a natural 1 a miss;
 - **or each creature's save** against the DC, with its damage rolled once for all and halved on a save where the
@@ -566,6 +567,9 @@ one from its menu: the hit or save is rolled with its damage, and nothing is dra
 failed save gives a condition (*Stunned*, *Grappled*, *Prone*), its row has a **Give** button that puts it on the
 token; take it off yourself.
 
+**Multiattack.** A statblock's Multiattack gets a **Use** button: click it, then click a target for each attack it
+makes, in turn. Where it offers a choice of attacks, the first is used.
+
 **Extra damage on a hit** (Sneak Attack, Divine Smite, Hex, Hunter's Mark): type it in the box on an attack's card,
 like `3d6` or `2d8 radiant`, and press **Add** (or Enter). It's rolled for each creature hit, doubled on a crit,
 and resisted like the rest. With no type given, it's the attack's own.
@@ -579,6 +583,85 @@ resistances to nonmagical attacks.
 
 **Spell effects** can be turned off in the settings: no animations, and spells, breath weapons and attacks are
 still placed and rolled.
+
+## Built-in SRD (D&D 5e)
+Every spell in the D&D System Reference Document is built in, so spells in a statblock's list can be cast, and
+rolled, with no spell notes in your vault. Pick the **SRD edition** in the settings: **D&D 2024 (SRD 5.2.1)** or
+**D&D 2014 (SRD 5.1)**. It's off until you turn on **Built-in SRD spells** in the settings. A spell note or saved
+spell of yours with the same name is always used instead.
+
+**Add SRD notes to your vault** (in the settings, or the commands *Add SRD creatures to the vault…* and *Add the SRD
+spells to the vault as notes*) writes:
+- **Creatures** as Atlas statblock notes (Atlas's built-in 5E 2024 or 2014 Monster template), one at a time or all
+  of them. Link a token to one in Atlas, and its attacks, saves, Multiattack and breath weapons have buttons.
+- **Spells** as spell notes you can edit, change the look of, or add to a Base.
+
+Notes already in the folder are never overwritten.
+
+*This plugin includes material from the System Reference Document 5.2.1 ("SRD 5.2.1") and the System Reference
+Document 5.1 ("SRD 5.1") by Wizards of the Coast LLC, available at https://www.dndbeyond.com/srd and
+https://dnd.wizards.com/resources/systems-reference-document. Both are licensed under the Creative Commons Attribution
+4.0 International License, available at https://creativecommons.org/licenses/by/4.0/legalcode. The text was taken
+from the 5e-bits 5e-database project's transcription (https://github.com/5e-bits/5e-database).*
+
+## Writing statblocks and spells it reads well
+Combat+ reads plain statblock and spell text, the way the official books and the SRD write it. You don't need any
+special fields. If you write your own (homebrew, or a monster typed in by hand), these are the patterns it looks
+for. Anything it can't read is shown as **?** on the card, for you to decide.
+
+**An entry's name.** Each action, trait or reaction is a name, then a full stop, then its text: `Bite. Melee
+Attack Roll: …`. In Atlas's statblock editor, that's an entry's *Name* and *Description*. Uses go in brackets after
+the name and are ignored when matching: `Fire Breath (Recharge 5–6)`, `Misty Step (3/Day)`.
+
+**Attacks** (an **Attack** button):
+- The 2024 form: `Melee Attack Roll: +7, reach 5 ft. Hit: 10 (2d6 + 3) Slashing damage.`
+- The 2014 form: `Melee Weapon Attack: +7 to hit, reach 5 ft., one target. Hit: 10 (2d6 + 3) slashing damage.`
+- A player's sheet: `Melee: +5 to hit. Hit: 1d8+3 Slashing.`
+- Several damage types: `Hit: 13 (2d6 + 6) Slashing damage plus 4 (1d8) Cold damage.` Each is rolled and resisted
+  on its own.
+- Reach and range: `reach 10 ft.`, `range 80/320 ft.` (disadvantage past 80, out of range past 320), or both:
+  `reach 5 ft. or range 20/60 ft.`
+- A save that follows a hit: `Hit: 4 (1d4 + 2) Piercing damage, and the target must make a DC 11 Constitution
+  saving throw, taking 10 (3d6) Poison damage on a failed save, or half as much damage on a successful one.` Write
+  `Hit or miss` to roll the save on a miss too.
+- A magic weapon: put its bonus or rarity in its name (`+2 Greatsword`, `Frost Brand (Very Rare)`), and its hits
+  count as magical.
+
+**Saves at one creature** (a **Use** button): `Wisdom Saving Throw: DC 11, one creature the mummy can see within 60
+feet. Failure: …`, or `the target must succeed on a DC 15 Constitution saving throw or …`.
+
+**Areas** (a **Use** button that places it): name the shape and size, as the books do: `a 60-foot Cone`, `a
+30-foot-radius Sphere`, `a 100-foot-long, 5-foot-wide Line`, `a 20-foot Cube`, `a 10-foot Emanation`. Then the save
+and damage: `Dexterity Saving Throw: DC 21, each creature in a 60-foot Cone. Failure: 59 (17d6) Fire damage.
+Success: Half damage.`
+
+**Multiattack** (a **Use** button): name its attacks by their entry names: `The ogre makes one Bite attack and two
+Claw attacks.` Also read: `makes three Rend attacks`, `one with its bite and one with its claws` (2014), `two
+Greatsword or Heavy Crossbow attacks` (the first is used), and `…and it uses Dreadful Glare`.
+
+**Conditions:** `the target has the Prone condition`, `is Restrained`, `falls Prone`. They're offered as a **Give**
+button on a hit or a failed save, using your collection's condition names.
+
+**Extra damage on a hit** (a button on the attacker's cards): a trait that says `deals an extra 7 (2d6) damage when
+it hits`, like Sneak Attack or Martial Advantage. A player's Sneak Attack that says it grows with Rogue levels is
+worked out from their level.
+
+**The creature itself** (for being hit or saving):
+- **AC, hit points and ability scores** come from Atlas's statblock fields.
+- **Saving throws** come from its saves list. Otherwise its ability modifiers are used.
+- **Resistances, immunities and vulnerabilities** are read from their fields. `from nonmagical attacks` is read too.
+- **Traits that change rolls** are found by name: `Legendary Resistance (3/Day)`, `Magic Resistance`, `Evasion`.
+- **Its spell save DC and attack bonus** come from its text (`spell save DC 15, +7 to hit with spell attacks`), or
+  are worked out from its proficiency and casting ability.
+- **Its level** (for cantrips and beams) comes from `level: 5`, `class: Warlock 5`, `a 9th-level spellcaster`, or
+  else its challenge rating.
+
+**Spells** are read from their own text, the same way: their area, attack or save, damage and its type, `half as
+much damage on a successful one`, `increases by 1d6 for each spell slot level above 3`, cantrip upgrades
+(`levels 5 (2d10), 11 (3d10), and 17 (4d10)`), healing (`regains a number of Hit Points equal to 2d8 plus your
+spellcasting ability modifier`), and temporary hit points. Damage that lands later (`at the end of its next turn`)
+or instead (`If the target is missing any of its Hit Points, it instead takes 1d12`) isn't added to the first
+roll.
 
 ## What else a spell can do
 Each of these is read from the spell's or ability's own text and can be changed, and saved, under **Also** in the
@@ -617,6 +700,8 @@ cast window. Only the ones that fit the spell's kind are shown.
 ## Licence
 The add-on's code: MIT (see `LICENSE`). JB2A's animations are not part of it. They're downloaded from JB2A and
 stay under JB2A's own licence, CC BY-NC-SA 4.0, which is also why this add-on is and stays free.
+The built-in SRD (`src/srd-data.ts`, made by `tools/srd/build.py`) is the System Reference Documents 5.2.1 and 5.1
+by Wizards of the Coast LLC, under CC-BY-4.0, not MIT: see *Built-in SRD* above for its attribution.
 
 ## Building
 `npm install`, then `npm run build` (makes `main.js`). `npm run check` type-checks, and `npm run lint` runs

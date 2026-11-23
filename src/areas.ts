@@ -289,7 +289,7 @@ export function abilityEntry(name: string, text: string): SpellEntry | null {
     // or a save made by one creature ("Stunning Strike… the target must succeed on a Constitution saving throw",
     // "Dreadful Glare. Wisdom Saving Throw: DC 11, one creature the mummy can see")
     const r = rollSpecOf(t);
-    const attack = !!r && r.kind === 'attack' && r.bonus !== undefined && (r.damage.length > 0 || /\bHit:[^.]*\bcondition\b/i.test(t));
+    const attack = !!r && r.kind === 'attack' && r.bonus !== undefined && (r.damage.length > 0 || !!r.after || /\bHit:/i.test(t));      // (a hit that only restrains or grapples counts too)
     const save = !!r && r.kind === 'save' && /Saving Throw:\s*DC|\bmust (?:make|succeed on)\b[^.]{0,40}\bsaving throw|\b(?:target|creature)\b[^.]{0,40}\b(?:makes?|succeeds?)\b[^.]{0,40}\bsaving throw/i.test(t)
       && !/\ballows? (?:it|you|them) to make\b|\bwhen (?:it|you) (?:make|succeed|fail)/i.test(t);
     if (!attack && !save) return null;

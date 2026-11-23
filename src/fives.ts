@@ -7,6 +7,16 @@ import { elementsOf } from './elements';
 
 /** Spells the pack has an animation for under another name. */
 const ALIASES: Record<string, string> = {
+  // summoned helpers and companions: a puff of smoke where they appear
+  'find steed': 'Generic/Smoke/SmokePuff01', 'find familiar': 'Generic/Smoke/SmokePuff01', 'giant insect': 'Generic/Smoke/SmokePuff01', "mordenkainen's faithful hound": 'Generic/Smoke/SmokePuff01',
+  'faithful hound': 'Generic/Smoke/SmokePuff01', 'conjure fey': 'Generic/Creature/FairiesOutwardBurst01', 'simulacrum': 'Generic/Smoke/SmokePuffRing01', 'conjure animals': 'Generic/Smoke/SmokePuff01',
+  // wards and circles drawn on the ground: their school's circle
+  'hallow': 'Generic/Magic_Signs/AbjurationCircleComplete', 'magic circle': 'Generic/Magic_Signs/AbjurationCircleComplete', 'glyph of warding': 'Generic/Magic_Signs/Runes/AbjurationRuneComplete',
+  'forbiddance': 'Generic/Magic_Signs/AbjurationCircleComplete',
+  // the rest named
+  'wish': 'Generic/Particles/ParticleBurstStar01', 'power word kill': 'Generic/Template/Circle/TemplateSkullCircle', 'storm of vengeance': 'Generic/Template/Circle/Lightning/',
+  'incendiary cloud': 'Generic/Template/Circle/Smoke/', 'meld into stone': 'Generic/Smoke/SmokePuff01', 'contact other plane': 'Generic/Portals/', 'harm': 'Generic/Template/Circle/TemplateSkullCircle',
+  'starry wisp': 'Generic/RangedSpell/02/', 'power word heal': 'Generic/Healing/HealingAbility_02', 'mass heal': 'Generic/Healing/HealingAbility_02', 'heal': 'Generic/Healing/HealingAbility_02',
   "evard's black tentacles": '4th_Level/Black_Tentacles', "bigby's hand": '5th_Level/Arcane_Hand', "hunter's mark": '1st_Level/Hunters_Mark',
   "jim's magic missile": '1st_Level/Magic_Missile', 'delayed blast fireball': '3rd_Level/Fireball', 'meteor swarm': '3rd_Level/Fireball',
   "mordenkainen's sword": '2nd_Level/Spiritual_Weapon', 'thunderclap': '2nd_Level/Shatter', 'thunderous smite': '2nd_Level/Shatter',

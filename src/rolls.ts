@@ -388,6 +388,8 @@ export interface RollRow {
   /** A failed save that Legendary Resistance could turn: its damage then. */
   onSave?: { rolled: number; damage: number; why?: string };
   legendary?: boolean;
+  /** A save its player rolls: its damage either way, for Saved or Failed on its card. */
+  own?: { saved: { rolled: number; damage: number; why?: string }; failed: { rolled: number; damage: number; why?: string } };
   /** Temporary hit points it gives this creature. */
   temp?: number;
 }
@@ -433,7 +435,7 @@ export interface CastRoll { header: string; damageText: string; rows: RollRow[];
 export type Edge = 'normal' | 'advantage' | 'disadvantage';
 
 /** A creature a spell is rolled against: its statblock, its conditions (Atlas's, by name or id), how far from the caster (feet). */
-export interface Target { id: string; name: string; stats: Stats | null; conds?: readonly string[]; feet?: number; /** Missing any of its hit points. */ hurt?: boolean }
+export interface Target { id: string; name: string; stats: Stats | null; conds?: readonly string[]; feet?: number; /** Missing any of its hit points. */ hurt?: boolean; /** A player character who rolls their own save (its row waits for Saved or Failed). */ own?: boolean }
 
 const has = (conds: readonly string[] | undefined, ...names: string[]): boolean => !!conds?.some((c) => names.some((n) => c.toLowerCase().includes(n)));
 /** Advantage and disadvantage together: neither. */
@@ -525,6 +527,8 @@ export function rollAgainst(spec: RollSpec, caster: Stats | null, targets: Targe
       const failed = evade ? { ...totalOn(rolled, t.stats, true, magical), why: 'Evasion: half' } : totalOn(rolled, t.stats, false, magical);
       const tot = outcome === 'saved' ? saved : failed;
       const note = [e.note, autoFail ? `fails ${ABILITY_LABEL[ab]} saves (${(t.conds ?? []).find((c) => /paralyz|stunned|unconscious|petrified/i.test(c))})` : ''].filter(Boolean).join('; ');
+      // a player's own save: no roll here; its row waits for Saved or Failed (its damage on a failure meanwhile)
+      if (t.own && !autoFail) return { id: t.id, name: t.name, ...(bonus !== undefined ? { bonus } : {}), ...(dc !== undefined ? { against: dc } : {}), outcome: 'unknown', ...failed, note: [e.note, 'their player rolls the save'].filter(Boolean).join('; '), own: { saved, failed }, ...giveTemp() };
       const lr = outcome === 'failed' && (t.stats?.legendary ?? 0) > 0;
       return { id: t.id, name: t.name, d20: r, kept: k, ...(bonus !== undefined ? { bonus } : {}), ...(dc !== undefined ? { against: dc } : {}), outcome, ...tot, ...(note ? { note } : {}), ...(lr ? { onSave: saved } : {}), ...(outcome !== 'saved' ? giveTemp() : {}) };
     });

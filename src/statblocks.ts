@@ -8,7 +8,42 @@
 import { abilityEntry } from './areas';
 
 /** A spell a name in a statblock stands for. */
-export interface SpellLink { key: string; name: string; /** A creature's ability, not a spell: its own text in the statblock. */ ability?: string; /** A plain attack (a sword, a bite): rolled at a creature, nothing drawn. */ attack?: boolean }
+export interface SpellLink { key: string; name: string; /** A creature's ability, not a spell: its own text in the statblock. */ ability?: string; /** A plain attack (a sword, a bite): rolled at a creature, nothing drawn. */ attack?: boolean; /** A Multiattack: the attacks it makes, in turn (each its name and text). */ multi?: { name: string; text: string }[] }
+
+const WORDS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, a: 1, an: 1, once: 1, twice: 2 };
+/**
+ * A Multiattack's attacks, in turn, from its text and the creature's own attacks: "makes three Rend attacks", "makes
+ * one Bite attack and two Claw attacks", "makes two attacks, using Scimitar or Shortbow in any combination" (the
+ * first named, each time: change any on the map by clicking another of its buttons). Empty: none read.
+ */
+export function multiOf(text: string, attacks: { name: string; text: string }[]): { name: string; text: string }[] {
+  const t = text.replace(/\s+/g, ' ');
+  const byName = (n: string) => attacks.find((a) => a.name.toLowerCase() === n.toLowerCase());
+  const out: { name: string; text: string }[] = [];
+  const names = attacks.map((a) => a.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).sort((a, b) => b.length - a.length);
+  if (!names.length) return out;
+  const num = String.raw`(\d+|one|two|three|four|five|six|seven|eight|an?|once|twice)`;
+  // "three Rend attacks", "one Bite attack", "two attacks with its Claws", "attacks twice with its Longsword"
+  const re = new RegExp(String.raw`\b` + num + String.raw`\s+(` + names.join('|') + String.raw`)\s+attacks?\b|\b` + num + String.raw`\s+(?:attacks?\s+)?with (?:its|their|his|her) (` + names.join('|') + String.raw`)s?\b|\battacks? (` + 'once|twice|' + String.raw`\d+ times) with (?:its|their) (` + names.join('|') + String.raw`)s?\b`, 'gi');
+  for (const m of t.matchAll(re)) {
+    const n = WORDS[(m[1] ?? m[3] ?? m[5] ?? '').toLowerCase()] ?? (parseInt(m[1] ?? m[3] ?? m[5] ?? '', 10) || 1);
+    const a = byName(m[2] ?? m[4] ?? m[6] ?? ''); if (!a) continue;
+    for (let i = 0; i < Math.min(n, 8); i++) out.push(a);
+  }
+  // "two Javelin or Morningstar attacks" (the first, each time); "as many Bite attacks as it has heads" (one: click more)
+  if (!out.length) for (const m of t.matchAll(new RegExp(String.raw`\b` + num + String.raw`\s+(` + names.join('|') + String.raw`)\s+or\s+(?:` + names.join('|') + String.raw`)\s+attacks?\b|\bas many (` + names.join('|') + String.raw`) attacks\b`, 'gi'))) {
+    const n = m[1] ? WORDS[m[1].toLowerCase()] ?? (parseInt(m[1], 10) || 1) : 1;
+    const a = byName(m[2] ?? m[3] ?? ''); if (!a) continue;
+    for (let i = 0; i < Math.min(n, 8); i++) out.push(a);
+  }
+  // "…and it uses Dreadful Glare"
+  if (out.length) for (const m of t.matchAll(new RegExp(String.raw`\buses (` + names.join('|') + String.raw`)\b`, 'gi'))) { const a = byName(m[1]); if (a) out.push(a); }
+  if (out.length) return out;
+  // "makes two attacks, using Scimitar or Shortbow in any combination"
+  const any = new RegExp(String.raw`\bmakes ` + num + String.raw`\s+(?:\w+\s+)?attacks?\b[^.]*?\b(` + names.join('|') + String.raw`)\b`, 'i').exec(t);
+  if (any) { const n = WORDS[any[1].toLowerCase()] ?? (parseInt(any[1], 10) || 1); const a = byName(any[2]); if (a) for (let i = 0; i < Math.min(n, 8); i++) out.push(a); }
+  return out;
+}
 
 const norm = (s: string): string => s.toLowerCase().replace(/[’']/g, "'").replace(/\s+/g, ' ').trim();
 const bare = (s: string): string => norm(s.replace(/\([^)]*\)/g, '').replace(/[\s.:;,*]+$/g, ''));
@@ -112,7 +147,7 @@ export class StatblockLinker {
   ) {}
 
   /** Whether plain attacks (a sword, a bite) get a button: only while rolling is on (they'd do nothing else). */
-  attacks: () => boolean = () => false;
+  attacks: (statblock: HTMLElement) => boolean = () => false;
 
   start(): void {
     const d = this.doc;
@@ -326,7 +361,7 @@ export class StatblockLinker {
           const t = li.textContent ?? '', nm = lead(t);
           const first = Array.from(li.childNodes).find((c) => !(c.instanceOf(Element) && c.classList.contains(CAST_BTN)));
           const ae = nm ? abilityEntry(nm, t) : null;
-          if (!nm || !first || !ae || (ae.plain && !this.attacks())) continue;
+          if (!nm || !first || !ae || (ae.plain && !this.attacks(sb))) continue;
           units.push({ anchor: first, name: nm, text: t }); own = own.replace(t, ' ');
         }
         const nm = clean(nameEl.textContent ?? '');
@@ -340,9 +375,21 @@ export class StatblockLinker {
         if (nm.length < 3 || nm.length > 60 || !t.trimStart().startsWith((el.textContent ?? '').trim())) continue;
         units.push({ anchor: el, name: nm, text: t });
       }
+      // its attacks, for a Multiattack to make
+      const attacksHere = units.map((u) => ({ name: u.name, text: u.text, e: abilityEntry(u.name, u.text) })).filter((u) => u.e?.plain).map((u) => ({ name: u.name, text: u.text }));
       for (const u of units) {
+        if (/^multiattack$/i.test(u.name.trim())) {
+          const seq = this.attacks(sb) ? multiOf(u.text, attacksHere) : [];
+          const prev = u.anchor.previousSibling;
+          if (!seq.length) continue;
+          const link: SpellLink = { key: 'ability:multiattack', name: u.name, ability: u.text, multi: seq };
+          if (prev?.instanceOf(Element) && prev.classList.contains(CAST_BTN)) { if (prev.classList.contains('is-ability')) { this.buttons.set(prev, link); keep.add(prev); } continue; }
+          const parent = u.anchor.parentElement; if (!parent) continue;
+          keep.add(this.put(parent, u.anchor, link, u.anchor.textContent ?? u.name));
+          continue;
+        }
         const ae = abilityEntry(u.name, u.text);
-        if (!ae || (ae.plain && !this.attacks())) continue;
+        if (!ae || (ae.plain && !this.attacks(sb))) continue;
         const link: SpellLink = { key: 'ability:' + norm(u.name), name: u.name, ability: u.text, ...(ae.plain === 'attack' ? { attack: true } : {}) };
         const prev = u.anchor.previousSibling;
         if (prev?.instanceOf(Element) && prev.classList.contains(CAST_BTN)) {
