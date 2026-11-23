@@ -1,4 +1,4 @@
-// Atlas Spell Effects: animated spell areas on Atlas VTT maps (a bridge until Atlas has its own).
+// Combat+ for Atlas VTT (formerly Spell Effects for AtlasVTT): spell effects, areas and D&D 5e rolls on Atlas VTT maps.
 // Cast from the command palette or the ribbon: pick a spell (your spell list says its area), pick its animation
 // (JB2A or your own files; or one the add-on draws), click the caster / aim / click where it lands. It plays on
 // your map and on the player window (the TV) at the right place and size; lasting ones stay until you end them.
@@ -173,7 +173,7 @@ export default class AtlasSpellEffects extends Plugin {
     this.effects = (this.settings.lasting ?? []).filter((e) => e && e.id && e.map);
     this.addSettingTab(new EffectSettings(this.app, this));
     this.addRibbonIcon('sparkles', 'Cast a spell effect', () => this.openCast());
-    this.addCommand({ id: 'reset-legendary-resistance', name: 'Reset Legendary Resistance (a new day)', callback: () => { this.settings.legendary = {}; this.saveSoon(); new Notice('Atlas Spell Effects: Legendary Resistance reset for every creature.'); } });
+    this.addCommand({ id: 'reset-legendary-resistance', name: 'Reset Legendary Resistance (a new day)', callback: () => { this.settings.legendary = {}; this.saveSoon(); new Notice('Combat+: Legendary Resistance reset for every creature.'); } });
     this.addCommand({ id: 'cast', name: 'Cast a spell effect…', callback: () => this.openCast() });
     this.addCommand({ id: 'cast-again', name: 'Cast the last effect again', callback: () => (this.last ? this.place(this.last) : this.openCast()) });
     this.addCommand({ id: 'preset', name: 'Cast a saved spell…', callback: () => new SavedPicker(this.app, this).open() });
@@ -533,7 +533,7 @@ export default class AtlasSpellEffects extends Plugin {
 
   /** A saved spell straight onto the map (its animation fetched first, if it is a JB2A one not downloaded yet). */
   async castSaved(st: StoredSpell): Promise<void> {
-    if (!this.atlasTab()) { new Notice('Atlas Spell Effects: open an Atlas map first.'); return; }
+    if (!this.atlasTab()) { new Notice('Combat+: open an Atlas map first.'); return; }
     const c = this.choices().find((x) => x.stored?.path === st.path);
     if (!c) return;
     const m = new CastModal(this.app, this);
@@ -553,11 +553,11 @@ export default class AtlasSpellEffects extends Plugin {
       try {
         await this.storeSpell({ name: pr.name }, { area: { ...pr.area }, file: pr.file, colour: pr.colour, colour2: pr.colour2, alpha: pr.alpha, attach: pr.attach, light: pr.light ?? null, menu: true });
         this.settings.presets = this.settings.presets.filter((x) => x.id !== pr.id); done++;
-      } catch (e) { console.error('Atlas Spell Effects: could not keep a preset as a saved spell', pr.name, e); }
+      } catch (e) { console.error('Combat+: could not keep a preset as a saved spell', pr.name, e); }
     }
     await this.save();
     this.namesChanged();
-    if (done) new Notice(`Atlas Spell Effects: your ${done === 1 ? 'preset is' : `${done} presets are`} now saved spells, in ${this.storageFolder()} (and still in ✨’s menu).`);
+    if (done) new Notice(`Combat+: your ${done === 1 ? 'preset is' : `${done} presets are`} now saved spells, in ${this.storageFolder()} (and still in ✨’s menu).`);
   }
 
   private updateTool(tool: HTMLElement, t: Tab): void {
@@ -695,7 +695,7 @@ export default class AtlasSpellEffects extends Plugin {
     await m.pick(c);
     if (how.shift) { m.casterToken = tok?.id; m.open(); return; }
     const p = await m.pending();
-    if (!this.atlasTab()) { new Notice('Atlas Spell Effects: open an Atlas map first.'); return; }
+    if (!this.atlasTab()) { new Notice('Combat+: open an Atlas map first.'); return; }
     this.place(p, tok && this.mapOf(tok.tab) === this.mapOf(this.atlasTab()!) ? tok.id : undefined);
   }
 
@@ -720,7 +720,7 @@ export default class AtlasSpellEffects extends Plugin {
     if (last && last.key === key && (last.open || Date.now() - last.hidden < 600)) {
       this.sbMenu = null;
       if (last.open) last.menu.hide();
-      if (!this.atlasTab()) { new Notice('Atlas Spell Effects: open an Atlas map first.'); return; }
+      if (!this.atlasTab()) { new Notice('Combat+: open an Atlas map first.'); return; }
       this.place(p, here?.id);
       return;
     }
@@ -730,7 +730,7 @@ export default class AtlasSpellEffects extends Plugin {
     menu.onHide(() => { mine.open = false; mine.hidden = Date.now(); });
     menu.addItem((i) => i.setTitle([who ?? 'No caster on the map', range].filter(Boolean).join('   ·   ')).setIcon('user').setDisabled(true));
     menu.addItem((i) => i.setTitle(castWord(p, who)).setIcon('wand-sparkles').onClick(() => {
-      if (!this.atlasTab()) { new Notice('Atlas Spell Effects: open an Atlas map first.'); return; }
+      if (!this.atlasTab()) { new Notice('Combat+: open an Atlas map first.'); return; }
       this.place(p, here?.id);
     }));
     // its animation once on the caster, aimed at no one (a flourish: the DM deals with what it does)
@@ -1030,13 +1030,13 @@ export default class AtlasSpellEffects extends Plugin {
     if (!path) return true;
     const f = this.files.find((x) => x.path === path);
     if (!f?.remote) return true;
-    const n = new Notice(`Atlas Spell Effects: getting ${f.name.replace(/_/g, ' ')} from JB2A…`, 0);
+    const n = new Notice(`Combat+: getting ${f.name.replace(/_/g, ' ')} from JB2A…`, 0);
     try {
       await fetchJb2a(this.app, this.jb2aRoot(), f.remote);
       delete f.remote;
       return true;
     } catch (e) {
-      new Notice('Atlas Spell Effects: could not get that animation from JB2A (' + (e instanceof Error ? e.message : String(e)) + '). Drawn instead.', 8000);
+      new Notice('Combat+: could not get that animation from JB2A (' + (e instanceof Error ? e.message : String(e)) + '). Drawn instead.', 8000);
       return false;
     } finally { n.hide(); }
   }
@@ -1049,7 +1049,7 @@ export default class AtlasSpellEffects extends Plugin {
     const tell = () => this.dlListener?.();
     try {
       const r = await fetchAll(this.app, this.jb2aRoot(), (done, total, failed) => { dl.done = done; dl.total = total; dl.failed = failed; tell(); }, () => dl.stop);
-      new Notice(`Atlas Spell Effects: ${dl.stop ? 'stopped after' : 'downloaded'} ${r.done} JB2A animations${r.failed ? `, ${r.failed} failed (Download everything again to retry them)` : ''}.`, 10000);
+      new Notice(`Combat+: ${dl.stop ? 'stopped after' : 'downloaded'} ${r.done} JB2A animations${r.failed ? `, ${r.failed} failed (Download everything again to retry them)` : ''}.`, 10000);
     } finally { this.dl = null; this.indexVault(); tell(); }
   }
 
@@ -1162,7 +1162,7 @@ export default class AtlasSpellEffects extends Plugin {
     return snapCorner(p, this.scaleOf(t).cell, { x: g.offsetX ?? 0, y: g.offsetY ?? 0 });
   }
 
-  async toggleSnap(): Promise<void> { this.settings.snap = !this.settings.snap; await this.save(); new Notice(`Atlas Spell Effects: snap to grid ${this.settings.snap ? 'on' : 'off'} (hold Alt for the other)`); }
+  async toggleSnap(): Promise<void> { this.settings.snap = !this.settings.snap; await this.save(); new Notice(`Combat+: snap to grid ${this.settings.snap ? 'on' : 'off'} (hold Alt for the other)`); }
 
   tokenAt(t: Tab, p: Point): { id: string; x: number; y: number; r: number } | null {
     const tokens = t.store.getState()?.objects?.tokens ?? {};
@@ -1394,7 +1394,7 @@ export default class AtlasSpellEffects extends Plugin {
       if (kit) {
         let pp = this.pixiPainters.get(t.view);
         // Atlas's canvas went wrong for effects once: drawn over it from then on (as before)
-        const giveUp = (e: unknown) => { this.noCanvas.add(t.viewport); this.pixiPainters.get(t.view)?.stop(); this.pixiPainters.delete(t.view); console.error('Atlas Spell Effects: drawing in Atlas’s canvas went wrong; drawing over it instead', e); this.wake(); };
+        const giveUp = (e: unknown) => { this.noCanvas.add(t.viewport); this.pixiPainters.get(t.view)?.stop(); this.pixiPainters.delete(t.view); console.error('Combat+: drawing in Atlas’s canvas went wrong; drawing over it instead', e); this.wake(); };
         if (!pp) { pp = new PixiPainter(kit, t.viewport, t.renderer, world, (path) => this.readFile(path), () => this.wake(), giveUp); this.pixiPainters.set(t.view, pp); }
         const px = pp, map = this.mapOf(t), pl = this.placing;
         const aim = this.settings.showAim && pl && pl.tab.view === t.view ? pl.preview : null;
@@ -1456,8 +1456,8 @@ export default class AtlasSpellEffects extends Plugin {
     catch (e) {
       if (this.failed.has(what)) return;
       this.failed.add(what);
-      console.error(`Atlas Spell Effects: ${what} went wrong`, e);
-      new Notice(`Atlas Spell Effects: ${what} went wrong (${e instanceof Error ? e.message : String(e)}). The rest carries on.`, 12000);
+      console.error(`Combat+: ${what} went wrong`, e);
+      new Notice(`Combat+: ${what} went wrong (${e instanceof Error ? e.message : String(e)}). The rest carries on.`, 12000);
     }
   }
 
@@ -1656,7 +1656,7 @@ export default class AtlasSpellEffects extends Plugin {
   giveCondition(map: string, token: string, name: string, b?: HTMLElement): void {
     const t = this.atlasTabs().find((x) => this.mapOf(x) === map); const st = t?.store.getState?.();
     if (!t || !st || typeof st.setTokensCondition !== 'function') return;
-    const [id] = idsOf([name], this.conditionDefs(t)); if (!id) { new Notice(`Atlas Spell Effects: no “${name}” condition in this collection.`); return; }
+    const [id] = idsOf([name], this.conditionDefs(t)); if (!id) { new Notice(`Combat+: no “${name}” condition in this collection.`); return; }
     st.setTokensCondition([token], id, true);
     if (b) { b.textContent = `${name} given`; b.toggleAttribute('disabled', true); }
   }
@@ -1669,7 +1669,7 @@ export default class AtlasSpellEffects extends Plugin {
     const id = this.collectionOf(t); const a = this.assetsOf(t);
     if (!id || !a || this.markerAsked.has(id)) return false;
     this.markerAsked.add(id);
-    void a.updateCollectionSettings(id, { conditions: [...defs, { ...IN_SPELL }] }).then(() => this.wake()).catch((e: unknown) => { console.error('Atlas Spell Effects: could not add the “In a spell” condition', e); });
+    void a.updateCollectionSettings(id, { conditions: [...defs, { ...IN_SPELL }] }).then(() => this.wake()).catch((e: unknown) => { console.error('Combat+: could not add the “In a spell” condition', e); });
     return false;
   }
 
@@ -1771,7 +1771,7 @@ export default class AtlasSpellEffects extends Plugin {
   /** A spell put on one of Atlas's own areas: its animation over it, its conditions…; the area stays Atlas's (ending the spell leaves it). */
   animateArea(p: Pending, t: Tab, id: string, mine = false): void {
     const e = this.effectOnArea(t, id, p);
-    if (!e) { new Notice('Atlas Spell Effects: that area isn’t on the map any more.'); return; }
+    if (!e) { new Notice('Combat+: that area isn’t on the map any more.'); return; }
     e.measure = id;
     if (!p.area.lasting) e.lasting = false;
     // its look and light stay as you set them in Atlas, unless the spell names its own
@@ -1990,7 +1990,7 @@ export default class AtlasSpellEffects extends Plugin {
       if (last) pop.insertBefore(box, last);
       const head = box.createDiv({ cls: 'sfx-pop-head' });
       setIcon(head.createSpan({ cls: 'sfx-pop-icon' }), 'sparkles');
-      head.createSpan({ cls: 'sfx-pop-name', text: fx ? fx.name : 'Spell Effects' });
+      head.createSpan({ cls: 'sfx-pop-name', text: fx ? fx.name : 'Combat+' });
       const row = box.createDiv({ cls: 'sfx-pop-buttons' });
       const close = () => t.store.getState().closeMeasurePopover?.();
       if (fx) {
@@ -2173,7 +2173,7 @@ export default class AtlasSpellEffects extends Plugin {
       r.applied = true;
     }
     if (changes.length && typeof st?.updateTokens === 'function') st.updateTokens(changes);
-    if (missing) new Notice(`Atlas Spell Effects: ${missing} creature${missing === 1 ? ' has' : 's have'} no hit points in Atlas; take their damage off by hand.`);
+    if (missing) new Notice(`Combat+: ${missing} creature${missing === 1 ? ' has' : 's have'} no hit points in Atlas; take their damage off by hand.`);
     this.saveSoon(); this.wake();
   }
 
@@ -2662,9 +2662,9 @@ export default class AtlasSpellEffects extends Plugin {
    */
   async summonAt(t: Tab, pending: Pending, at: Point): Promise<void> {
     const st = t.store.getState();
-    if (typeof st?.addToken !== 'function') { new Notice('Atlas Spell Effects: this Atlas can’t be given tokens by an add-on; it’s placed as an area instead.'); return; }
+    if (typeof st?.addToken !== 'function') { new Notice('Combat+: this Atlas can’t be given tokens by an add-on; it’s placed as an area instead.'); return; }
     const img = await this.summonImage(pending.name, pending.colour);
-    if (!img) { new Notice('Atlas Spell Effects: couldn’t make the token’s picture.'); return; }
+    if (!img) { new Notice('Combat+: couldn’t make the token’s picture.'); return; }
     const a = pending.area;
     const cells = Math.max(1, Math.min(4, Math.round((2 * (a.target ? 0 : a.size)) / square()) || 1));
     const spot = this.gridSpot(t, at, (cells * this.scaleOf(t).cell) / 2);
@@ -2698,7 +2698,7 @@ export default class AtlasSpellEffects extends Plugin {
 
   // ── casting ──
   openCast(): void {
-    if (!this.atlasTab()) { new Notice('Atlas Spell Effects: open an Atlas map first.'); return; }
+    if (!this.atlasTab()) { new Notice('Combat+: open an Atlas map first.'); return; }
     new CastModal(this.app, this).open();
   }
 
@@ -2808,7 +2808,7 @@ export default class AtlasSpellEffects extends Plugin {
   /** The teleport itself: its animation where they leave and where they arrive, and the token moved there. */
   teleportTo(tab: Tab, pending: Pending, id: string, from: Point, to: Point): void {
     const at = this.tokenOf(tab, id); const st = tab.store.getState();
-    if (!at || typeof st.moveToken !== 'function') { new Notice('Atlas Spell Effects: couldn’t move that token.'); return; }
+    if (!at || typeof st.moveToken !== 'function') { new Notice('Combat+: couldn’t move that token.'); return; }
     const ppf = pxPerFoot(this.scaleOf(tab));
     const map = this.mapOf(tab);
     const puff = (p: Point): Effect => ({ id: uid(), map, name: pending.name, shape: 'radius', size: at.r / ppf, at: { x: p.x, y: p.y }, colour: pending.colour, ...(pending.colour2 ? { colour2: pending.colour2 } : {}), ...(pending.alpha ? { alpha: pending.alpha } : {}), ...(pending.file ? { file: pending.file } : {}), bolt: true, lasting: false, started: Date.now() });
@@ -2821,7 +2821,7 @@ export default class AtlasSpellEffects extends Plugin {
   /** Click the caster / aim / click the spot on the Atlas map, then it plays. */
   place(pending: Pending, casterToken?: string): void {
     const tab = this.atlasTab();
-    if (!tab) { new Notice('Atlas Spell Effects: open an Atlas map first.'); return; }
+    if (!tab) { new Notice('Combat+: open an Atlas map first.'); return; }
     this.placing?.stop();
     this.last = pending;
     // the spells cast last, newest first (the same spell once)
@@ -3286,7 +3286,7 @@ export default class AtlasSpellEffects extends Plugin {
     this.effects = this.effects.filter((e) => e.map !== map || !e.lasting);
     this.commit(before);
     this.saveSoon(); this.wake(); this.bars();
-    new Notice(`Atlas Spell Effects: ended ${n} lasting effect${n === 1 ? '' : 's'}`);
+    new Notice(`Combat+: ended ${n} lasting effect${n === 1 ? '' : 's'}`);
   }
 
   /**
@@ -3947,7 +3947,7 @@ class CastModal extends Modal {
         const path = await P.storeSpell(c, { ...look(), menu });
         this.choice = P.choices().find((x) => x.stored?.path === path) ?? this.choice; this.saved = `Saved in ${path}`;
         this.render();
-      } catch (e) { new Notice('Atlas Spell Effects: could not save it (' + (e instanceof Error ? e.message : String(e)) + ')'); btn.disabled = false; }
+      } catch (e) { new Notice('Combat+: could not save it (' + (e instanceof Error ? e.message : String(e)) + ')'); btn.disabled = false; }
     };
     if (st) {
       const own = P.ownNote(st.path);
@@ -4261,7 +4261,7 @@ class EffectSettings extends PluginSettingTab {
   /** The tab drawn again (its counts and lists up to date). */
   private redraw(): void {
     const el = this.containerEl; el.empty();
-    el.createEl('p', { text: 'Animated spell areas on your Atlas maps, shown on your screen and the player window. Cast with ✨ in Atlas’s toolbar.' });
+    el.createEl('p', { text: 'Combat+ for Atlas VTT: spell effects and areas on your Atlas maps (your screen and the player window), and D&D 5e rolls for spells, abilities and attacks. Cast with ✨ in Atlas’s toolbar, or from a statblock.' });
     for (const sec of this.sections()) {
       if (sec.heading) new Setting(el).setName(sec.heading).setHeading();
       for (const r of sec.rows) { const st = new Setting(el).setName(r.name); if (r.desc !== undefined) st.setDesc(r.desc); r.render(st); }

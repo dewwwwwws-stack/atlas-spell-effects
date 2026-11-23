@@ -1,9 +1,9 @@
 {
   "id": "atlas-spell-effects",
-  "name": "Spell Effects for AtlasVTT",
-  "version": "1.11.1",
+  "name": "Combat+ for Atlas VTT",
+  "version": "1.11.2",
   "minAppVersion": "1.10.0",
-  "description": "Animated spell areas, walls, light and darkness on Atlas VTT maps, with JB2A's free animations built in. Cast from Atlas statblocks, with optional D&D 5e rolls.",
+  "description": "Spell effects, JB2A animations, areas and light on Atlas VTT maps, plus optional D&D 5e attack, save and damage rolls. Cast and attack from statblocks.",
   "author": "dew",
   "authorUrl": "https://github.com/dewwwwwws-stack",
   "isDesktopOnly": true

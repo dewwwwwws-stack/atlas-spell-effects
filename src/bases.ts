@@ -24,7 +24,7 @@ export function basesReady(plugin?: Plugin): boolean {
       super(controller);
       this.route = routes.get(el.closest(`[${HOST}]`)?.getAttribute(HOST) ?? '');
       this.route?.attached();
-      if (!this.route) el.createDiv({ text: 'Atlas Spell Effects reads this view’s notes as spells. Pick another view type to see them.' });
+      if (!this.route) el.createDiv({ text: 'Combat+ reads this view’s notes as spells. Pick another view type to see them.' });
     }
     onDataUpdated(): void { this.route?.found(this.data.data.map((e) => e.file.path)); }
   }

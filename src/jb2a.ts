@@ -38,7 +38,7 @@ These animations are from **JB2A — Jules & Ben's Animated Assets** (free pack)
   https://creativecommons.org/licenses/by-nc-sa/4.0/
 - Support them and get the full pack: https://www.patreon.com/jb2a
 
-Downloaded by Atlas Spell Effects, unchanged.
+Downloaded by Combat+ for Atlas VTT, unchanged.
 `;
 
 async function folderFor(app: App, path: string): Promise<void> {

@@ -1,4 +1,6 @@
-# Spell Effects for AtlasVTT
+# Combat+ for Atlas VTT
+
+*Formerly **Spell Effects for AtlasVTT**. Same plugin, same settings: only the name changed.*
 
 Atlas now draws spell areas itself: kept measurements with a Fire, Frost, Lightning, Mist, Radiance or Shadow
 look, light or darkness, and auras that follow a token. Atlas also rings and counts the tokens inside, and stops
@@ -33,7 +35,7 @@ Turn off *Spells as Atlas areas* in the settings and the add-on draws spells on 
 - Obsidian 1.10 or later. Spell bases need the Bases core plugin on.
 
 ## Install
-Settings → Community plugins → Browse → search **Spell Effects** → Install → Enable. Then open an Atlas map:
+Settings → Community plugins → Browse → search **Combat+** (or *Atlas*) → Install → Enable. Then open an Atlas map:
 ✨ is in Atlas's toolbar.
 
 ## What it reads, writes and downloads
@@ -61,7 +63,7 @@ Settings → Community plugins → Browse → search **Spell Effects** → Insta
 - **JB2A's free pack is built in.** All of its animations and colours (about 2,100) show in the cast window from
   the start, marked ⤓. Each is fetched from JB2A's own GitHub the first time you use it and saved in your vault
   (in `JB2A_DnD5e`, which you can change), so after that it works offline.
-- **Download everything:** Settings → Atlas Spell Effects → *Download everything* fetches the whole pack at once
+- **Download everything:** Settings → Combat+ for Atlas VTT → *Download everything* fetches the whole pack at once
   (about 1.2 GB), for a game with no internet. You can stop it and carry on later. If your vault syncs, it syncs too.
 - **Already have JB2A in your vault?** It's used as it is. Nothing is fetched twice.
 - **Your own**: put `.webm` (best: video with see-through background), `.gif`, `.webp` or `.png` files in a
@@ -94,7 +96,7 @@ picking loot bases in Atlas.
 
    The table should now list your spells and nothing else. A Base made by right-clicking a folder already has the
    folder filter.
-5. **Pick it in the add-on.** Settings → Atlas Spell Effects → **Spell bases**: start typing the Base's name and
+5. **Pick it in the add-on.** Settings → Combat+ for Atlas VTT → **Spell bases**: start typing the Base's name and
    pick it. The line under it says how many notes it found (for example "312 notes"). "Bases is off" means step 1,
    and "Not found" means the Base was moved or renamed.
 6. **Check it.** Open ✨ → **Cast a spell effect…**. Your spells are listed, and the ones whose text names an area
@@ -352,7 +354,7 @@ cast window deletes what's saved.
 Nothing else about the ability is worked out: saves and damage are yours to run.
 
 ## Your game system
-The add-on reads the game system of the map's collection from Atlas (**Settings → Atlas Spell Effects** shows what it
+The add-on reads the game system of the map's collection from Atlas (**Settings → Combat+ for Atlas VTT** shows what it
 found, by name), so there's nothing to set up. It works with every system built into Atlas: D&D 5e, Pathfinder 2e,
 Daggerheart, Shadowdark, Old-School Essentials, Cairn, Call of Cthulhu, Cyberpunk RED and Draw Steel, and with your
 own.
