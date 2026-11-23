@@ -252,3 +252,16 @@ canvas.sfx-cursor-move{cursor:move}
 /* the cast window's "Also" part: pushes, how many, leaps on, a thing to move, difficult terrain */
 .sfx-more{margin-top:8px}
 .sfx-more .setting-item{padding:6px 0;border-top:0}
+
+/* a card's rolls */
+.sfx-roll-dmg{font-size:var(--font-ui-smaller,12px);color:var(--text-muted);padding:2px 0 4px}
+.sfx-roll-row{display:flex;align-items:center;gap:8px}
+.sfx-roll-who{display:flex;flex-direction:column;min-width:0;flex:1}
+.sfx-roll-dice,.sfx-roll-why{font-size:var(--font-ui-smaller,12px);color:var(--text-muted)}
+.sfx-roll-why{font-style:italic}
+.sfx-roll-row.is-crit .sfx-roll-dice,.sfx-roll-row.is-failed .sfx-roll-dice,.sfx-roll-row.is-hit .sfx-roll-dice{color:var(--text-error)}
+.sfx-roll-row.is-miss .sfx-roll-dice,.sfx-roll-row.is-saved .sfx-roll-dice,.sfx-roll-row.is-fumble .sfx-roll-dice{color:var(--text-success)}
+.sfx-roll-row.is-applied{opacity:.6}
+.sfx-roll-input{width:4.2em;text-align:right}
+.sfx-roll-acts{display:flex;gap:6px;padding-top:6px;flex-wrap:wrap}
+.sfx-roll-btn{font-size:var(--font-ui-smaller,12px);padding:2px 8px;height:auto}

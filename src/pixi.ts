@@ -309,6 +309,13 @@ export class PixiPainter {
    * Effects on a creature (Shield, Bless) go in a layer of their own just over the tokens (still under their bars,
    * handles and the lighting), each shown only in a frame where Atlas draws its creature.
    */
+  /** Whether a spell is drawn over the tokens, as chosen (never an outline you're aiming, or a creature's own). */
+  private overTokens(e: Effect): boolean {
+    const m = this.world.above?.() ?? 'none';
+    if (m === 'none' || e.outline || e.id === AIM || e.id === 'preview' || onCreature(e)) return false;
+    return m === 'all' || !e.lasting || !!e.bolt;
+  }
+
   private layer(): PNode | null {
     const vp = this.viewport as unknown as PNode;
     if (this.root && !this.root.destroyed && this.root.parent === vp && this.box) return this.box;
@@ -329,6 +336,11 @@ export class PixiPainter {
     over.label = 'sfx-on-creatures';
     over.eventMode = 'none';
     put(over, 0.5);
+    // spells drawn over the tokens (as chosen in the settings): over them, still under their bars and Atlas's handles
+    const top = new this.kit.Container();
+    top.label = 'sfx-over-tokens';
+    top.eventMode = 'none';
+    put(top, 0.6);
     // which frame is being drawn, the DM's or the players': Atlas hides its DM-only overlays for the players'
     try {
       const probe = new this.kit.Container();
@@ -350,12 +362,13 @@ export class PixiPainter {
         it.node.visible = s !== false;
       }
     };
-    this.root = root; this.box = box; this.over = over;
+    this.root = root; this.box = box; this.over = over; this.top = top;
     return box;
   }
 
   private box: PNode | null = null;
   private over: PNode | null = null;
+  private top: PNode | null = null;
   private probe: PNode | null = null;
   private unprobe: (() => void) | null = null;
   /** Effects on a creature, by id: their creature's token. */
@@ -389,10 +402,10 @@ export class PixiPainter {
       const s = this.world.scale(e.map); if (!s) continue;
       const tok = e.token ? this.world.token(e.map, e.token) : null;
       if (e.token && !tok) continue;
-      const look = [e.file ?? '', e.colour, e.colour2 ?? '', e.shape, e.closed ? 1 : 0, e.outline ? (e.id === AIM ? 'a' : 'o') : '', onCreature(e) ? 'c' : '', e.shape === 'wall' ? JSON.stringify(e.points ?? []) + (e.width ?? '') : ''].join('|');
+      const look = [e.file ?? '', e.colour, e.colour2 ?? '', e.shape, e.closed ? 1 : 0, e.outline ? (e.id === AIM ? 'a' : 'o') : '', onCreature(e) ? 'c' : '', this.overTokens(e) ? 't' : '', e.shape === 'wall' ? JSON.stringify(e.points ?? []) + (e.width ?? '') : ''].join('|');
       let it = this.items.get(e.id);
       if (it && it.look !== look) { this.drop(e.id); it = undefined; }
-      if (!it) { it = this.make(e, look); const into = onCreature(e) && this.over ? this.over : root; it.node.label = e.id === AIM ? AIM : 'sfx-effect'; this.items.set(e.id, it); into.addChild(it.node); }
+      if (!it) { it = this.make(e, look); const into = onCreature(e) && this.over ? this.over : this.top && this.overTokens(e) ? this.top : root; it.node.label = e.id === AIM ? AIM : 'sfx-effect'; this.items.set(e.id, it); into.addChild(it.node); }
       if (onCreature(e) && e.token) this.onTok.set(e.id, e.token);
       this.place(it, e, s, tok);
       // fading: in, out, and an instant effect's burst
@@ -576,6 +589,8 @@ export class PixiPainter {
     this.unprobe?.(); this.unprobe = null; this.probe = null;
     if (this.root) { this.root.parent?.removeChild(this.root); this.root.destroy({ children: true }); this.root = null; }
     if (this.over) { this.over.parent?.removeChild(this.over); this.over.destroy({ children: true }); }
+    if (this.top) { this.top.parent?.removeChild(this.top); this.top.destroy({ children: true }); }
+    this.top = null;
     this.box = null; this.over = null; this.onTok.clear();
   }
 }

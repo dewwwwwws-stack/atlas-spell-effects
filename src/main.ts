@@ -2,13 +2,15 @@
 // Cast from the command palette or the ribbon: pick a spell (your spell list says its area), pick its animation
 // (JB2A or your own files; or one the add-on draws), click the caster / aim / click where it lands. It plays on
 // your map and on the player window (the TV) at the right place and size; lasting ones stay until you end them.
-import { Plugin, Modal, Menu, Notice, PluginSettingTab, Setting, setIcon, TFile, MarkdownView, type App, type TextComponent, type WorkspaceLeaf, type SettingDefinitionItem } from 'obsidian';
+import { Plugin, Modal, Menu, Notice, PluginSettingTab, Setting, setIcon, TFile, MarkdownView, parseYaml, type App, type TextComponent, type WorkspaceLeaf, type SettingDefinitionItem } from 'obsidian';
 import { BaseReader, basesReady } from './bases';
 import { jb2aFiles, fetchJb2a, fetchAll } from './jb2a';
 import { measureArt, hasReach, type Trim } from './trim';
 import { kitOf, PixiPainter, forgetBlobs, type AimLook } from './pixi';
 import { areaOf as atlasAreaOf, areaKey, effectFromArea, lookOf, areaCarries, atlasLightOf, toolShapeOf, AREA_LOOKS, LOOK_NAMES, LOOK_COLOURS, type AreaShape, type AreaLook } from './measures';
 import { moreOf, countAt, hasMore, type More } from './more';
+import { fiveEFile } from './fives';
+import { rollSpecOf, statsOf, rollAgainst, type RollSpec, type CastRoll, type Edge, type Stats } from './rolls';
 import { IN_SPELL_ID, IN_SPELL, ROUND_SECS, idsOf, upFor, timeOf, secondsOf, spellConditions, type ConditionDef } from './conditions';
 import { call, field, type AtlasAssets, type Tab, type AtlasView, type AtlasViewport, type AtlasState, type CanvasNode, type PlayersView, type Measurement } from './atlas';
 import { FolderSuggest, BaseSuggest } from './suggest';
@@ -53,6 +55,18 @@ interface Settings {
   noteSpells: boolean;             // offer the vault's spell notes (notes whose properties say they are spells)
   artTrim: Record<string, Trim | 0>;   // where each animation's picture is in its frame (0: looked, nothing to trim)
   coneAngle: number;               // a cone's angle when a spell doesn't say; 0: the game system's, from Atlas
+  /** Roll attacks, saves and damage when a spell is cast (D&D 5e), shown on its card. */
+  rolling: boolean;
+  /** Post each roll's results to Atlas's table log, when a table is running. */
+  rollPost: boolean;
+  /** Legendary Resistance used, by map and token ("map|token"): reset by hand on the card. */
+  legendary: Record<string, number>;
+  /** The name of the Atlas resource that holds temporary hit points (a bar, once it's added in Atlas). */
+  tempResource: string;
+  /** Play animations (off: spells are their areas only, rolls and all else the same). */
+  animations: boolean;
+  /** Spells drawn over the tokens: none (all under them), the instant ones and bolts, or all. */
+  above: 'none' | 'instant' | 'all';
   markCreatures: boolean;          // "In a spell" and a spell's conditions on the creatures inside it
   showRounds: boolean;             // how long each lasting spell has been up, by Atlas's initiative, beside it
   /** Every spell's and ability's area goes through walls (each one's own choice aside). */
@@ -69,18 +83,30 @@ interface Settings {
 /** A condition the add-on keeps on a creature for a spell: `on` (put on by it), `off` (you took it off while the creature was still inside), `theirs` (it had it already). */
 interface Mark { map: string; from: string; token: string; cond: string; state: 'on' | 'off' | 'theirs' }
 /** Creatures hit by an instant spell (Fireball): a card of them, till you close it. */
-interface Caught { id: string; map: string; name: string; tokens: { id: string; name: string }[] }
+interface Caught {
+  id: string; map: string; name: string; tokens: { id: string; name: string }[];
+  /** Its rolls against each one (rolling on), and what made them, to roll again. */
+  roll?: CastRoll; spec?: RollSpec; by?: string; level?: number | null; edge?: Edge; slot?: number;
+}
+/** A card's row in words: its roll and what came of it ("17+5 = 22 vs AC 15: hit, 14"). */
+function rowText(r: import('./rolls').RollRow, withDamage = true): string {
+  const OUT: Record<string, string> = { crit: 'crit!', hit: 'hit', miss: 'miss', fumble: 'natural 1, miss', failed: 'failed', saved: 'saved', damage: '', unknown: '?' };
+  const dice = r.d20 ? `${r.d20.length > 1 ? `[${r.d20.join(', ')}] ` : ''}${r.kept}${r.bonus !== undefined ? `${r.bonus >= 0 ? '+' : ''}${r.bonus} = ${(r.kept ?? 0) + r.bonus}` : ''}${r.against !== undefined ? ` vs ${r.outcome === 'failed' || r.outcome === 'saved' ? 'DC' : 'AC'} ${r.against}` : ''}` : '';
+  const out = OUT[r.outcome] ?? '';
+  return [dice, out].filter(Boolean).join(': ') + (withDamage ? `${dice || out ? ', ' : ''}${r.damage} damage${r.why ? ` (${r.why})` : ''}` : '');
+}
+
 /** A canvas, whichever window it's in (a popped-out one's too). */
 const isCanvas = (c: unknown): c is HTMLCanvasElement => !!c && typeof (c as Node).instanceOf === 'function' && (c as Node).instanceOf(HTMLCanvasElement);
 
-const DEFAULTS: Settings = { folders: '', made: [], remember: {}, abilities: {}, lasting: [], snap: true, storage: 'Spell Storage', bases: [], presets: [], jb2aFolder: 'JB2A_DnD5e', jb2aOffer: true, noteSpells: true, orphanLights: [], coneAngle: 0, artTrim: {}, showAim: false, aimLook: 'outline', markCreatures: true, showRounds: true, atlasAreas: true, throughWalls: false, areas: {}, roundSecs: {}, marks: [], caught: [], recent: [] };
+const DEFAULTS: Settings = { folders: '', rolling: false, rollPost: false, above: 'none', legendary: {}, tempResource: 'Temp HP', animations: true, made: [], remember: {}, abilities: {}, lasting: [], snap: true, storage: 'Spell Storage', bases: [], presets: [], jb2aFolder: 'JB2A_DnD5e', jb2aOffer: true, noteSpells: true, orphanLights: [], coneAngle: 0, artTrim: {}, showAim: false, aimLook: 'outline', markCreatures: true, showRounds: true, atlasAreas: true, throughWalls: false, areas: {}, roundSecs: {}, marks: [], caught: [], recent: [] };
 
 /** A spell to pick in the cast window: a saved one, or a spell note (from a Base or found in the vault). */
 export interface Choice { key: string; name: string; source: 'stored' | 'note'; entry?: SpellEntry; stored?: StoredSpell; notePath?: string; /** A creature's ability from a statblock (Fire Breath), not a spell. */ ability?: boolean }
 
 
 /** What is being cast: the area and look, before it is placed. */
-interface Pending { name: string; key: string; area: Area; file?: string; colour: string; colour2?: string; /** How its drawn shape moves while it lasts. */ motion?: string; /** What else it does (pushes, how many, a chain, a thing it makes, difficult terrain). */ more?: More; alpha?: number; attach?: boolean; light?: EffectLight; /** How far from its caster it can be cast (feet, from the edge of their space). */ range?: number; /** The conditions it gives the creatures inside it (names). */ conditions?: string[]; /** It teleports its caster up to this far (game units). */ teleport?: number; /** Atlas's look for its area (fire, frost…); '' or missing: none. */ look?: string; /** Its Atlas area's choices (Atlas 0.15 on). */ atlas?: AtlasChoices }
+interface Pending { name: string; key: string; area: Area; file?: string; colour: string; colour2?: string; /** How its drawn shape moves while it lasts. */ motion?: string; /** What it rolls, from its text. */ roll?: RollSpec; /** What else it does (pushes, how many, a chain, a thing it makes, difficult terrain). */ more?: More; alpha?: number; attach?: boolean; light?: EffectLight; /** How far from its caster it can be cast (feet, from the edge of their space). */ range?: number; /** The conditions it gives the creatures inside it (names). */ conditions?: string[]; /** It teleports its caster up to this far (game units). */ teleport?: number; /** Atlas's look for its area (fire, frost…); '' or missing: none. */ look?: string; /** Its Atlas area's choices (Atlas 0.15 on). */ atlas?: AtlasChoices }
 /** A spell's Atlas area, as chosen in the cast window: how it's drawn, its light, walls, players, how it's placed. */
 interface AtlasChoices { draw?: 'area' | 'animation'; areaLight?: 'atlas' | 'none'; throughWalls?: boolean; hidden?: boolean; tool?: boolean }
 /** A spell's remembered choices in the game's units now (remembered in another game system's: the same squares). */
@@ -94,7 +120,7 @@ function inUnitsNow(r: Remembered | undefined): Remembered | undefined {
 /** The conditions part of an effect made from a pending spell. */
 const condsOf = (p: Pending): Partial<Effect> => {
   const a = p.atlas ?? {};
-  return { ...(p.more?.push ? { push: p.more.push } : {}), ...(p.more?.terrain ? { terrain: true } : {}), ...(p.motion ? { motion: p.motion } : {}), ...(p.conditions?.length ? { conditions: [...p.conditions] } : {}), ...(p.look ? { look: p.look } : {}), ...(a.draw ? { draw: a.draw } : {}), ...(a.areaLight ? { areaLight: a.areaLight } : {}), ...(a.throughWalls ? { throughWalls: true } : {}), ...(a.hidden ? { hidden: true } : {}) };
+  return { ...(p.roll ? { roll: p.roll } : {}), ...(p.more?.push ? { push: p.more.push } : {}), ...(p.more?.terrain ? { terrain: true } : {}), ...(p.motion ? { motion: p.motion } : {}), ...(p.conditions?.length ? { conditions: [...p.conditions] } : {}), ...(p.look ? { look: p.look } : {}), ...(a.draw ? { draw: a.draw } : {}), ...(a.areaLight ? { areaLight: a.areaLight } : {}), ...(a.throughWalls ? { throughWalls: true } : {}), ...(a.hidden ? { hidden: true } : {}) };
 };
 
 /** What casting a spell from a statblock's menu does, in a few words (`who`: its caster, when known). */
@@ -142,6 +168,7 @@ export default class AtlasSpellEffects extends Plugin {
     this.effects = (this.settings.lasting ?? []).filter((e) => e && e.id && e.map);
     this.addSettingTab(new EffectSettings(this.app, this));
     this.addRibbonIcon('sparkles', 'Cast a spell effect', () => this.openCast());
+    this.addCommand({ id: 'reset-legendary-resistance', name: 'Reset Legendary Resistance (a new day)', callback: () => { this.settings.legendary = {}; this.saveSoon(); new Notice('Atlas Spell Effects: Legendary Resistance reset for every creature.'); } });
     this.addCommand({ id: 'cast', name: 'Cast a spell effect…', callback: () => this.openCast() });
     this.addCommand({ id: 'cast-again', name: 'Cast the last effect again', callback: () => (this.last ? this.place(this.last) : this.openCast()) });
     this.addCommand({ id: 'preset', name: 'Cast a saved spell…', callback: () => new SavedPicker(this.app, this).open() });
@@ -1118,6 +1145,7 @@ export default class AtlasSpellEffects extends Plugin {
   private world(): World {
     return {
       trim: (path) => this.trimOf(path),
+      above: () => this.settings.above,
       scale: (map) => { const t = this.atlasTabs().find((x) => this.mapOf(x) === map); return t ? this.scaleOf(t) : null; },
       token: (map, id) => { const t = this.atlasTabs().find((x) => this.mapOf(x) === map); return t ? this.tokenOf(t, id) : null; },
       url: (path) => { const f = this.app.vault.getAbstractFileByPath(path); return f instanceof TFile ? this.app.vault.getResourcePath(f) : null; },
@@ -1803,7 +1831,8 @@ export default class AtlasSpellEffects extends Plugin {
    * After a targeted spell lands on a creature: it's pushed from (or pulled towards) the caster, and a bolt that
    * leaps on goes from it to the nearest others in reach of it (each its own bolt).
    */
-  private afterTarget(t: Tab, pending: Pending, target: string | null, caster: Point | null): void {
+  private afterTarget(t: Tab, pending: Pending, target: string | null, caster: Point | null, casterId?: string): void {
+    if (target && this.settings.rolling && pending.roll) void this.rollOn(t, uid(), pending.name, pending.roll, [target], casterId);
     const m = pending.more; if (!m || !target) return;
     const k = this.tokenOf(t, target); if (!k) return;
     if (m.chain && pending.area.target === 'bolt') {
@@ -1828,7 +1857,14 @@ export default class AtlasSpellEffects extends Plugin {
 
   /** An instant spell (Fireball) just went off: the creatures it hit (a card, and "In a spell" on them till it's closed). */
   private catchIn(e: Effect): void {
-    if (!this.settings.markCreatures || e.lasting || e.bolt || e.outline || e.on) return;
+    if (e.lasting || e.bolt || e.outline || e.on) return;
+    if (this.settings.rolling && e.roll) {
+      const t = this.atlasTabs().find((x) => this.mapOf(x) === e.map); if (!t) return;
+      const ids = this.insideOf(t, e);
+      if (ids.length) void this.rollOn(t, e.id, e.name, e.roll, ids, e.rollBy ?? e.caster);
+      return;
+    }
+    if (!this.settings.markCreatures) return;
     const t = this.atlasTabs().find((x) => this.mapOf(x) === e.map); if (!t) return;
     const ids = this.insideOf(t, e); if (!ids.length) return;
     if (this.settings.caught.some((c) => c.id === e.id)) return;
@@ -1881,6 +1917,8 @@ export default class AtlasSpellEffects extends Plugin {
   private viewKeys = new WeakMap<object, string>();
   /** This copy of the add-on (an update loads a new one): its cards are its own. */
   private readonly instanceKey = uid();
+  /** What each of a card's buttons does. */
+  private caughtActs = new WeakMap<Element, () => void>();
   private viewKey(t: Tab): string { let k = this.viewKeys.get(t.view); if (!k) { k = uid(); this.viewKeys.set(t.view, k); } return k; }
 
   /**
@@ -1899,7 +1937,7 @@ export default class AtlasSpellEffects extends Plugin {
       }
       return null;
     };
-    const inCard = (e: MouseEvent): boolean => Array.from(doc.querySelectorAll<HTMLElement>('.sfx-caught')).some((c) => { const r = c.getBoundingClientRect(); return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom; });
+    const inCard = (e: MouseEvent): boolean => !!(e.target as Element | null)?.closest?.('.sfx-caught') || Array.from(doc.querySelectorAll<HTMLElement>('.sfx-caught')).some((c) => { const r = c.getBoundingClientRect(); return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom; });
     const down = (e: PointerEvent) => {
       if (e.button !== 0) return;
       const b = hit(e);
@@ -1910,10 +1948,18 @@ export default class AtlasSpellEffects extends Plugin {
     const quiet = (e: MouseEvent) => {
       if (!inCard(e)) return;
       e.stopPropagation(); e.stopImmediatePropagation();
+      // the card's own buttons (Apply damage, Reroll…): the map's never hear of them, so they're answered here
+      if (e.type === 'click' && e.button === 0) {
+        const el = (e.target as Element | null)?.closest?.('[data-act]');
+        const fn = el ? this.caughtActs.get(el) : undefined;
+        if (fn && !(el as HTMLButtonElement).disabled) { e.preventDefault(); fn(); return; }
+      }
       // a pointerdown that never reached us: the release or the click closes it instead
       if (e.button === 0 && (e.type === 'mouseup' || e.type === 'pointerup' || e.type === 'click')) { const b = hit(e); if (b?.dataset.caught) { e.preventDefault(); this.closeCaught(b.dataset.caught); } }
     };
     this.registerDomEvent(win, 'pointerdown', down, { capture: true });
+    // typing a damage number in a card: not Atlas's shortcuts
+    this.registerDomEvent(win, 'keydown', (e: KeyboardEvent) => { const el = e.target as Element | null; if (el?.closest?.('.sfx-caught')) e.stopPropagation(); }, { capture: true });
     // the window resized (a sidebar opened): the cards follow the map's corner
     this.registerDomEvent(win, 'resize', () => this.wake());
     for (const ev of ['mousedown', 'pointerup', 'mouseup', 'click', 'dblclick', 'contextmenu'] as const) this.registerDomEvent(win, ev, quiet, { capture: true });
@@ -1930,6 +1976,115 @@ export default class AtlasSpellEffects extends Plugin {
    * The cards of creatures hit by instant spells, over each map they're on (yours only). Kept in the tab's own
    * frame, outside Atlas's map (whose pointer handling would take the clicks), over its top right.
    */
+  /** A creature's statblock numbers (AC, saves, resistances, its spell DC): from its note's properties and statblock. */
+  async statsOfToken(t: Tab, id: string | undefined): Promise<Stats | null> {
+    if (!id) return null;
+    const tok = t.store.getState()?.objects?.tokens?.[id] as Record<string, unknown> | undefined;
+    for (const key of ['statblockPath', 'notePath'] as const) {
+      const path = tok?.[key]; if (typeof path !== 'string' || !path) continue;
+      const f = this.app.vault.getAbstractFileByPath(path); if (!(f instanceof TFile)) continue;
+      const fm = (this.app.metadataCache.getFileCache(f)?.frontmatter ?? {}) as Record<string, unknown>;
+      let text = '';
+      try { text = await this.app.vault.cachedRead(f); } catch { /* unreadable: its properties alone */ }
+      // a statblock fence's YAML wins over the note's properties
+      let fence: Record<string, unknown> = {};
+      const m = /```statblock[^\n]*\n([\s\S]*?)```/.exec(text);
+      if (m) { try { const y: unknown = parseYaml(m[1]); if (y && typeof y === 'object') fence = y as Record<string, unknown>; } catch { /* not YAML */ } }
+      return statsOf({ ...fm, ...fence }, text);
+    }
+    return null;
+  }
+
+  /** A spell's rolls against these creatures, onto its card (and Atlas's table log, if asked and a table runs). */
+  async rollOn(t: Tab, id: string, name: string, spec: RollSpec, ids: string[], by: string | undefined, edge: Edge = 'normal', slot?: number): Promise<void> {
+    const caster = await this.statsOfToken(t, by);
+    const c0 = by ? this.tokenOf(t, by) : null, ppf = pxPerFoot(this.scaleOf(t));
+    const map = this.mapOf(t);
+    const targets = await Promise.all(ids.map(async (k) => {
+      const tk = this.tokenOf(t, k);
+      const feet = c0 && tk ? Math.max(0, Math.hypot(tk.x - c0.x, tk.y - c0.y) - tk.r - c0.r) / ppf : undefined;
+      const stats = await this.statsOfToken(t, k);
+      // Legendary Resistance left today
+      if (stats?.legendary) stats.legendary = Math.max(0, stats.legendary - (this.settings.legendary[`${map}|${k}`] ?? 0));
+      return { id: k, name: this.tokenName(t, k), stats, conds: this.condNames(t, k), ...(feet !== undefined ? { feet: feet + 0.01 > 5 ? feet : Math.min(feet, 5) } : {}) };
+    }));
+    const level = this.levelOf(t, by);
+    const roll = rollAgainst(spec, caster, targets, { level, edge, slot: slot ?? null, ...(by ? { casterConds: this.condNames(t, by) } : {}) });
+    const c: Caught = { id, map, name, tokens: targets.map((x) => ({ id: x.id, name: x.name })), roll, spec, ...(by ? { by } : {}), level, edge, ...(slot ? { slot } : {}) };
+    const at = this.settings.caught.findIndex((x) => x.id === id);
+    if (at >= 0) this.settings.caught[at] = c; else this.settings.caught.push(c);
+    this.saveSoon(); this.wake();
+    if (this.settings.rollPost) void this.postRoll(c);
+  }
+
+  /** A card's rolls as one line each, posted to Atlas's table log (as the GM), when a table is running. */
+  private async postRoll(c: Caught): Promise<void> {
+    const atlas = (this.app as unknown as { plugins?: { plugins?: Record<string, { tableChat?: { running?: boolean; post?: (p: { text: string }) => Promise<unknown> } | null }> } }).plugins?.plugins?.['atlas-vtt'];
+    const chat = atlas?.tableChat;
+    if (!c.roll || !chat?.running || typeof chat.post !== 'function') return;
+    const lines = [`**${c.name}**: ${c.roll.header}${c.roll.damageText ? ` · ${c.roll.damageText}` : ''}`, ...c.roll.rows.map((r) => `${r.name}: ${rowText(r)}`)];
+    try { await chat.post({ text: lines.join('\n') }); } catch { /* the table refused it: the card still has it */ }
+  }
+
+  /** A token's conditions as names (and ids), for rolls: Paralyzed, Prone… */
+  condNames(t: Tab, id: string): string[] {
+    const ids = ((t.store.getState()?.objects?.tokens?.[id] as { conditions?: unknown } | undefined)?.conditions ?? []) as unknown[];
+    const defs = this.conditionDefs(t);
+    return ids.map((x) => String(x)).map((x) => defs.find((d) => d.id === x)?.name ?? x);
+  }
+
+  /** A failed save turned by Legendary Resistance: saved, its damage then, one use gone for the day. */
+  useLegendary(cardId: string, rowId: string): void {
+    const c = this.settings.caught.find((x) => x.id === cardId); const r = c?.roll?.rows.find((x) => x.id === rowId);
+    if (!c || !r?.onSave || r.applied) return;
+    Object.assign(r, { outcome: 'saved', rolled: r.onSave.rolled, damage: r.onSave.damage, legendary: true, note: [r.note, 'Legendary Resistance'].filter(Boolean).join('; ') });
+    if (!r.onSave.why) delete r.why; else r.why = r.onSave.why;
+    delete r.onSave; delete r.temp;
+    const k = `${c.map}|${rowId}`; this.settings.legendary[k] = (this.settings.legendary[k] ?? 0) + 1;
+    this.saveSoon(); this.wake();
+  }
+
+  /**
+   * A token's temporary hit points, kept on the token as one of its Atlas resources: the one it has already (Temp HP,
+   * temp, thp…), else the one named in the settings ("Temp HP": temp-hp). Added in Atlas as a resource of that
+   * name, it shows as a bar.
+   */
+  private tempOf(t: Tab, id: string): { key: string; value: number; max: number } {
+    const res = ((t.store.getState()?.objects?.tokens?.[id] as { resources?: Record<string, { current: number; max: number }> } | undefined)?.resources) ?? {};
+    const named = (this.settings.tempResource || 'Temp HP').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'temp-hp';
+    const key = (res[named] ? named : undefined) ?? Object.keys(res).find((k) => /^(?:temp|thp|temp[-_ ]?hp|temporary[-_ ]?(?:hit[-_ ]?points|hp))(?:-\d+)?$/i.test(k)) ?? named;
+    return { key, value: res[key]?.current ?? 0, max: res[key]?.max ?? 0 };
+  }
+
+  /** A card's damage taken off its creatures' hit points in Atlas (one undo step); each row once. */
+  applyRoll(id: string): void {
+    const c = this.settings.caught.find((x) => x.id === id); if (!c?.roll) return;
+    const t = this.atlasTabs().find((x) => this.mapOf(x) === c.map); if (!t) return;
+    const st = t.store.getState(); const toks = st?.objects?.tokens ?? {};
+    const changes: { id: string; changes: Record<string, unknown> }[] = [];
+    let missing = 0;
+    for (const r of c.roll.rows) {
+      if (r.applied || !(r.damage > 0 || (r.temp ?? 0) > 0)) continue;
+      const tok = toks[r.id] as { resources?: Record<string, { current: number; max: number }> } | undefined;
+      const res = { ...(tok?.resources ?? {}) };
+      const key = ['hp', 'health', 'hitpoints'].find((k) => res[k]);
+      const tmp = this.tempOf(t, r.id);
+      let left = r.damage, temp = tmp.value;
+      // temporary hit points go first; new ones replace old if more (they don't add up)
+      if (left > 0 && temp > 0) { const used = Math.min(temp, left); temp -= used; left -= used; }
+      if ((r.temp ?? 0) > temp) temp = r.temp ?? 0;
+      if (left > 0 && !key) { missing++; continue; }
+      if (key && left > 0) res[key] = { ...res[key], current: Math.max(0, res[key].current - left) };
+      // the bar: full when given, emptying as they're used; gone (no maximum) once none are left
+      if (temp !== tmp.value || (r.temp ?? 0) > 0) res[tmp.key] = temp > 0 ? { current: temp, max: (r.temp ?? 0) >= temp && (r.temp ?? 0) > tmp.value ? temp : Math.max(tmp.max, temp) } : { current: 0, max: 0 };
+      changes.push({ id: r.id, changes: { resources: res } });
+      r.applied = true;
+    }
+    if (changes.length && typeof st?.updateTokens === 'function') st.updateTokens(changes);
+    if (missing) new Notice(`Atlas Spell Effects: ${missing} creature${missing === 1 ? ' has' : 's have'} no hit points in Atlas; take their damage off by hand.`);
+    this.saveSoon(); this.wake();
+  }
+
   paintCaught(): void {
     for (const t of this.atlasTabs()) {
       const doc = t.canvas.ownerDocument;
@@ -1951,11 +2106,44 @@ export default class AtlasSpellEffects extends Plugin {
         const head = card.createDiv({ cls: 'sfx-caught-head' });
         setIcon(head.createSpan({ cls: 'sfx-caught-icon' }), 'sparkles');
         head.createSpan({ cls: 'sfx-caught-title', text: c.name });
-        head.createSpan({ cls: 'sfx-caught-count', text: `${c.tokens.length} hit` });
+        head.createSpan({ cls: 'sfx-caught-count', text: c.roll ? c.roll.header : `${c.tokens.length} hit` });
         const x = head.createEl('button', { cls: 'clickable-icon sfx-caught-x', attr: { 'aria-label': 'Close' } }); setIcon(x, 'x');
         x.dataset.caught = c.id;
         x.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); this.closeCaught(c.id); };
-        for (const k of c.tokens) card.createDiv({ cls: 'sfx-caught-row' }).createSpan({ cls: 'sfx-caught-name', text: k.name });
+        if (!c.roll) { for (const k of c.tokens) card.createDiv({ cls: 'sfx-caught-row' }).createSpan({ cls: 'sfx-caught-name', text: k.name }); continue; }
+        if (c.roll.damageText) card.createDiv({ cls: 'sfx-roll-dmg', text: c.roll.damageText });
+        for (const r of c.roll.rows) {
+          const row = card.createDiv({ cls: `sfx-caught-row sfx-roll-row is-${r.outcome}${r.applied ? ' is-applied' : ''}` });
+          const left = row.createDiv({ cls: 'sfx-roll-who' });
+          left.createSpan({ cls: 'sfx-caught-name', text: r.name });
+          left.createSpan({ cls: 'sfx-roll-dice', text: rowText(r, false) });
+          if (r.why) left.createSpan({ cls: 'sfx-roll-why', text: r.why });
+          if (r.note) left.createSpan({ cls: 'sfx-roll-why', text: r.note });
+          if (r.temp) left.createSpan({ cls: 'sfx-roll-why', text: `gains ${r.temp} temporary hit points` });
+          const t3 = this.atlasTabs().find((x) => this.mapOf(x) === c.map);
+          const had = t3 ? this.tempOf(t3, r.id).value : 0;
+          if (had > 0 && r.damage > 0 && !r.applied) left.createSpan({ cls: 'sfx-roll-why', text: `${had} temporary hit points go first` });
+          if (r.onSave && !r.applied) {
+            const b = left.createEl('button', { cls: 'sfx-roll-btn sfx-roll-lr', text: 'Use Legendary Resistance' }); b.dataset.act = '1';
+            this.caughtActs.set(b, () => this.useLegendary(c.id, r.id));
+          }
+          const dmg = row.createEl('input', { cls: 'sfx-roll-input', attr: { type: 'number', min: '0', 'aria-label': `Damage to ${r.name}` } });
+          dmg.value = String(r.damage); dmg.disabled = !!r.applied; if (!r.damage && r.temp) dmg.hidden = true;
+          dmg.addEventListener('change', () => { const n = Math.max(0, Math.round(Number(dmg.value) || 0)); r.damage = n; dmg.value = String(n); this.saveSoon(); box.dataset.k = JSON.stringify(list); });
+        }
+        const acts = card.createDiv({ cls: 'sfx-roll-acts' });
+        const act = (text: string, fn: () => void, cls = '') => { const b = acts.createEl('button', { cls: 'sfx-roll-btn ' + cls, text }); b.dataset.act = '1'; this.caughtActs.set(b, fn); return b; };
+        const left = c.roll.rows.some((r) => !r.applied && (r.damage > 0 || (r.temp ?? 0) > 0));
+        act(left ? (c.roll.rows.some((r) => r.damage > 0) ? 'Apply damage' : 'Give temp HP') : 'Applied', () => this.applyRoll(c.id), 'mod-cta').toggleAttribute('disabled', !left);
+        const again = (edge: Edge, slot = c.slot) => () => { const t2 = this.atlasTabs().find((x) => this.mapOf(x) === c.map); if (t2 && c.spec) void this.rollOn(t2, c.id, c.name, c.spec, c.tokens.map((k) => k.id), c.by, edge, slot); };
+        // a higher slot (a spell that does more with one): rolled again at it
+        if (c.spec?.level && (c.spec.upcast || c.spec.tempUp) && !c.roll.rows.some((r) => r.applied)) {
+          const sel = acts.createEl('select', { cls: 'sfx-roll-slot', attr: { 'aria-label': 'Spell slot level' } });
+          for (let lv = c.spec.level; lv <= 9; lv++) sel.createEl('option', { value: String(lv), text: `Slot ${lv}` });
+          sel.value = String(c.slot ?? c.spec.level);
+          sel.addEventListener('change', () => again(c.edge ?? 'normal', Number(sel.value))());
+        }
+        if (!c.roll.rows.some((r) => r.applied)) { act('Reroll', again('normal')); act('Adv', again('advantage')).title = 'Roll again with advantage'; act('Dis', again('disadvantage')).title = 'Roll again with disadvantage'; }
       }
     }
   }
@@ -2540,7 +2728,7 @@ export default class AtlasSpellEffects extends Plugin {
     const shapeAt = (q: Point, id: string): Effect | null => {
       const map = this.mapOf(tab); const sc = this.scaleOf(tab);
       const p = aims || needsCaster ? q : inRange(q);
-      const base = { id, map, name: pending.name, shape: a.shape, size: a.size, ...(a.width ? { width: a.width } : {}), ...(a.shape === 'cone' ? { angle: a.angle ?? this.coneAngle() } : {}), colour: pending.colour, ...(pending.colour2 ? { colour2: pending.colour2 } : {}), ...(pending.alpha ? { alpha: pending.alpha } : {}), lasting: a.lasting, started: Date.now(), ...(pending.file ? { file: pending.file } : {}), ...(pending.light && id !== 'preview' ? { light: { ...pending.light } } : {}), ...condsOf(pending) };
+      const base = { id, map, ...(casterToken ? { rollBy: casterToken } : {}), name: pending.name, shape: a.shape, size: a.size, ...(a.width ? { width: a.width } : {}), ...(a.shape === 'cone' ? { angle: a.angle ?? this.coneAngle() } : {}), colour: pending.colour, ...(pending.colour2 ? { colour2: pending.colour2 } : {}), ...(pending.alpha ? { alpha: pending.alpha } : {}), lasting: a.lasting, started: Date.now(), ...(pending.file ? { file: pending.file } : {}), ...(pending.light && id !== 'preview' ? { light: { ...pending.light } } : {}), ...condsOf(pending) };
       const c = this.placing?.caster;
       if (needsCaster && !c) {
         // before the caster is chosen: show the area on whatever is under the pointer
@@ -2650,7 +2838,7 @@ export default class AtlasSpellEffects extends Plugin {
         say(); return;
       }
       const fx = effect(uid(), p);
-      if (fx) { this.castTarget(fx, pending); count++; this.afterTarget(tab, pending, this.tokenAt(tab, p)?.id ?? null, caster); }
+      if (fx) { this.castTarget(fx, pending); count++; this.afterTarget(tab, pending, this.tokenAt(tab, p)?.id ?? null, caster, casterToken); }
       if (fx && a.self) { this.placing.stop(); return; }          // only the caster: done
       if (fx && total > 1 && count >= total) { this.placing.stop(); return; }          // its last dart, ray or beam: done
       say();
@@ -2727,7 +2915,7 @@ export default class AtlasSpellEffects extends Plugin {
     const fx = this.targetEffect(t, pending, c ? { x: c.x, y: c.y } : null, uid(), { x: k.x, y: k.y }, target);
     if (!fx) return;
     this.castTarget(fx, pending);
-    this.afterTarget(t, pending, target, c ? { x: c.x, y: c.y } : null);
+    this.afterTarget(t, pending, target, c ? { x: c.x, y: c.y } : null, caster);
     // more than one to send (Magic Missile's darts): the rest are clicked on the map
     const total = pending.more && ((pending.more.count ?? 1) > 1 || pending.more.steps?.length) ? countAt(pending.more, this.levelOf(t, caster)) : 0;
     if (total > 1) this.castAt(t, pending, caster, 1);
@@ -2858,6 +3046,7 @@ export default class AtlasSpellEffects extends Plugin {
   }
 
   cast(e: Effect): void {
+    if (!this.settings.animations && e.file) delete e.file;
     this.fitCone(e, this.atlasTabs().find((x) => this.mapOf(x) === e.map) ?? null);
     window.setTimeout(() => this.bars(), 0);
     const before = this.snapshot();
@@ -3406,7 +3595,9 @@ class CastModal extends Modal {
       this.area = { shape: r?.shape ?? a?.shape ?? 'radius', size: r?.size ?? a?.size ?? squares(4), ...((r?.width ?? a?.width) ? { width: r?.width ?? a?.width } : {}), ...(r?.angle ? { angle: r.angle } : {}), from: r?.from ?? a?.from ?? 'point', lasting: r?.lasting ?? a?.lasting ?? false,
         ...((r?.ring ?? a?.ring) ? { ring: r?.ring ?? a?.ring } : {}), ...(r?.round ? { round: true } : {}), ...((r?.blocks ?? a?.blocks) ? { blocks: r?.blocks ?? a?.blocks } : {}), ...((r ? r.target : a?.target) ? { target: (r ? r.target : a?.target)! } : {}), ...((r ? r.self : a?.self) ? { self: true } : {}) };
       if (this.area.target === 'on' && !r) this.area.size = a?.size ?? 0;
-      this.file = r ? r.file : defaultFor(c.name, this.area.shape, P.files, hintsOf(entry?.descFull, c.name))?.path;
+      // D&D 5e: the JB2A free pack's best fit for the spell (its own, else by what it is); other systems: by its name
+      const five = !r && P.systemOf().startsWith('builtin:dnd5e') ? fiveEFile(c.name, entry?.descFull ?? entry?.desc, entry?.school, this.area, P.files) : null;
+      this.file = r ? r.file : (five ?? defaultFor(c.name, this.area.shape, P.files, hintsOf(entry?.descFull, c.name)))?.path;
       if (r?.colour) this.colour = r.colour;
       this.colour2 = r?.colour2; this.alpha = r?.alpha; this.motion = r?.motion;
       this.attach = false;
@@ -3682,7 +3873,13 @@ class CastModal extends Modal {
       const key = this.choice?.entry?.key ?? this.choice?.key ?? 'effect';
       if (this.choice && !this.choice.stored) P.remember(key, this.memo());
       const range = this.range;
-      return { name: this.name, key, ...(hasMore(this.more) ? { more: { ...this.more } } : {}), ...(this.motion ? { motion: this.motion } : {}), ...(range ? { range } : {}), ...(this.conditions.length && this.area.target !== 'bolt' ? { conditions: [...this.conditions] } : {}), area: { ...this.area }, ...(this.file ? { file: this.file } : {}), colour: this.colour, ...(this.colour2 ? { colour2: this.colour2 } : {}), ...(this.alpha ? { alpha: this.alpha } : {}), ...(this.attach ? { attach: true } : {}), ...(this.light ? { light: { ...this.light } } : {}), ...(this.teleport > 0 ? { teleport: this.teleport } : {}), ...(this.look ? { look: this.look } : {}), ...(Object.keys(this.atlas).length ? { atlas: { ...this.atlas } } : {}) };
+      const spec = rollSpecOf(this.choice?.entry?.descFull ?? this.choice?.entry?.desc);
+      if (spec) {
+        const lv = Number(this.choice?.entry?.level);
+        if (lv > 0 && lv <= 9) spec.level = lv;
+        spec.spell = !this.choice?.ability;
+      }
+      return { name: this.name, key, ...(spec ? { roll: spec } : {}), ...(hasMore(this.more) ? { more: { ...this.more } } : {}), ...(this.motion ? { motion: this.motion } : {}), ...(range ? { range } : {}), ...(this.conditions.length && this.area.target !== 'bolt' ? { conditions: [...this.conditions] } : {}), area: { ...this.area }, ...(this.file ? { file: this.file } : {}), colour: this.colour, ...(this.colour2 ? { colour2: this.colour2 } : {}), ...(this.alpha ? { alpha: this.alpha } : {}), ...(this.attach ? { attach: true } : {}), ...(this.light ? { light: { ...this.light } } : {}), ...(this.teleport > 0 ? { teleport: this.teleport } : {}), ...(this.look ? { look: this.look } : {}), ...(Object.keys(this.atlas).length ? { atlas: { ...this.atlas } } : {}) };
   }
   /**
    * Its Atlas area (Atlas 0.15 on, where the add-on uses Atlas's areas): Atlas's own choices for it (its look, its
@@ -4011,6 +4208,11 @@ class EffectSettings extends PluginSettingTab {
     map.push({ name: 'Snap to grid', desc: 'Spheres, cubes and wall corners land on the nearest grid corner, as the rules place them (Alt: the other way, once).', render: (st) => { st.addToggle((t) => t.setValue(s.snap).onChange((v) => { void (async () => { s.snap = v; await p.save(); })(); })); } });
     map.push(toggle('Spell AoE player preview', 'While you place a spell, the players’ screen shows its area’s outline, in its colours, so they can see what it will cover before you cast it. Also in the ✨ button’s menu.', () => s.showAim, (v) => { s.showAim = v; }));
     map.push(toggle('Spells as Atlas areas', 'Each spell you cast is one of Atlas’s own areas too (Atlas 0.15 or later): Atlas draws it (with its Fire, Frost… look), lights it, counts the creatures in it as far as walls let it, saves it with the scene and shows it to online players. The animation plays over it. Change or delete the area in Atlas and the spell follows.', () => s.atlasAreas, (v) => { s.atlasAreas = v; }));
+    map.push({ name: 'Spells over tokens', desc: 'Where spells are drawn: under the tokens (every creature stays in view), or over them, so a Fireball bursts and an Eldritch Blast flies on top of the creatures it hits. “Instant spells and bolts” keeps lasting areas (Spirit Guardians, Moonbeam) under the tokens. Tokens’ bars, names and Atlas’s handles stay on top either way.', render: (st) => { st.addDropdown((d) => d.addOption('none', 'Under the tokens').addOption('instant', 'Instant spells and bolts over them').addOption('all', 'All over them').setValue(s.above).onChange((v) => { void (async () => { s.above = v === 'all' || v === 'instant' ? v : 'none'; await p.save(); p.wake(); })(); })); } });
+    map.push(toggle('Animations', 'Play each spell’s animation. Off: spells are their areas only (Atlas’s, or drawn), and everything else (rolls, conditions, pushes…) works the same.', () => s.animations, (v) => { s.animations = v; }));
+    map.push(toggle('Roll attacks, saves and damage', 'D&D 5e (2014 and 2024). When a spell or ability is cast, its attack or save and its damage are rolled against each creature it catches, from its text and their statblocks (AC, saves, resistances, immunities, vulnerabilities), and shown on its card: change any damage there, then Apply damage takes it off their hit points in Atlas (Ctrl+Z puts it back). What can’t be read is shown as “?”, for you to judge.', () => s.rolling, (v) => { s.rolling = v; }));
+    map.push({ name: 'Temporary HP resource', desc: 'Temporary hit points are kept on each token as the Atlas resource of this name. Add a resource with this name in Atlas (its resources, for your game system) and they show as a bar on the token, filling when given and emptying as damage takes them. A token’s own Temp HP resource, if it has one, is used whatever this says.', render: (st) => { st.addText((t) => t.setPlaceholder('Temp HP').setValue(s.tempResource).onChange((v) => { void (async () => { s.tempResource = v.trim() || 'Temp HP'; await p.save(); })(); })); } });
+    map.push(toggle('Post rolls to the table log', 'Each card’s rolls also go to Atlas’s table log, as you, when an online table is running.', () => s.rollPost, (v) => { s.rollPost = v; }));
     map.push(toggle('Areas go through walls', 'Every spell’s and ability’s area ignores walls: it’s drawn at its full size and counts the creatures behind them (a dragon’s breath through a pillar). Off: an area stops at walls, as Atlas’s do, unless “Stops at walls” is turned off for that spell in the cast window. Needs “Spells as Atlas areas”.', () => s.throughWalls, (v) => { s.throughWalls = v; }));
     map.push(toggle('Mark creatures in spells', 'Creatures inside a lasting spell get Atlas’s “In a spell” condition (added to your collection’s conditions), and the conditions the spell gives (Silence: Deafened), while they’re in it. Creatures hit by an instant spell (Fireball) are listed on a card beside the map till you close it. Only what the add-on put on is taken off again.', () => s.markCreatures, (v) => { s.markCreatures = v; }));
     map.push(toggle('Spell turn tracker', 'During a fight in Atlas’s initiative tracker, each lasting spell shows how many rounds it has been up beside it (“Round 3”), on your screen only. Spells never end on their own.', () => s.showRounds, (v) => { s.showRounds = v; }));

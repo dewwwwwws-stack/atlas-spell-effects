@@ -49,6 +49,8 @@ export interface AtlasState {
   updateMapFeature?: (id: string, changes: { polygon?: { x: number; y: number }[]; name?: string }) => void;
   deleteMapFeature?: (id: string) => void;
   addToken?: (data: Record<string, unknown>) => string;
+  /** Changes to several tokens as one undo step (their resources: hit points…). */
+  updateTokens?: (entries: Array<{ id: string; changes: Record<string, unknown> }>) => void;
   deleteToken?: (id: string) => void;
   /** Atlas's Measure tool: its choices (shape, kept, players, colour, look), and the tool in hand. */
   measureTool?: Record<string, unknown>;

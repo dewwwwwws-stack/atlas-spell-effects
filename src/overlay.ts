@@ -33,6 +33,8 @@ export interface World {
   url(path: string): string | null;
   /** Where an animation's picture really is in its frame, once it has been looked at. */
   trim(path: string): Trim | null;
+  /** Which spells are drawn over the tokens (else under them): none, the instant ones and bolts, or all. */
+  above?(): 'none' | 'instant' | 'all';
   /** The tokens on a map (for the players: only their own, never hidden ones), to show through lasting effects. */
   tokens(map: string, players: boolean): TokenAt[];
   /**

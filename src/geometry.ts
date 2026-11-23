@@ -80,6 +80,9 @@ export interface Effect {
   hidden?: boolean;
   /** Its Atlas area's colour, given in Atlas (else its look's own). */
   areaColour?: string;
+  /** What it rolls (attacks, saves, damage), from its text; and who cast it (their statblock gives the DC). */
+  roll?: import('./rolls').RollSpec;
+  rollBy?: string;
   /** Pushes those it catches this far (game units) from where it comes from when cast; negative: pulls. */
   push?: number;
   /** Its area is difficult terrain while it lasts (kept in Atlas as a map feature). */
