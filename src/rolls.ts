@@ -59,8 +59,33 @@ const TYPES = 'acid|bludgeoning|cold|fire|force|lightning|necrotic|piercing|pois
 const clean = (d: string): string => d.replace(/\s+/g, '').replace(/[−–]/g, '-');
 
 /** What a spell's or ability's text rolls; null when it rolls nothing (no damage, attack or save). */
+/**
+ * Text with 5e.tools' tags made plain, as notes imported from it (or by Fantasy Statblocks) write them: "{@damage
+ * 8d6}" 8d6, "{@dc 15}" DC 15, "{@hit 5}" +5, "{@atk rs}" Ranged Spell Attack:, "{@h}" Hit:, "{@spell fireball}"
+ * fireball, any other "{@tag text|…}" its text.
+ */
+export function untag(text: string): string {
+  // the Dice Roller plugin's inline dice ("`dice: 8d6`", "`dice: 1d20+5|noform`"), and dice in bold ("**8d6**")
+  if (text.includes('`') || text.includes('*')) text = text.replace(/`dice:\s*([^`|]+?)\s*(?:\|[^`]*)?`/gi, '$1').replace(/\*{1,3}(\d+d\d+(?:\s*[+−–-]\s*\d+)?)\*{1,3}/g, '$1');
+  if (!text.includes('{@')) return text;
+  const ATK: Record<string, string> = { mw: 'Melee Weapon Attack:', rw: 'Ranged Weapon Attack:', 'mw,rw': 'Melee or Ranged Weapon Attack:', ms: 'Melee Spell Attack:', rs: 'Ranged Spell Attack:', m: 'Melee Attack Roll:', r: 'Ranged Attack Roll:', 'm,r': 'Melee or Ranged Attack Roll:' };
+  return text.replace(/\{@(\w+)\s*([^}]*)\}/g, (_m, tag: string, rest: string) => {
+    const v = rest.split('|')[0].trim();
+    switch (tag.toLowerCase()) {
+      case 'dc': return `DC ${v}`;
+      case 'hit': return `${/^[+-]/.test(v) ? '' : '+'}${v}`;
+      case 'atk': case 'atkr': return ATK[v.replace(/\s/g, '')] ?? 'Attack Roll:';
+      case 'h': return 'Hit: ';
+      case 'hom': return 'Hit or Miss: ';
+      case 'recharge': return `(Recharge ${v || 6}–6)`;
+      case 'scaledamage': case 'scaledice': return rest.split('|').pop()!.trim();       // "{@scaledamage 8d6|3-9|1d6}": what a slot adds
+      default: return v;
+    }
+  });
+}
+
 export function rollSpecOf(text: string | undefined): RollSpec | null {
-  const t = String(text ?? '').replace(/\s+/g, ' ');
+  const t = untag(String(text ?? '')).replace(/\s+/g, ' ');
   if (!t) return null;
   // an attack, then a save after it (Ice Knife: "Make a ranged spell attack… Hit or miss, the shard explodes. The
   // target and each creature within 5 feet of it must succeed on a Dexterity saving throw"): each read on its own
@@ -143,7 +168,7 @@ export function rollSpecOf(text: string | undefined): RollSpec | null {
     if (/\branged (?:spell |weapon )?attack\b/i.test(t) && !/\bmelee or ranged\b/i.test(t)) spec.ranged = true;
     if (spec.short !== undefined && spec.reach === undefined) spec.ranged = true;
   }
-  if (spec.kind === 'save') spec.half = /\bhalf (?:as much )?(?:the )?(?:initial )?damage\b|\bSuccess:\s*Half damage\b/i.test(t);
+  if (spec.kind === 'save') spec.half = /\bhalf (?:as much )?(?:the )?(?:initial )?damage\b|\bhalf as much on a success|\bSuccess:\s*Half damage\b/i.test(t);
   // a cantrip's damage as levels go up: "levels 5 (2d10), 11 (3d10), and 17 (4d10)" / "at 5th level (2d10)"
   const scale: [number, string][] = [];
   for (const s of t.matchAll(/\b(\d{1,2})(?:st|nd|rd|th)?(?:\s+level)?\s*\((\d+d\d+)(?:\s+or\s+\d+d\d+)?\)/gi)) {
@@ -320,8 +345,9 @@ const profFromCr = (cr: unknown): number | undefined => {
  * A statblock's numbers, from its fields (Fantasy Statblocks' and Atlas's 5e templates: ac, stats, saves,
  * damage_resistances…), and its text for a spellcaster's DC and attack bonus.
  */
-export function statsOf(fields: Record<string, unknown> | null | undefined, text = ''): Stats {
+export function statsOf(fields: Record<string, unknown> | null | undefined, rawText = ''): Stats {
   const f = fields ?? {};
+  const text = untag(rawText);
   const get = (...keys: string[]): unknown => { for (const k of keys) { const hit = Object.keys(f).find((x) => x.toLowerCase().replace(/[\s-]+/g, '_') === k); if (hit && f[hit] !== undefined && f[hit] !== null && f[hit] !== '') return f[hit]; } return undefined; };
   // "bludgeoning, piercing, and slashing from nonmagical attacks": not against spells
   const split = (v: unknown): [unknown, string[]] => {

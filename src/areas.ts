@@ -1,4 +1,4 @@
-import { rollSpecOf } from './rolls';
+import { rollSpecOf, untag } from './rolls';
 // A spell's area, read from its own text in your spell list (spells/spells.json: `range`, `duration`, `descFull`).
 // Nothing is looked up elsewhere: where the text names no area, the DM picks one in the cast window.
 
@@ -275,7 +275,7 @@ export function describe(a: Area): string {
  * area. It lasts when its text says so ("lasts for 1 minute", "Until the start of its next turn, that area…").
  */
 export function abilityEntry(name: string, text: string): SpellEntry | null {
-  const t = text.replace(/\s+/g, ' ').trim();
+  const t = untag(text).replace(/\s+/g, ' ').trim();
   const nm = name.replace(/\s+/g, ' ').trim();
   if (!t || !nm) return null;
   const within = new RegExp(String.raw`\b(?:point|space|location|ground|creature|target)\b[^.]*?\bwithin (\d+)\s*-?\s*` + UNIT, 'i').exec(t)

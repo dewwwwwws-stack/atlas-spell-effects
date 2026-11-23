@@ -10,6 +10,7 @@ import { kitOf, PixiPainter, forgetBlobs, type AimLook } from './pixi';
 import { areaOf as atlasAreaOf, areaKey, effectFromArea, lookOf, areaCarries, atlasLightOf, toolShapeOf, AREA_LOOKS, LOOK_NAMES, LOOK_COLOURS, type AreaShape, type AreaLook } from './measures';
 import { moreOf, countAt, hasMore, type More } from './more';
 import { fiveEFile } from './fives';
+import { paletteOf } from './elements';
 import { rollSpecOf, statsOf, rollAgainst, addExtra, type RollSpec, type CastRoll, type Edge, type Stats } from './rolls';
 import { IN_SPELL_ID, IN_SPELL, ROUND_SECS, idsOf, upFor, timeOf, secondsOf, spellConditions, type ConditionDef } from './conditions';
 import { call, field, type AtlasAssets, type Tab, type AtlasView, type AtlasViewport, type AtlasState, type CanvasNode, type PlayersView, type Measurement } from './atlas';
@@ -62,6 +63,8 @@ interface Settings {
   srdSpells: boolean; srdEdition: SrdEdition; srdFolder: string;
   /** Who it rolls for: everyone, or only creatures that aren't player characters (players roll their own). */
   rollWho: 'all' | 'npcs';
+  /** A card closes itself a few seconds after its damage is applied (while the pointer's off it). */
+  autoClose: boolean;
   /** Post each roll's results to Atlas's table log, when a table is running. */
   rollPost: boolean;
   /** Legendary Resistance used, by map and token ("map|token"): reset by hand on the card. */
@@ -106,7 +109,7 @@ function rowText(r: import('./rolls').RollRow, withDamage = true): string {
 /** A canvas, whichever window it's in (a popped-out one's too). */
 const isCanvas = (c: unknown): c is HTMLCanvasElement => !!c && typeof (c as Node).instanceOf === 'function' && (c as Node).instanceOf(HTMLCanvasElement);
 
-const DEFAULTS: Settings = { folders: '', srdSpells: false, srdEdition: '2024', srdFolder: 'Combat+ SRD', rolling: false, rollWho: 'all', rollPost: false, above: 'none', legendary: {}, tempResource: 'Temp HP', animations: true, made: [], remember: {}, abilities: {}, lasting: [], snap: true, storage: 'Spell Storage', bases: [], presets: [], jb2aFolder: 'JB2A_DnD5e', jb2aOffer: true, noteSpells: true, orphanLights: [], coneAngle: 0, artTrim: {}, showAim: false, aimLook: 'outline', markCreatures: true, showRounds: true, atlasAreas: true, throughWalls: false, areas: {}, roundSecs: {}, marks: [], caught: [], recent: [] };
+const DEFAULTS: Settings = { folders: '', autoClose: true, srdSpells: false, srdEdition: '2024', srdFolder: 'Combat+ SRD', rolling: false, rollWho: 'all', rollPost: false, above: 'none', legendary: {}, tempResource: 'Temp HP', animations: true, made: [], remember: {}, abilities: {}, lasting: [], snap: true, storage: 'Spell Storage', bases: [], presets: [], jb2aFolder: 'JB2A_DnD5e', jb2aOffer: true, noteSpells: true, orphanLights: [], coneAngle: 0, artTrim: {}, showAim: false, aimLook: 'outline', markCreatures: true, showRounds: true, atlasAreas: true, throughWalls: false, areas: {}, roundSecs: {}, marks: [], caught: [], recent: [] };
 
 /** A spell to pick in the cast window: a saved one, or a spell note (from a Base or found in the vault). */
 export interface Choice { key: string; name: string; source: 'stored' | 'note'; entry?: SpellEntry; stored?: StoredSpell; notePath?: string; /** A creature's ability from a statblock (Fire Breath), not a spell. */ ability?: boolean; /** Whose ability it is (its creature's name). */ owner?: string; /** A built-in SRD spell (no note of its own). */ srd?: boolean }
@@ -185,6 +188,40 @@ export default class AtlasSpellEffects extends Plugin {
     this.addCommand({ id: 'end', name: 'End a lasting effect…', callback: () => new EndModal(this.app, this).open() });
     this.addCommand({ id: 'end-all', name: 'End every lasting effect on this map', callback: () => this.endAllHere() });
     this.addCommand({ id: 'snap', name: 'Snap effects to the grid on or off', callback: () => { void this.toggleSnap(); } });
+    this.addCommand({ id: 'apply-latest', name: 'Apply damage from the latest card', checkCallback: (checking) => {
+      const t = this.atlasTab(); const map = t ? this.mapOf(t) : null;
+      const ok = this.settings.caught.some((x) => x.map === map && x.roll?.rows.some((r) => !r.applied && (r.damage > 0 || !!r.temp)));
+      if (!checking && ok) this.applyLatest();
+      return ok;
+    } });
+    this.registerInterval(window.setInterval(() => this.autoCloseCards(), 500));
+    // ── cards, from the keyboard ──
+    const latest = (want: (c: Caught) => boolean): Caught | undefined => { const t = this.atlasTab(); const map = t ? this.mapOf(t) : null; return [...this.settings.caught].reverse().find((x) => x.map === map && want(x)); };
+    const cmd = (id: string, name: string, find: () => unknown, run: () => void) => this.addCommand({ id, name, checkCallback: (checking) => { const ok = !!find(); if (ok && !checking) run(); return ok; } });
+    cmd('close-latest', 'Close the latest card', () => latest(() => true), () => { const c = latest(() => true); if (c) this.closeCaught(c.id); });
+    cmd('close-all', 'Close every card on this map', () => latest(() => true), () => { const t = this.atlasTab(); const map = t ? this.mapOf(t) : null; for (const c of this.settings.caught.filter((x) => x.map === map)) this.closeCaught(c.id); });
+    for (const [id, name, edge] of [['reroll-latest', 'Reroll the latest card', 'normal'], ['reroll-latest-advantage', 'Reroll the latest card with advantage', 'advantage'], ['reroll-latest-disadvantage', 'Reroll the latest card with disadvantage', 'disadvantage']] as const) {
+      const can = (c: Caught) => !!c.roll && !!c.spec && !c.roll.rows.some((r) => r.applied);
+      cmd(id, name, () => latest(can), () => { const c = latest(can); const t = c && this.atlasTabs().find((x) => this.mapOf(x) === c.map); if (c && t && c.spec) void this.rollOn(t, c.id, c.name, c.spec, c.tokens.map((k) => k.id), c.by, edge, c.slot); });
+    }
+    for (const [id, name, saved] of [['player-saved', 'The next player’s save on the latest card: saved', true], ['player-failed', 'The next player’s save on the latest card: failed', false]] as const) {
+      const can = (c: Caught) => !!c.roll?.rows.some((r) => r.own && !r.applied);
+      cmd(id, name, () => latest(can), () => { const c = latest(can); const r = c?.roll?.rows.find((x) => x.own && !x.applied); if (c && r) this.ownSave(c.id, r.id, saved); });
+    }
+    { const can = (c: Caught) => !!c.roll?.rows.some((r) => r.onSave && !r.applied);
+      cmd('legendary-latest', 'Use Legendary Resistance on the latest card', () => latest(can), () => { const c = latest(can); const r = c?.roll?.rows.find((x) => x.onSave && !x.applied); if (c && r) this.useLegendary(c.id, r.id); }); }
+    // ── effects ──
+    cmd('end-latest', 'End the newest lasting effect on this map', () => this.newestLasting(), () => { const e = this.newestLasting(); if (e) this.end(e.id); });
+    // ── switches ──
+    const flip = (id: string, name: string, get: () => boolean, set: (v: boolean) => void, said: (v: boolean) => string, after?: () => void) => this.addCommand({ id, name, callback: () => { void (async () => { set(!get()); await this.save(); this.wake(); after?.(); new Notice(`Combat+: ${said(get())}`); })(); } });
+    flip('toggle-rolling', 'Rolling on or off', () => this.settings.rolling, (v) => { this.settings.rolling = v; }, (v) => `rolling ${v ? `on (${this.settings.rollWho === 'npcs' ? 'NPCs only' : 'everyone'})` : 'off'}.`, () => this.rescanStatblocks());
+    this.addCommand({ id: 'rolling-who', name: 'Rolling for everyone or NPCs only', callback: () => { void (async () => { this.settings.rollWho = this.settings.rollWho === 'npcs' ? 'all' : 'npcs'; await this.save(); this.rescanStatblocks(); new Notice(`Combat+: rolling for ${this.settings.rollWho === 'npcs' ? 'NPCs only' : 'everyone'}${this.settings.rolling ? '' : ' (rolling is off)'}.`); })(); } });
+    flip('toggle-effects', 'Spell effects (animations) on or off', () => this.settings.animations, (v) => { this.settings.animations = v; }, (v) => `spell effects ${v ? 'on' : 'off'}.`);
+    flip('toggle-aim-preview', 'Show players the area while you aim, on or off', () => this.settings.showAim, (v) => { this.settings.showAim = v; }, (v) => `players ${v ? 'see' : 'don’t see'} the area while you aim.`);
+    flip('toggle-walls', 'Areas go through walls, on or off', () => this.settings.throughWalls, (v) => { this.settings.throughWalls = v; }, (v) => `areas ${v ? 'go through' : 'stop at'} walls.`);
+    flip('toggle-auto-close', 'Close cards once applied, on or off', () => this.settings.autoClose, (v) => { this.settings.autoClose = v; }, (v) => `cards ${v ? 'close themselves once applied' : 'stay until closed'}.`);
+    flip('toggle-srd', 'Built-in SRD spells on or off', () => this.settings.srdSpells, (v) => { this.settings.srdSpells = v; }, (v) => `built-in SRD spells ${v ? 'on' : 'off'}.`, () => { void this.readSrd(); });
+    this.addCommand({ id: 'over-tokens', name: 'Spells over tokens: none, instant ones, or all', callback: () => { void (async () => { const next = { none: 'instant', instant: 'all', all: 'none' } as const; this.settings.above = next[this.settings.above]; await this.save(); this.wake(); new Notice(`Combat+: ${({ none: 'spells under the tokens', instant: 'instant spells and bolts over the tokens', all: 'every spell over the tokens' } as const)[this.settings.above]}.`); })(); } });
     this.addCommand({ id: 'srd-creatures', name: 'Add SRD creatures to the vault…', callback: () => { void this.pickSrdCreatures(); } });
     this.addCommand({ id: 'srd-spells', name: 'Add the SRD spells to the vault as notes', callback: () => { void this.writeSrd('spells').then((n) => new Notice(`Combat+: ${n} SRD spell notes added.`)); } });
     this.addCommand({ id: 'reload', name: 'Look again for spell notes and effect files', callback: () => { this.indexVault(); this.indexSpells(); } });
@@ -2158,6 +2195,30 @@ export default class AtlasSpellEffects extends Plugin {
   }
 
   /** An instant spell's card closed: done with (its "In a spell" marks come off). */
+  /** Cards whose damage is all applied: when (or when the pointer last left them), to close a few seconds on. */
+  private doneAt = new Map<string, number>();
+  /** Cards done with, closed once they've been left alone for a few seconds (not while the pointer's on one). */
+  private autoCloseCards(): void {
+    if (!this.doneAt.size) return;
+    const now = Date.now();
+    for (const [id, at] of [...this.doneAt]) {
+      if (!this.settings.autoClose || !this.settings.caught.some((c) => c.id === id)) { this.doneAt.delete(id); continue; }
+      const over = this.atlasTabs().some((t) => !!t.canvas.ownerDocument.querySelector(`.sfx-caught-card[data-caught="${CSS.escape(id)}"]:hover`));
+      if (over) { this.doneAt.set(id, now); continue; }
+      if (now - at >= 4000) { this.doneAt.delete(id); this.closeCaught(id); }
+    }
+  }
+  /** Whether a card has nothing left to do: no damage, healing or temp HP to apply, no player's save or Legendary Resistance to answer. */
+  private cardDone(c: Caught): boolean {
+    return !!c.roll && !c.roll.rows.some((r) => (!r.applied && (r.damage > 0 || !!r.temp)) || !!r.own || (!!r.onSave && !r.applied));
+  }
+  /** The newest card on the open map with damage (or healing, or temp HP) still to apply: applied. */
+  applyLatest(): boolean {
+    const t = this.atlasTab(); const map = t ? this.mapOf(t) : null;
+    const c = [...this.settings.caught].reverse().find((x) => x.map === map && x.roll?.rows.some((r) => !r.applied && (r.damage > 0 || !!r.temp)));
+    if (!c) return false;
+    this.applyRoll(c.id); return true;
+  }
   closeCaught(id: string): void {
     if (!this.settings.caught.some((c) => c.id === id)) return;     // closed already (by an earlier event of the same click)
     this.settings.caught = this.settings.caught.filter((x) => x.id !== id);
@@ -2311,7 +2372,10 @@ export default class AtlasSpellEffects extends Plugin {
       if (box.dataset.k === key) continue;
       box.dataset.k = key; box.empty();
       for (const c of list) {
-        const card = box.createDiv({ cls: 'sfx-caught-card' });
+        // nothing left to do on it (its damage applied; or none to apply: all missed or saved): it closes itself a
+        // few seconds on, once the pointer's off it (one with nothing applied waits a little longer, to be read)
+        if (this.settings.autoClose && c.roll && !this.doneAt.has(c.id) && this.cardDone(c)) this.doneAt.set(c.id, Date.now() + (c.roll.rows.some((r) => r.applied) ? 0 : 4000));
+        const card = box.createDiv({ cls: 'sfx-caught-card' }); card.dataset.caught = c.id;
         const head = card.createDiv({ cls: 'sfx-caught-head' });
         setIcon(head.createSpan({ cls: 'sfx-caught-icon' }), 'sparkles');
         head.createSpan({ cls: 'sfx-caught-title', text: c.name });
@@ -3434,6 +3498,21 @@ export default class AtlasSpellEffects extends Plugin {
     return redo ? this.redo() : this.undo();
   }
 
+  /** The newest lasting effect on the open map. */
+  newestLasting(): Effect | undefined {
+    const t = this.atlasTab(); if (!t) return undefined;
+    const map = this.mapOf(t);
+    return [...this.effects].reverse().find((e) => e.map === map && e.lasting);
+  }
+  /** Obsidian's hotkeys, showing this add-on's commands. */
+  openHotkeys(): void {
+    const setting = (this.app as unknown as { setting?: { open?: () => void; openTabById?: (id: string) => void; activeTab?: { searchComponent?: { setValue: (v: string) => void }; updateHotkeyVisibility?: () => void } } }).setting;
+    try {
+      setting?.open?.(); setting?.openTabById?.('hotkeys');
+      const tab = setting?.activeTab;
+      tab?.searchComponent?.setValue('Combat+'); tab?.updateHotkeyVisibility?.();
+    } catch { new Notice('Combat+: open Settings → Hotkeys and search for “Combat+”.'); }
+  }
   endAllHere(): void {
     const t = this.atlasTab(); if (!t) return;
     const map = this.mapOf(t);
@@ -3890,6 +3969,9 @@ class CastModal extends Modal {
       this.file = entry?.plain ? undefined : r ? r.file : (five ?? defaultFor(c.name, this.area.shape, P.files, hintsOf(entry?.descFull, c.name)))?.path;
       if (r?.colour) this.colour = r.colour;
       this.colour2 = r?.colour2; this.alpha = r?.alpha; this.motion = r?.motion;
+      // no animation (none fits, or JB2A's are off): drawn in what it's made of (Fire Bolt orange and flickering,
+      // Ray of Frost pale blue), else its school's colours
+      if (!this.file && !r?.colour) { const pal = paletteOf(c.name, entry?.descFull ?? entry?.desc, entry?.school); if (pal) { this.colour = pal.colour; this.colour2 = r?.colour2 ?? pal.colour2; this.motion = r?.motion ?? (pal.motion || undefined); } }
       this.attach = false;
       this.light = r && r.light !== undefined ? r.light : lightOf(entry, this.area);
       this.conditions = r?.conditions ?? spellConditions(entry, P.conditionNames());
@@ -4554,10 +4636,12 @@ class EffectSettings extends PluginSettingTab {
     players.push(toggle('Show players the area while you aim', 'The player window shows where a spell will land before you cast it. Also in the ✨ button’s menu.', () => s.showAim, (v) => { s.showAim = v; }));
     map.push(toggle('Spells as Atlas areas', 'Each spell is also one of Atlas’s own areas: lit, saved with the scene, stopped by walls and seen by online players. Move or delete it in Atlas and the spell follows.', () => s.atlasAreas, (v) => { s.atlasAreas = v; }));
     map.push({ name: 'Spells over tokens', desc: 'Draw spells under the tokens, or on top of them. Tokens can still be moved, and their bars and names stay on top either way.', render: (st) => { st.addDropdown((d) => d.addOption('none', 'Under the tokens').addOption('instant', 'Instant spells and bolts over them').addOption('all', 'All over them').setValue(s.above).onChange((v) => { void (async () => { s.above = v === 'all' || v === 'instant' ? v : 'none'; await p.save(); p.wake(); })(); })); } });
+    main.push({ name: 'Hotkeys', desc: 'Every Combat+ command can have a key: apply the latest damage, reroll, close cards, mark a player’s save, end effects, cast again, switch rolling or effects on and off, and more.', render: (st) => { st.addButton((b) => b.setButtonText('Set hotkeys').onClick(() => p.openHotkeys())); } });
     main.push(toggle('Spell effects', 'Play animations for spells and abilities. Off: casting still places the area so you can see who it catches, and rolling, conditions and pushes still work.', () => s.animations, (v) => { s.animations = v; }));
     main.push({ name: 'Rolling (D&D 5e and 2024 only)', desc: `For D&D 5e (2014) and D&D 2024 only: other game systems aren’t supported yet.${p.systemOf() && !p.systemOf().startsWith('builtin:dnd5e') ? ' Your open map isn’t D&D 5e, so rolls there may be wrong.' : ''} Rolls spells, abilities and weapon attacks against the creatures they hit, using their statblocks, with the results on a card. Apply damage takes it off their HP (Ctrl+Z undoes it). Turns on Attack buttons in statblocks. NPCs only: player characters’ own attacks, spells and saves are left to their players (their saves get Saved and Failed buttons on the card).`, render: (st) => { st.addDropdown((d) => d.addOption('off', 'Off').addOption('npcs', 'NPCs only (players roll their own)').addOption('all', 'Everyone').setValue(!s.rolling ? 'off' : s.rollWho).onChange((v) => { void (async () => { s.rolling = v !== 'off'; if (v === 'npcs' || v === 'all') s.rollWho = v; await p.save(); p.wake(); p.rescanStatblocks(); this.redraw(); })(); })); } });
     if (s.rolling) {
     rolls.push({ name: 'Temporary HP resource', desc: 'Temporary HP is kept in the Atlas resource with this name. Add a resource called this in Atlas to see it as a bar on tokens.', render: (st) => { st.addText((t) => t.setPlaceholder('Temp HP').setValue(s.tempResource).onChange((v) => { void (async () => { s.tempResource = v.trim() || 'Temp HP'; await p.save(); })(); })); } });
+    rolls.push(toggle('Close cards once applied', 'A card closes itself a few seconds after its damage is applied, once the pointer’s off it. To apply the newest card’s damage from the keyboard, give “Apply damage from the latest card” a hotkey (Settings → Hotkeys).', () => s.autoClose, (v) => { s.autoClose = v; }));
     rolls.push(toggle('Post rolls to the table log', 'Also send each card’s rolls to Atlas’s table log when an online table is running.', () => s.rollPost, (v) => { s.rollPost = v; }));
     }
     map.push(toggle('Areas go through walls', 'Every area ignores walls and catches the creatures behind them. Off: areas stop at walls, unless you turn that off for one spell in the cast window.', () => s.throughWalls, (v) => { s.throughWalls = v; }));

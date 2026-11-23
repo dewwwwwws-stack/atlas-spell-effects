@@ -260,8 +260,9 @@ canvas.sfx-cursor-move{cursor:move}
 .sfx-roll-who{display:flex;flex-direction:column;min-width:0;flex:1}
 .sfx-roll-dice,.sfx-roll-why{font-size:var(--font-ui-smaller,12px);color:var(--text-muted)}
 .sfx-roll-why{font-style:italic}
-.sfx-roll-row.is-crit .sfx-roll-dice,.sfx-roll-row.is-failed .sfx-roll-dice,.sfx-roll-row.is-hit .sfx-roll-dice{color:var(--text-error)}
-.sfx-roll-row.is-miss .sfx-roll-dice,.sfx-roll-row.is-saved .sfx-roll-dice,.sfx-roll-row.is-fumble .sfx-roll-dice{color:var(--text-success)}
+/* the caster's view: it landed (a hit, a crit, a failed save) green; it didn't (a miss, a save) red */
+.sfx-roll-row.is-crit .sfx-roll-dice,.sfx-roll-row.is-failed .sfx-roll-dice,.sfx-roll-row.is-hit .sfx-roll-dice{color:var(--text-success)}
+.sfx-roll-row.is-miss .sfx-roll-dice,.sfx-roll-row.is-saved .sfx-roll-dice,.sfx-roll-row.is-fumble .sfx-roll-dice{color:var(--text-error)}
 .sfx-roll-row.is-applied{opacity:.6}
 .sfx-roll-input{width:4.2em;text-align:right}
 .sfx-roll-acts{display:flex;gap:6px;padding-top:6px;flex-wrap:wrap}

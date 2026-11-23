@@ -1,13 +1,17 @@
-## New
+## Improvements
 
-- **Choose who rolling is for:** Off, NPCs only, or Everyone (Settings → Rolling). With **NPCs only**, player characters' own attacks and spells aren't rolled, since their players roll them. Their saves wait on the card for **Saved** or **Failed**, with the right damage either way. A token counts as a player character when it's marked as one in Atlas's token library.
-- **Multiattack.** With rolling on, a statblock's Multiattack gets a **Use** button. Click it, then click a target for each attack in turn ("one Bite attack and two Claw attacks": a Bite card, then two Claw cards). Where it offers a choice ("two Greatsword or Heavy Crossbow attacks"), the first is used; use the other attack's own button instead if you like.
-- **Built-in SRD (optional).** Every spell in the D&D System Reference Document is built in, so spells in a statblock's list can be cast and rolled with no spell notes in your vault. Choose D&D 2024 (SRD 5.2.1) or D&D 2014 (SRD 5.1) in the settings. It's off by default: turn on **Built-in SRD spells** in the settings. Your own notes always win.
-- **Add SRD creatures and spells to your vault.** Write any SRD creature (or all of them) as an Atlas statblock note, ready to link to a token, or every SRD spell as a note you can edit. Settings → Built-in SRD, or the commands.
-- **A guide to how statblocks and spells are read**, in the README, for writing your own.
-- **Attacks that only grapple or restrain** (a spider's web, a roper's tendril) get an Attack button too.
-- **Better default animations for SRD spells.** Every SRD spell was checked against JB2A's free pack: each spell with its own JB2A animation uses it, and summons, wards, Wish, Power Word Kill and a few others now get a fitting one instead of a generic or wrong one.
+- **Cards close themselves.** Once a card's damage is applied, it closes a few seconds later, after the pointer has moved off it. A card with nothing to apply (everyone missed or saved) closes too, a little later so there's time to read it. You can turn this off in Settings → Rolling.
+- **Apply damage from the keyboard.** A new command, *Apply damage from the latest card*, applies the newest card's damage. Give it a hotkey in Settings → Hotkeys.
+- **Lots more hotkeys**, with a **Set hotkeys** button at the top of the settings that opens Obsidian's hotkeys showing only Combat+'s commands. Commands you can give a key to:
+  - **Cards:** apply the latest damage, close the latest card or every card, reroll the latest card (normally, with advantage or with disadvantage), mark the next player's save as saved or failed, and use Legendary Resistance.
+  - **Effects:** end the newest lasting effect (as well as cast again, end every lasting effect and the others already there).
+  - **Switches:** rolling on or off, rolling for everyone or NPCs only, spell effects, the players' area preview, areas through walls, spells over tokens, cards closing themselves, and the built-in SRD spells.
+- **Middle-click to cast straight away.** Middle-click a statblock's Cast, Use or Attack button to go straight to clicking a token on the map, without the menu.
+- **Hit and miss colours swapped:** a hit, a crit or a failed save is green, and a miss or a successful save is red, as seen by whoever's attacking.
+- **Matching colours without JB2A.** A spell with no animation (JB2A's turned off, or none fits) is now drawn in colours that suit it, by damage type or school, with a fitting motion (fire flickers, frost shimmers), instead of always orange.
+- **Animations for more creature abilities.** Abilities that do no damage (a stench, an ink cloud, a fear aura, a roar, a song, a glow) now get a fitting JB2A animation. A few SRD spells get better ones too (summons, wards, Wish, Power Word Kill, Incendiary Cloud).
 
 ## Fixes
 
-- **Cantrips cast by creatures without levels now scale.** A monster's Eldritch Blast gets its extra beams, and its cantrip damage grows, using "a 9th-level spellcaster" from its statblock, or else its challenge rating.
+- **Notes imported from 5e.tools** (or with Fantasy Statblocks' tags) are read properly. Damage like `{@damage 8d6}`, DCs like `{@dc 14}`, attack bonuses like `{@hit 6}` and higher-slot damage are now picked up, so spells like Fireball roll their damage. So are the Dice Roller plugin's inline dice (`` `dice: 8d6` ``) and dice in bold.
+- **The built-in SRD's 2024 Mule** no longer has the Octopus's traits and attacks, which were copied onto it by mistake in the source data.

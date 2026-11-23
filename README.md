@@ -70,7 +70,12 @@ Settings → Community plugins → Browse → search **Combat+** (or *Atlas*) �
 - **Your own**: put `.webm` (best: video with see-through background), `.gif`, `.webp` or `.png` files in a
   folder called **Spell Effects** (or pick folders in the settings). Name them after the spell ("Moonbeam.webm")
   and they're picked for it.
-- Or none at all: the add-on draws the area itself (a glowing circle, cone, line, square or wall in a colour you pick).
+- Or none at all (turn off *Offer every JB2A animation*): the add-on draws the area itself, a glowing circle,
+  cone, line, square or wall, coloured to match the spell. Fire spells are orange and flicker, cold ones pale blue
+  and shimmering, lightning bright blue, acid and poison green, radiant gold, necrotic dark purple, thunder, force
+  and psychic in their own colours, and healing green. A spell with no damage type uses its school's colours.
+  With *Spells as Atlas areas* on, Atlas's own Fire, Frost, Lightning, Radiance and Shadow looks match it too. Change
+  any colour or motion in the cast window, and *Save* keeps it for that spell.
 
 **Credit:** JB2A — Jules & Ben's Animated Assets (free pack), by Jules, Ben, gazkhan and wassily, licensed
 [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/). A credit and licence note is saved beside
@@ -551,6 +556,21 @@ Still yours to run: concentration checks, damage from lasting spells each turn (
 darts or beams from a higher slot, and other game systems. Statblocks are read from notes (their properties, or a
 `statblock` block); a token with no note gives "?".
 
+**Cards.** A card closes itself a few seconds after its damage is applied, once the pointer's off it, and a card with
+nothing to apply a little later (Settings → Rolling → *Close cards once applied*). To apply the newest card's damage from the keyboard, give the command *Apply
+damage from the latest card* a hotkey in Settings → Hotkeys. On a card, a hit, a crit or a failed save is green, and
+a miss or a successful save is red.
+
+**Hotkeys.** Every command can have a key: Settings → Combat+ → **Set hotkeys** opens Obsidian's hotkeys showing
+only Combat+'s. There are commands to apply the latest damage, close the latest card or every card, reroll the
+latest card (normally, with advantage or with disadvantage), mark the next player's save as saved or failed, use
+Legendary Resistance, cast the last effect again, end the newest or every lasting effect, and switch rolling,
+rolling for NPCs only, spell effects, the players' preview, areas through walls, spells over tokens, cards closing
+themselves and the built-in SRD spells. None has a key until you give it one.
+
+**Middle-click** a statblock's Cast, Use or Attack button to go straight to clicking a token on the map, without
+the menu.
+
 **Ranges.** Distances count as D&D counts them: next to you is 5 ft, and diagonals count the same as straight
 lines. An attack reaches as far as its farthest range ("reach 5 ft. or range 150 ft.": 150 ft). Past its normal
 range it has disadvantage, and past its long range it's marked out of range ("range 150/600 ft."). A ranged attack
@@ -608,6 +628,10 @@ from the 5e-bits 5e-database project's transcription (https://github.com/5e-bits
 Combat+ reads plain statblock and spell text, the way the official books and the SRD write it. You don't need any
 special fields. If you write your own (homebrew, or a monster typed in by hand), these are the patterns it looks
 for. Anything it can't read is shown as **?** on the card, for you to decide.
+
+**Imported notes.** 5e.tools' tags (as notes imported from it, or for Fantasy Statblocks, write them) are read as
+plain text: `{@damage 8d6}`, `{@dc 14}`, `{@hit 6}`, `{@atk mw}`, `{@h}`, `{@scaledamage 8d6|3-9|1d6}`. So are the Dice Roller
+plugin's inline dice (`` `dice: 8d6` ``) and dice in bold (`**8d6**`).
 
 **An entry's name.** Each action, trait or reaction is a name, then a full stop, then its text: `Bite. Melee
 Attack Roll: …`. In Atlas's statblock editor, that's an entry's *Name* and *Description*. Uses go in brackets after

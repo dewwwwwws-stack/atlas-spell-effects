@@ -1,6 +1,7 @@
 // Spells from spell notes in the vault: any note whose properties say it is a spell (a `school`, or a tag with
 // "spell" in it), or every note in a chosen folder. Its range and duration come from its properties or from
 // lines like "**Range:** Self (15-foot cone)" in its text; its area from the text itself (areas.ts).
+import { untag } from './rolls';
 import type { SpellEntry } from './areas';
 
 type FM = Record<string, unknown> | null | undefined;
@@ -58,7 +59,8 @@ export function spellFromNote(path: string, fm: FM, body: string): SpellEntry {
   const base = path.split('/').pop()!.replace(/\.md$/i, '');
   const name = str(fm?.['name'] ?? fm?.['title'] ?? fm?.['aliases']).split(',')[0].trim() || base;
   // the text without the properties block
-  const text = body.replace(/^---\n[\s\S]*?\n---\n?/, '');
+  // (5e.tools' tags made plain: "{@damage 8d6}" 8d6)
+  const text = untag(body.replace(/^---\n[\s\S]*?\n---\n?/, ''));
   const level = Number(fm?.['level'] ?? fm?.['spell-level']);
   return {
     key: 'note:' + path,

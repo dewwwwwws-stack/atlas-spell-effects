@@ -55,6 +55,9 @@ def monster_note(m, ed):
         i = p['proficiency']['index']
         if i.startswith('saving-throw-'): saves.append(f"  - {i[13:]}: {p['value']}")
         elif i.startswith('skill-'): skills.append(f"  - {i[6:].replace('-', '_')}: {p['value']}")
+    # the source's 2024 Mule carries the Octopus's traits, attack and reaction (a copying slip there): left out
+    if ed == '2024' and m['name'] == 'Mule':
+        m = {**m, 'special_abilities': [], 'actions': [], 'reactions': []}
     traits = [a for a in (m.get('special_abilities') or []) if not a.get('spellcasting')]
     actions = [a for a in (m.get('actions') or []) if not a.get('spellcasting')]
     spells_list = []

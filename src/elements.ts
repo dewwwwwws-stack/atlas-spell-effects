@@ -53,3 +53,24 @@ export function elementsOf(name: string | undefined, text: string | undefined): 
   for (const f of found.sort((a, b) => a.at - b.at)) add(f.e);
   return out;
 }
+
+/** A drawn effect's colours and motion (a spell with no animation): by what it's made of, else its school. */
+const PALETTE: Record<Element, { colour: string; colour2: string; motion: string }> = {
+  fire: { colour: '#ff6a1a', colour2: '#ffd04a', motion: 'flicker' }, cold: { colour: '#8ad1f8', colour2: '#eaf8ff', motion: 'shimmer' },
+  lightning: { colour: '#3a8bff', colour2: '#e0f0ff', motion: 'flicker' }, acid: { colour: '#7fd32a', colour2: '#e0ff8a', motion: 'breathe' },
+  poison: { colour: '#4caf50', colour2: '#b5e07a', motion: 'breathe' }, radiant: { colour: '#ffd54a', colour2: '#fff6c8', motion: 'shimmer' },
+  necrotic: { colour: '#6b3fa0', colour2: '#1e1230', motion: 'breathe' }, thunder: { colour: '#6c7bff', colour2: '#d0d5ff', motion: 'pulse' },
+  psychic: { colour: '#e055c8', colour2: '#ffc4f2', motion: 'pulse' }, force: { colour: '#9a7bff', colour2: '#e6deff', motion: 'pulse' },
+};
+const SCHOOLS: Record<string, { colour: string; colour2: string; motion: string }> = {
+  abjuration: { colour: '#4fa3ff', colour2: '#d6ebff', motion: 'shimmer' }, conjuration: { colour: '#ffb347', colour2: '#fff0d0', motion: 'breathe' },
+  divination: { colour: '#9fd8ff', colour2: '#ffffff', motion: 'shimmer' }, enchantment: { colour: '#ff7fd0', colour2: '#ffe0f4', motion: 'pulse' },
+  evocation: { colour: '#ff8a2a', colour2: '#ffe0b0', motion: '' }, illusion: { colour: '#b388ff', colour2: '#efe4ff', motion: 'shimmer' },
+  necromancy: { colour: '#6b3fa0', colour2: '#1e1230', motion: 'breathe' }, transmutation: { colour: '#c9a227', colour2: '#fff2c0', motion: 'breathe' },
+};
+export function paletteOf(name: string, text: string | undefined, school?: string): { colour: string; colour2: string; motion: string } | null {
+  if (/\bregains?\b[^.]*\bhit points\b/i.test(String(text ?? ''))) return { colour: '#5fd35f', colour2: '#e2ffd8', motion: 'breathe' };   // healing
+  const e = elementsOf(name, text)[0];
+  if (e) return PALETTE[e];
+  return SCHOOLS[String(school ?? '').trim().toLowerCase()] ?? null;
+}

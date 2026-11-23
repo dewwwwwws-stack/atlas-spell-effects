@@ -335,6 +335,13 @@ export class StatblockLinker {
     b.addEventListener('pointerenter', () => { const sb = b.closest<HTMLElement>(STATBLOCK); const l = this.buttons.get(b); if (sb && l) this.peek(l, { statblock: sb, rect: b.getBoundingClientRect() }); });
     b.addEventListener('pointerleave', () => this.peek(null, null));
     b.addEventListener('click', (e) => { const r = b.getBoundingClientRect(); open(e, r.left, r.bottom); });
+    // a middle click: straight to clicking a token on the map (no menu)
+    b.addEventListener('auxclick', (e) => {
+      if (e.button !== 1) return;
+      quiet(e);
+      const sb = b.closest<HTMLElement>(STATBLOCK); const link = this.buttons.get(b);
+      if (sb && link) this.cast(link, { shift: false, statblock: sb, x: e.clientX, y: e.clientY });
+    });
     b.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { const r = b.getBoundingClientRect(); open(e, r.left, r.bottom); } });
     parent.insertBefore(b, before);
     return b;

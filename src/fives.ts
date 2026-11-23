@@ -6,6 +6,24 @@ import type { Area } from './areas';
 import { elementsOf } from './elements';
 
 /** Spells the pack has an animation for under another name. */
+const ABILITY_LOOKS: readonly [RegExp, string][] = [
+  [/\billumination\b|\bluminous|\bglow/, 'Generic/Particles/ParticlesOutward01'],
+  [/\bstench\b|\bfetid\b|\bnoxious\b|\bspores?\b/, 'Generic/Template/Circle/TemplatePoisonCircle'],
+  [/\bink\b|\bsmoke\b|\bsoot\b/, 'Generic/Template/Circle/Smoke/'],
+  [/\bdarkness\b|\bshadow/, '2nd_Level/Darkness/'],
+  [/\bfear\b|\bfrightful\b|\bhorrif|\bterrify|\bunsettling\b|\bvile appearance\b|\bhorrific\b|\bmoan\b|\bwail\b/, 'Generic/Template/Circle/TemplateFearCircle'],
+  [/\broar\b|\bbellow\b|\bscreech\b|\bshriek\b|\bhowl\b/, 'TMFX/OutPulse/'],
+  [/\bsong\b|\bgibbering\b|\bchant\b|\bmelody\b/, 'Generic/Music_Notation/'],
+  [/\baura of authority\b|\bleadership\b|\bcommand\b/, 'Generic/Magic_Signs/EnchantmentCircleComplete'],
+  [/\bshaking\b|\btremor\b|\bstomp\b|\bquake\b/, 'Generic/Impact/GroundCrackImpact_01'],
+  [/\baberrant ground\b|\bmire\b|\bmud\b/, '1st_Level/Grease/'],
+  [/\bdestroy metal\b|\brust\b/, 'Generic/Impact/Impact_01'],
+  [/\bwhirlwind\b/, '7th_Level/Whirlwind/'],
+  [/\bdeath burst\b|\bexplodes?\b|\bdeath throes\b/, 'Generic/Explosion/'],
+  [/\bspittle\b|\bdust\b|\bsand\b/, 'Generic/Smoke/SmokePuff01'],
+  [/\bblasphemous\b|\bhorror\b|\bnimbus\b/, 'Generic/Template/Circle/TemplateHorrorCircle'],
+];
+
 const ALIASES: Record<string, string> = {
   // summoned helpers and companions: a puff of smoke where they appear
   'find steed': 'Generic/Smoke/SmokePuff01', 'find familiar': 'Generic/Smoke/SmokePuff01', 'giant insect': 'Generic/Smoke/SmokePuff01', "mordenkainen's faithful hound": 'Generic/Smoke/SmokePuff01',
@@ -15,7 +33,7 @@ const ALIASES: Record<string, string> = {
   'forbiddance': 'Generic/Magic_Signs/AbjurationCircleComplete',
   // the rest named
   'wish': 'Generic/Particles/ParticleBurstStar01', 'power word kill': 'Generic/Template/Circle/TemplateSkullCircle', 'storm of vengeance': 'Generic/Template/Circle/Lightning/',
-  'incendiary cloud': 'Generic/Template/Circle/Smoke/', 'meld into stone': 'Generic/Smoke/SmokePuff01', 'contact other plane': 'Generic/Portals/', 'harm': 'Generic/Template/Circle/TemplateSkullCircle',
+  'incendiary cloud': 'Generic/Fire/Flame/Flames04', 'meld into stone': 'Generic/Smoke/SmokePuff01', 'contact other plane': 'Generic/Portals/', 'harm': 'Generic/Template/Circle/TemplateSkullCircle',
   'starry wisp': 'Generic/RangedSpell/02/', 'power word heal': 'Generic/Healing/HealingAbility_02', 'mass heal': 'Generic/Healing/HealingAbility_02', 'heal': 'Generic/Healing/HealingAbility_02',
   "evard's black tentacles": '4th_Level/Black_Tentacles', "bigby's hand": '5th_Level/Arcane_Hand', "hunter's mark": '1st_Level/Hunters_Mark',
   "jim's magic missile": '1st_Level/Magic_Missile', 'delayed blast fireball': '3rd_Level/Fireball', 'meteor swarm': '3rd_Level/Fireball',
@@ -107,6 +125,8 @@ export function fiveEFile(name: string, text: string | undefined, school: string
   const fiery = /\bfire|flame|burn/i.test(n);
   const own = (p: string) => packFile(p, files, lasting, bolt, fiery);
   const alias = ALIASES[n]; if (alias) { const f = own(alias); if (f) return f; }
+  // creatures' abilities, by what they're called (light, a stench, ink, fear, a roar or a song, a shaking ground)
+  for (const [re, p] of ABILITY_LOOKS) if (re.test(n)) { const f = own(p); if (f) return f; }
   // its own folder, by name ("Cone Of Cold": 5th_Level/Cone_Of_Cold)
   const folder = n.replace(/[^a-z0-9 ]/g, '').split(' ').filter(Boolean).map((w) => w[0].toUpperCase() + w.slice(1)).join('_');
   for (const lv of ['Cantrip', '1st_Level', '2nd_Level', '3rd_Level', '4th_Level', '5th_Level', '6th_Level', '7th_Level', '8th_Level', '9th_Level']) {
