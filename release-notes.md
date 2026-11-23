@@ -1,8 +1,22 @@
 ## New
 
-- **Rolling attacks, saves and damage (D&D 5e).** Turn it on in the settings. Each cast rolls an attack against every target's AC, or every creature's save against the DC, and its damage. Read from the spell's text and the statblocks. Edit any damage on the card, then **Apply damage** takes it off their hit points in Atlas. Reroll, with advantage or disadvantage if you like.
-- **D&D's rules built in:** crits (and automatic crits on Paralyzed or Unconscious creatures within 5 ft), advantage and disadvantage from conditions, automatic failed saves, Magic Resistance, Evasion, Legendary Resistance (a button on the card), resistances, immunities and vulnerabilities, upcasting (a slot picker on the card), and temporary hit points, kept on each token as a **Temp HP** resource (add one in Atlas to see it as a bar).
-- **Better default animations for D&D 5e spells.** Spells with no animation saved now get the JB2A free pack's best fit (by name, what they do, their damage type, shape and school) instead of a generic circle.
-- **Spells over tokens** (a setting): draw instant spells and bolts, or every spell, on top of the creatures instead of under them.
-- **Post rolls to the table log**, when an online table is running.
-- **Animations can be turned off**, keeping everything else.
+- **Weapon attacks and one-target abilities can be rolled.** With rolling on, a statblock's attacks get an **Attack** button: a monster's *Bite*, a player's *Longsword*, a magic weapon. Abilities that make one creature save, like *Stunning Strike* or a mummy's *Dreadful Glare*, get a **Use** button. Click it, then click the target (or pick one from its menu). The hit or save is rolled against the target's statblock, with damage and crits, and shown on the card. Nothing is drawn on the map.
+- **Conditions from a hit or a failed save.** When an attack or ability gives a condition (*Stunned*, *Grappled*, *Prone*), its row on the card gets a **Give** button that puts it on the token. You take it off yourself.
+- **Extra damage on a hit:** an attack's card has a box for extra damage, like Sneak Attack (`3d6`) or Divine Smite (`2d8 radiant`). It's rolled for each creature hit, doubled on a crit.
+- **Sneak Attack and similar, from the statblock.** If the attacker's statblock has Sneak Attack, Martial Advantage or another "extra damage when it hits" trait, its attack card gets a button like **Sneak Attack +3d6**. Press it when the rules are met. A player's Sneak Attack goes up with their Rogue level.
+- **Magic weapons:** extra damage dice and types are all rolled (*2d6+6 Slashing plus 1d8 Cold*), and a magic weapon's hit gets past resistance to nonmagical attacks.
+- **Effects and rolling are separate switches**, at the top of the settings. Turn **Spell effects** off and you can still cast spells, make attacks and use breath weapons with rolling. Or turn **Rolling** off and just use the effects.
+- **Rolling is for D&D 5e (2014) and D&D 2024 only.** The settings now say so, and warn you if the open map uses another game system.
+
+## Fixes
+
+- **Creatures' statblocks no longer show up as spells** in the cast window. Their abilities with an area are listed in their own **Creature abilities** group instead, each under its own name (*Fire Breath*, not *Adult Brass Dragon*), with the creature beside it. Search finds them by either.
+- **Magic items and weapons are never treated as spells**, even if they're in a spell Base.
+- **Words inside an ability's name no longer get a Cast button.** *Magic Resistance* isn't the *Resistance* cantrip; a spell that starts a name (*Misty Step (3/Day)*) still counts.
+- **The hit card no longer stays on screen when you switch to another tab.** It hides while its map isn't showing and comes back with it.
+
+## Settings
+
+- **Tidied up:** grouped into Spells, On the map, Players, Your game, Rolling and Animation files, with shorter descriptions.
+- The **Spell bases** list now sits under its description at full width, instead of being squashed into a narrow column.
+- **Temporary HP resource** and **Post rolls to the table log** only show when rolling is on.

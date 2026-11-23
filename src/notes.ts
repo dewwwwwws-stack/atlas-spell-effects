@@ -20,6 +20,31 @@ export function looksLikeSpell(fm: FM, bodyTags: readonly string[] = []): boolea
   return tagsOf(fm, bodyTags).some((t) => /(^|\/)spells?(\/|$)/.test(t) || /^spell[-/]/.test(t));
 }
 
+/**
+ * Whether a note is a creature's statblock (a monster, an NPC, a player), never a spell: its properties say so
+ * (statblock, cr, ac and hp, ability scores…), or its tags (statblock, monster, creature, npc…), or its text has a
+ * statblock block.
+ */
+export function looksLikeStatblock(fm: FM, bodyTags: readonly string[] = [], body = ''): boolean {
+  const has = (...k: string[]) => !!fm && k.some((x) => fm[x] !== undefined && fm[x] !== null && fm[x] !== '');
+  if (fm && (fm['statblock'] === true || has('layout', 'cr', 'challenge', 'challenge_rating', 'stats', 'hit_dice', 'hit_points') || (has('ac', 'armor_class', 'armour_class') && has('hp', 'hit_points')))) return true;
+  if (tagsOf(fm, bodyTags).some((t) => /(^|\/)(statblocks?|monsters?|creatures?|npcs?|bestiary|beasts?|characters?|pcs?)(\/|$)/.test(t))) return true;
+  return /```statblock\b/.test(body);
+}
+
+/** Whether a note is a magic item, weapon or other gear: never a spell. */
+export function looksLikeItem(fm: FM, bodyTags: readonly string[] = [], body = ''): boolean {
+  const spellish = !!fm && ['school', 'casting_time', 'casting-time', 'components'].some((k) => fm[k] !== undefined && fm[k] !== null && fm[k] !== '');
+  if (spellish) return false;
+  const has = (...k: string[]) => !!fm && k.some((x) => fm[x] !== undefined && fm[x] !== null && fm[x] !== '');
+  if (has('rarity', 'attunement', 'requires_attunement', 'item_type', 'item-type', 'weapon_category', 'mastery')) return true;
+  const type = str(fm?.['type'] ?? fm?.['category']).toLowerCase();
+  if (/\b(item|weapon|armou?r|gear|equipment|wondrous|potion|ring|rod|staff|wand|scroll|ammunition|shield|loot|vehicle)\b/.test(type)) return true;
+  if (tagsOf(fm, bodyTags).some((t) => /(^|\/)(items?|magic-?items?|weapons?|armou?r|gear|equipment|loot|treasure|wondrous)(\/|$)/.test(t))) return true;
+  // "Wondrous item, very rare (requires attunement)", "Weapon (longsword), rare"
+  return /^\s*[*_]*(?:wondrous item|weapon|armou?r|ring|rod|staff|wand|potion|scroll)\b[^\n]*\b(?:common|uncommon|rare|very rare|legendary|artifact|artefact)\b/im.test(body.replace(/^---\n[\s\S]*?\n---\n?/, ''));
+}
+
 /** A line's value in the note's text: "**Range:** 150 feet", "- Range: Self (15-foot cone)", "Range | 60 feet". */
 function lineValue(body: string, label: string): string {
   // "Range:", or Pathfinder's "**Range** 30 feet" (a bold label, no colon)

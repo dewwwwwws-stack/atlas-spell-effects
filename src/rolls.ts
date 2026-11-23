@@ -12,6 +12,10 @@ export const ABILITY_LABEL: Record<Ability, string> = { str: 'Str', dex: 'Dex', 
 export interface DamagePart { dice: string; type: string }
 /** What a spell's text says it rolls. */
 export interface RollSpec {
+  /** The conditions it gives a creature it hits or that fails its save (names: Stunned, Grappled), offered on its card. */
+  conds?: string[];
+  /** A magic weapon's attack (a +2 Greatsword, a Very Rare one): it gets past resistances to nonmagical attacks. */
+  magic?: boolean;
   /** An attack roll (and its bonus, where the text gives it: "Ranged Attack Roll: +10"), or a saving throw (and its DC). */
   kind: 'attack' | 'save' | 'damage';
   save?: Ability;
@@ -34,6 +38,7 @@ export interface RollSpec {
 }
 
 const DICE = String.raw`(\d+d\d+(?:\s*[+−–-]\s*\d+)?)`;
+const TYPES = 'acid|bludgeoning|cold|fire|force|lightning|necrotic|piercing|poison|psychic|radiant|slashing|thunder';
 const clean = (d: string): string => d.replace(/\s+/g, '').replace(/[−–]/g, '-');
 
 /** What a spell's or ability's text rolls; null when it rolls nothing (no damage, attack or save). */
@@ -49,6 +54,17 @@ export function rollSpecOf(text: string | undefined): RollSpec | null {
     damage.push({ dice, type });
     if (damage.length >= 3) break;
   }
+  // a weapon's hit, as players' sheets and 2024 statblocks write it: "Hit: 1d6-1 Bludgeoning", "Hit: 30 Bludgeoning
+  // damage", "Hit: 1d8 + 3 piercing plus 1d6 fire"
+  const hit = /\bHit:\s*([^]*?)(?=\.\s+(?:[A-Z][a-z]+:|Mastery\b|If\b|The\b|On\b)|$)/i.exec(t)?.[1] ?? '';
+  if (!damage.length && hit) {
+    for (const m of hit.matchAll(new RegExp(String.raw`(?:\d+\s*\(\s*` + DICE + String.raw`\s*\)|` + DICE + String.raw`|\b(\d+))\s+(` + TYPES + String.raw`)\b`, 'gi'))) {
+      const dice = clean(m[1] ?? m[2] ?? m[3] ?? ''); const type = (m[4] ?? '').toLowerCase();
+      if (!dice || damage.some((d) => d.dice === dice && d.type === type)) continue;
+      damage.push({ dice, type });
+      if (damage.length >= 3) break;
+    }
+  }
   let m: RegExpExecArray | null;
   const spec: RollSpec = { kind: 'damage', damage };
   if ((m = /\b(Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma)\s+Saving Throw:\s*DC\s*(\d+)/i.exec(t))) {
@@ -57,6 +73,9 @@ export function rollSpecOf(text: string | undefined): RollSpec | null {
     spec.kind = 'save'; spec.save = ABILITY_NAMES[m[2].toLowerCase()];
     const dc = Number(m[1] ?? m[3]); if (dc > 0) spec.dc = dc;
   } else if ((m = /\b(?:Melee|Ranged)(?: or Ranged)? (?:Spell |Weapon )?Attack(?: Roll)?:\s*([+−–-]\s*\d+)/i.exec(t))) {
+    spec.kind = 'attack'; spec.bonus = Number(clean(m[1]));
+  } else if ((m = /\b(?:Melee|Ranged)\b[^.:]{0,30}?:\s*([+−–-]\s*\d+)\s*(?:to hit\b|,)/i.exec(t)) || (m = /([+−–-]\s*\d+)\s+to hit\b/i.exec(t))) {
+    // "Melee: +2 to hit", "Ranged (Longbow): +5 to hit", "+5 to hit"
     spec.kind = 'attack'; spec.bonus = Number(clean(m[1]));
   } else if (/\b(?:melee|ranged) spell attack\b|\bmake (?:a|an) (?:melee|ranged) (?:spell )?attack\b|\bspell attack (?:roll|against)\b/i.test(t)) {
     spec.kind = 'attack';
@@ -155,6 +174,47 @@ export interface Stats {
   magicRes?: boolean;
   /** Resistances only to nonmagical attacks (none against spells). */
   resistMundane?: string[];
+  /**
+   * Extra damage it can add when it hits (Sneak Attack, Martial Advantage): offered on its attack cards as a button,
+   * for you to press when its rules are met (once a turn, with advantage or an ally beside the target…).
+   */
+  extras?: { name: string; dice: string; type?: string }[];
+}
+
+/** A Rogue's level in "Rogue 5", "Fighter 3 / Rogue 4" (else the first level named). */
+function levelIn(cls: string): number | undefined {
+  const m = /\bRogue\s*(\d+)/i.exec(cls) ?? /\b(\d+)\b/.exec(cls);
+  const n = m ? Number(m[1]) : 0; return n > 0 && n <= 30 ? n : undefined;
+}
+
+/**
+ * The extra damage a creature's traits add when it hits: "Sneak Attack (1/Turn). … an extra 7 (2d6) damage", "Martial
+ * Advantage… an extra 10 (3d6) damage"; a player's Sneak Attack that grows with Rogue levels ("an extra 1d6 damage…
+ * increases as you gain Rogue levels"): half its level, rounded up, in d6s. Its statblock lists, and its note's text.
+ */
+export function extrasOf(fields: Record<string, unknown>, text: string, level?: number): { name: string; dice: string; type?: string }[] {
+  const out: { name: string; dice: string; type?: string }[] = [];
+  const consider = (rawName: string, desc: string) => {
+    const name = rawName.replace(/\s*\([^)]*\)\s*/g, ' ').replace(/[*_.:\s]+$/g, '').replace(/^[*_\s]+/, '').trim();
+    if (!name || name.length > 40 || out.some((x) => x.name.toLowerCase() === name.toLowerCase())) return;
+    const d = desc.replace(/\s+/g, ' ');
+    if (/included in the attack/i.test(d)) return;
+    const m = new RegExp(String.raw`\bextra\s+(?:\d+\s*\(\s*)?(\d+d\d+)\s*\)?\s*(` + TYPES + String.raw`)?\s*damage`, 'i').exec(d);
+    if (!m || !/\bhits?\b|\bhit (?:a|the|one)\b/i.test(d)) return;
+    let dice = m[1];
+    if (/sneak attack/i.test(name) && /increases as you gain|Sneak Attack column|Rogue level/i.test(d) && level) dice = `${Math.ceil(level / 2)}d6`;
+    out.push({ name, dice, ...(m[2] ? { type: m[2].toLowerCase() } : {}) });
+  };
+  for (const key of ['traits', 'features', 'actions', 'bonus_actions', 'reactions', 'abilities', 'class_features', 'feats']) {
+    const list = fields[key]; if (!Array.isArray(list)) continue;
+    for (const it of list) if (it && typeof it === 'object') { const o = it as Record<string, unknown>; consider(String(o['name'] ?? ''), String(o['desc'] ?? o['description'] ?? o['entries'] ?? '')); }
+  }
+  // the note's own text: "***Sneak Attack (1/Turn).*** The …", "**Sneak Attack.** Once per turn…", "Sneak Attack: …"
+  for (const line of text.replace(/^---\n[\s\S]*?\n---\n?/, '').split('\n')) {
+    const m = /^[\s>#*_-]*([A-Z][A-Za-z’' ]{2,40}?)\s*(?:\([^)]*\))?\s*[.:]\s*[*_]*\s+(.+)$/.exec(line);
+    if (m) consider(m[1], m[2]);
+  }
+  return out;
 }
 
 const num = (v: unknown): number | undefined => {
@@ -214,6 +274,8 @@ export function statsOf(fields: Record<string, unknown> | null | undefined, text
     const best = Math.max(s.mods.int ?? -5, s.mods.wis ?? -5, s.mods.cha ?? -5);
     s.dc ??= 8 + s.prof + best; s.hit ??= s.prof + best;
   }
+  const extras = extrasOf(f, text, num(get('level')) ?? levelIn(String(get('class', 'classes') ?? '')));
+  if (extras.length) s.extras = extras;
   return s;
 }
 
@@ -237,6 +299,8 @@ export interface RollRow {
   applied?: boolean;
   /** Why it rolled with advantage or disadvantage, or crit, or failed by itself (its conditions, Magic Resistance…). */
   note?: string;
+  /** Extra damage added on its card (Sneak Attack, Divine Smite): "+3d6 piercing: 11". */
+  extra?: string[];
   /** A failed save that Legendary Resistance could turn: its damage then. */
   onSave?: { rolled: number; damage: number; why?: string };
   legendary?: boolean;
@@ -252,6 +316,22 @@ export function damageOn(amount: number, type: string, s: Stats | null, magical 
   if (s.resist.includes(type) || (!magical && s.resistMundane?.includes(type))) { d = Math.floor(d / 2); why = `resists ${type}`; }
   if (s.vulnerable.includes(type)) { d *= 2; why = why ? `${why}, vulnerable` : `vulnerable to ${type}`; }
   return { damage: d, ...(why ? { why } : {}) };
+}
+
+/**
+ * Extra damage added to a row that hit, from its card (Sneak Attack, Divine Smite, Hex): "3d6", "2d8 radiant", "5";
+ * its dice doubled on a crit, its type the attack's own unless given. False when the text can't be read.
+ */
+export function addExtra(row: RollRow, text: string, fallbackType: string, stats: Stats | null, magical: boolean, random?: () => number): boolean {
+  const m = new RegExp(String.raw`^\s*(\d+d\d+(?:\s*[+−–-]\s*\d+)?|\d+)\s*(` + TYPES + String.raw`)?\s*(?:damage)?\s*$`, 'i').exec(text);
+  if (!m) return false;
+  const type = (m[2] ?? fallbackType).toLowerCase();
+  const r = rollDice(clean(m[1]), row.outcome === 'crit', random);
+  const d = damageOn(r.total, type, stats, magical);
+  row.rolled += r.total; row.damage += d.damage;
+  row.extra = [...(row.extra ?? []), `+${r.text}${type ? ` ${type}` : ''}: ${r.total}`];
+  if (d.why && !(row.why ?? '').includes(d.why)) row.why = row.why ? `${row.why}, ${d.why}` : d.why;
+  return true;
 }
 
 /** Each part's damage on a creature, added up. */
@@ -296,9 +376,9 @@ export function rollAgainst(spec: RollSpec, caster: Stats | null, targets: Targe
   };
   const slot = opts.slot && spec.level && opts.slot > spec.level ? opts.slot : undefined;
   const dmgText = parts.map((p) => `${p.dice} ${p.type}`).join(' + ');
-  const magical = spec.spell !== false;
+  const magical = spec.spell !== false || !!spec.magic;
   const temp = tempAt(spec, opts.slot);
-  const giveTemp = (t: Target): Partial<RollRow> => (temp ? { temp: rollDice(temp, false, opts.random).total } : {});
+  const giveTemp = (): Partial<RollRow> => (temp ? { temp: rollDice(temp, false, opts.random).total } : {});
   const head = (h: string) => `${h}${slot ? ` · slot ${slot}` : ''}`;
   if (spec.kind === 'attack') {
     const bonus = spec.bonus ?? caster?.hit;
@@ -323,7 +403,7 @@ export function rollAgainst(spec: RollSpec, caster: Stats | null, targets: Targe
       const hits = outcome === 'crit' || outcome === 'hit' || outcome === 'unknown';
       const rolled = parts.map((p) => ({ total: rollDice(p.dice, outcome === 'crit', opts.random).total, type: p.type }));
       const tot = hits ? totalOn(rolled, t.stats, false, magical) : { rolled: 0, damage: 0 };
-      return { id: t.id, name: t.name, d20: r, kept: k, ...(bonus !== undefined ? { bonus } : {}), ...(ac !== undefined ? { against: ac } : {}), outcome, ...tot, ...(note ? { note } : {}), ...(hits ? giveTemp(t) : {}) };
+      return { id: t.id, name: t.name, d20: r, kept: k, ...(bonus !== undefined ? { bonus } : {}), ...(ac !== undefined ? { against: ac } : {}), outcome, ...tot, ...(note ? { note } : {}), ...(hits ? giveTemp() : {}) };
     });
     return { header: head(bonus === undefined ? 'Attack (bonus ?)' : `Attack ${bonus >= 0 ? '+' : ''}${bonus}`), damageText: dmgText, rows, ...(slot ? { slot } : {}) };
   }
@@ -346,7 +426,7 @@ export function rollAgainst(spec: RollSpec, caster: Stats | null, targets: Targe
       const tot = outcome === 'saved' ? saved : failed;
       const note = [e.note, autoFail ? `fails ${ABILITY_LABEL[ab]} saves (${(t.conds ?? []).find((c) => /paralyz|stunned|unconscious|petrified/i.test(c))})` : ''].filter(Boolean).join('; ');
       const lr = outcome === 'failed' && (t.stats?.legendary ?? 0) > 0;
-      return { id: t.id, name: t.name, d20: r, kept: k, ...(bonus !== undefined ? { bonus } : {}), ...(dc !== undefined ? { against: dc } : {}), outcome, ...tot, ...(note ? { note } : {}), ...(lr ? { onSave: saved } : {}), ...(outcome !== 'saved' ? giveTemp(t) : {}) };
+      return { id: t.id, name: t.name, d20: r, kept: k, ...(bonus !== undefined ? { bonus } : {}), ...(dc !== undefined ? { against: dc } : {}), outcome, ...tot, ...(note ? { note } : {}), ...(lr ? { onSave: saved } : {}), ...(outcome !== 'saved' ? giveTemp() : {}) };
     });
     return { header: head(`${ABILITY_LABEL[ab]} save${dc === undefined ? ' (DC ?)' : ` DC ${dc}`}${spec.half ? ', half on a save' : ''}`), damageText: rolled.length ? `${dmgText}: ${rolled.map((p) => p.total).join(' + ')}` : '', rows, ...(slot ? { slot } : {}) };
   }
@@ -354,7 +434,7 @@ export function rollAgainst(spec: RollSpec, caster: Stats | null, targets: Targe
   return {
     header: head(rolled.length ? 'Damage' : 'Temporary hit points'),
     damageText: rolled.length ? `${dmgText}: ${rolled.map((p) => p.total).join(' + ')}` : temp ? `${temp} temporary hit points` : '',
-    rows: targets.map((t) => ({ id: t.id, name: t.name, outcome: 'damage' as const, ...totalOn(rolled, t.stats, false, magical), ...giveTemp(t) })),
+    rows: targets.map((t) => ({ id: t.id, name: t.name, outcome: 'damage' as const, ...totalOn(rolled, t.stats, false, magical), ...giveTemp() })),
     ...(slot ? { slot } : {}),
   };
 }

@@ -167,9 +167,9 @@ properties the next time you save them.
 - Instant spells play once and go. Lasting ones stay until ended, also after you restart Obsidian.
 - ✨'s arrow: **Cast <spell> again**, your starred saved spells, **Spell AoE player preview**, **End** each
   lasting effect, **End them all**.
-- **Spell AoE player preview** (✨'s menu, or the settings; off unless you turn it on): while you place a spell,
+- **Spell AoE player preview** (✨'s menu, or *Show players the area while you aim* in the settings; off unless you turn it on): while you place a spell,
   the players' screen shows its area, so they can see what it will cover before you cast it. Choose its look in
-  the settings (*Player preview style*): **Outline** (its edge, dashed, over a faint wash of its colour), **Filled**, or **Animation** (the
+  the settings (*Preview style*): **Outline** (its edge, dashed, over a faint wash of its colour), **Filled**, or **Animation** (the
   spell's own, a little see-through).
 
 ## Moving and changing effects
@@ -339,6 +339,10 @@ window to pick its animation and save it. What's read from the ability's own tex
 - whether it stays on the map (*lasts for 1 minute*, *Until the start of its next turn, that area…*);
 - a list of effects in one ability (*1: Clinging Flames. … 2: Freezing Waves. …*): a button for each.
 
+**In the cast window:** creatures' statblock notes aren't spells, so they're kept out of the spell list. Their
+abilities with an area are listed apart, under **Creature abilities**, each by its own name with its creature
+beside it (*Fire Breath · Adult Red Dragon*).
+
 **Saving an ability:** open it in the cast window, pick its animation, colours and so on, and press **Save**. It's
 kept as an *ability*, by its name, with the add-on's settings: not as a spell, so it makes no spell note and isn't
 in your spell lists. From then on every statblock with an ability of that name uses what you saved (an adult
@@ -457,7 +461,7 @@ Turn it all off with **Mark creatures in spells** in the settings.
 ## The spell turn tracker
 During a fight in Atlas's initiative tracker, each lasting spell shows how many rounds it has been up beside it
 (*Round 3*), on your screen only. It counts from the round the spell was cast in, or from the first round of a fight
-that started later. Spells never end on their own. Turn it off with **Spell turn tracker** in the settings.
+that started later. Spells never end on their own. Turn it off with **Count rounds on lasting spells** in the settings.
 
 It also shows the time (*Round 3 · 12 s*) where the game system's round has a length: 6 seconds in D&D 5e and
 Pathfinder 2e, 10 in Old-School Essentials and Cairn, 3 in Cyberpunk RED. Daggerheart, Call of Cthulhu, Shadowdark
@@ -490,8 +494,12 @@ On a D&D 5e map, a spell with no animation saved picks the best fitting one from
 Only the pack's own animations are picked. Anything you pick and save for a spell stays yours. Other game systems
 pick by the spell's name, as before.
 
-## Rolling attacks, saves and damage (D&D 5e)
-Turn on **Roll attacks, saves and damage** in the settings. When a spell or ability is cast, its card rolls:
+## Rolling attacks, saves and damage (D&D 5e and 2024 only)
+Rolling is for **D&D 5e (2014) and D&D 2024 only**. Other game systems aren't supported yet: their effects work,
+but leave rolling off.
+
+Turn on **Rolling** at the top of the settings. It and **Spell effects** are separate switches: use either or
+both. When a spell or ability is cast, its card rolls:
 - **an attack** against each target's AC: a natural 20 is a crit (its damage dice doubled), a natural 1 a miss;
 - **or each creature's save** against the DC, with its damage rolled once for all and halved on a save where the
   text says so;
@@ -534,8 +542,26 @@ Still yours to run: concentration checks, damage from lasting spells each turn (
 darts or beams from a higher slot, and other game systems. Statblocks are read from notes (their properties, or a
 `statblock` block); a token with no note gives "?".
 
-**Animations** can be turned off in the settings: spells are then their areas only, with rolls and everything else
-the same.
+**Weapon attacks and one-target abilities.** With rolling on, a statblock's attacks get an **Attack** button (a
+monster's *Bite*, a player's *Longsword*, "Melee: +2 to hit. Hit: 1d6-1 Bludgeoning"), and abilities that make one
+creature save get a **Use** button (*Stunning Strike*, *Dreadful Glare*). Click it, then click the target, or pick
+one from its menu: the hit or save is rolled with its damage, and nothing is drawn on the map. Where a hit or a
+failed save gives a condition (*Stunned*, *Grappled*, *Prone*), its row has a **Give** button that puts it on the
+token; take it off yourself.
+
+**Extra damage on a hit** (Sneak Attack, Divine Smite, Hex, Hunter's Mark): type it in the box on an attack's card,
+like `3d6` or `2d8 radiant`, and press **Add** (or Enter). It's rolled for each creature hit, doubled on a crit,
+and resisted like the rest. With no type given, it's the attack's own.
+If the attacker's statblock has **Sneak Attack**, **Martial Advantage** or another trait that deals extra damage
+when it hits, the card has a button for it (**Sneak Attack +3d6**): press it when its rules are met (once a turn,
+with advantage or an ally beside the target…). A player's Sneak Attack is worked out from their Rogue level.
+
+**Magic weapons:** every damage part is rolled with its own type (*Hit: 2d6+6 Slashing plus 1d8 Cold*). A weapon
+named with a bonus or a rarity (*+2 Greatsword*, *Frost Brand (Very Rare)*) counts as magical, so its hit gets past
+resistances to nonmagical attacks.
+
+**Spell effects** can be turned off in the settings: no animations, and spells, breath weapons and attacks are
+still placed and rolled.
 
 ## What else a spell can do
 Each of these is read from the spell's or ability's own text and can be changed, and saved, under **Also** in the

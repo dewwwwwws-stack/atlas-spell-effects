@@ -1,3 +1,4 @@
+import { rollSpecOf } from './rolls';
 // A spell's area, read from its own text in your spell list (spells/spells.json: `range`, `duration`, `descFull`).
 // Nothing is looked up elsewhere: where the text names no area, the DM picks one in the cast window.
 
@@ -33,7 +34,7 @@ export interface Area {
   lasting: boolean;
 }
 
-export interface SpellEntry { key: string; name: string; range?: string; duration?: string; descFull?: string; desc?: string; level?: number; school?: string; /** A creature's ability read from its statblock (Fire Breath), not a spell. */ ability?: boolean }
+export interface SpellEntry { key: string; name: string; range?: string; duration?: string; descFull?: string; desc?: string; level?: number; school?: string; /** A creature's ability read from its statblock (Fire Breath), not a spell. */ ability?: boolean; /** A plain attack (a sword, a bite) or a save at one creature (Stunning Strike): rolled at a creature, with no area and no animation. */ plain?: 'attack' | 'save' }
 
 export const num = (s: string | undefined): number => { const n = Number(s); return Number.isFinite(n) && n > 0 ? n : 0; };
 
@@ -234,6 +235,7 @@ export function targetOf(spell: SpellEntry): Area | null {
   const text = String(spell.descFull ?? spell.desc ?? '');
   const range = String(spell.range ?? '').trim();
   if (!text) return null;
+  if (spell.plain) return { shape: 'emanation', size: 0, from: 'caster', lasting: false, target: 'on' };
   const last = lasting(spell);
   const touchOrSelf = /^(touch|self)/i.test(range);
   if (!touchOrSelf && /ranged spell attack|\b(darts?|bolts?|beams?|rays?|missiles?|motes?)\b[^.]*\b(hits?|strikes?|streaks?|flies|fly|leaps?)|\b(launch|hurl|fire|shoot)(es|s)?\b[^.]*\b(ray|beam|bolt|dart|mote|orb)s?\b/i.test(text))
@@ -281,7 +283,21 @@ export function abilityEntry(name: string, text: string): SpellEntry | null {
   const last = /\blasts? (?:for|until)\b|\b(?:until|during)\b[^.]*\b(?:that|the|this) (?:area|movement|emanation|cone|sphere|cube|cylinder|line|cloud|zone|aura)\b/i.test(t);
   const e: SpellEntry = { key: '', name: nm, range: '', duration: last ? 'Lasting' : 'Instantaneous', descFull: t, ability: true };
   const a = areaOf(e);
-  if (!a || !(a.size > 0)) return null;
+  if (!a || !(a.size > 0)) {
+    // a plain attack ("Melee Attack Roll: +7… Hit: 10 (2d6 + 3) Slashing damage", "Melee: +2 to hit. Hit: 1d6-1
+    // Bludgeoning"): rolled at the creature clicked
+    // or a save made by one creature ("Stunning Strike… the target must succeed on a Constitution saving throw",
+    // "Dreadful Glare. Wisdom Saving Throw: DC 11, one creature the mummy can see")
+    const r = rollSpecOf(t);
+    const attack = !!r && r.kind === 'attack' && r.bonus !== undefined && (r.damage.length > 0 || /\bHit:[^.]*\bcondition\b/i.test(t));
+    const save = !!r && r.kind === 'save' && /Saving Throw:\s*DC|\bmust (?:make|succeed on)\b[^.]{0,40}\bsaving throw|\b(?:target|creature)\b[^.]{0,40}\b(?:makes?|succeeds?)\b[^.]{0,40}\bsaving throw/i.test(t)
+      && !/\ballows? (?:it|you|them) to make\b|\bwhen (?:it|you) (?:make|succeed|fail)/i.test(t);
+    if (!attack && !save) return null;
+    e.plain = attack ? 'attack' : 'save'; e.key = `ability:${nm.toLowerCase()}:${e.plain}`;
+    const reach = new RegExp(String.raw`\b(?:reach|range) (\d+)(?:\/\d+)?\s*` + UNIT, 'i').exec(t);
+    if (reach) e.range = `${reach[1]} ${reach[2]}`;
+    return e;
+  }
   // how far away it can be put: a point's (not "each creature within 120 feet of it", which is its area)
   if (within && (a.from === 'point' || a.target) && toGame(num(within[1]), within[2]) !== a.size) e.range = `${within[1]} ${within[2]}`;
   e.key = `ability:${nm.toLowerCase()}:${a.shape}:${a.size}`;

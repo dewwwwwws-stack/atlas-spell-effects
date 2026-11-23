@@ -222,6 +222,7 @@ canvas.sfx-cursor-move{cursor:move}
 .sfx-pop-btn { flex: 1; font-size: var(--font-ui-small, 13px); }
 
 .sfx-sb-cast.is-ability::before{content:'Use'}
+.sfx-sb-cast.is-attack::before{content:'Attack'}
 
 /* what a statblock's Cast / Use button will look like, shown beside it */
 .sfx-sb-peek{position:fixed;z-index:var(--layer-tooltip,70);display:flex;gap:10px;align-items:center;width:260px;padding:8px;border:1px solid var(--background-modifier-border);border-radius:var(--radius-m,8px);background:var(--background-primary);box-shadow:var(--shadow-s);pointer-events:none;font:var(--font-ui-small,13px)/1.35 var(--font-interface,system-ui);color:var(--text-normal)}
@@ -265,3 +266,16 @@ canvas.sfx-cursor-move{cursor:move}
 .sfx-roll-input{width:4.2em;text-align:right}
 .sfx-roll-acts{display:flex;gap:6px;padding-top:6px;flex-wrap:wrap}
 .sfx-roll-btn{font-size:var(--font-ui-smaller,12px);padding:2px 8px;height:auto}
+
+/* settings: the chosen Bases under the row's text, full width */
+.sfx-bases-row { flex-wrap: wrap; }
+.sfx-bases-row > .sfx-baselist { flex: 1 0 100%; margin-top: var(--size-4-2); }
+.sfx-baselist > .setting-item { padding: var(--size-4-2) 0; border-top: 1px solid var(--background-modifier-border); }
+.sfx-baselist > .setting-item .setting-item-info { flex: 1 1 auto; }
+.sfx-baselist > .setting-item .setting-item-control { flex: 0 0 auto; }
+.sfx-baselist input[type=text] { width: 16em; }
+
+/* a hit card's extra damage (Sneak Attack, Divine Smite) */
+.sfx-roll-extra { display: flex; gap: var(--size-4-1); flex: 1 0 100%; }
+.sfx-roll-extra-input { flex: 1 1 auto; min-width: 0; font-size: var(--font-ui-smaller); }
+.sfx-roll-extra-input.is-bad { border-color: var(--text-error); }
