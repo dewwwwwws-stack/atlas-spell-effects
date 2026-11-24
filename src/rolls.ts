@@ -139,7 +139,8 @@ export function rollSpecOf(text: string | undefined): RollSpec | null {
   if (!damage.length && (m0 = new RegExp(DICE + String.raw`\s*\)?\s+damage of (?:the|a|that|your) (?:chosen |same )?(?:type|kind)\b`, 'i').exec(t))) damage.push({ dice: clean(m0[1]), type: '' });
   // a weapon's hit, as players' sheets and 2024 statblocks write it: "Hit: 1d6-1 Bludgeoning", "Hit: 30 Bludgeoning
   // damage", "Hit: 1d8 + 3 piercing plus 1d6 fire"
-  const hit = /\bHit:\s*([^]*?)(?=\.\s+(?:[A-Z][a-z]+:|Mastery\b|If\b|The\b|On\b)|$)/i.exec(t)?.[1] ?? '';
+  // (a player's save attack the same way: "Intelligence saving throw, DC 18. Failed save: 2d6 Psychic")
+  const hit = /\b(?:Hit|Failed save|Failure|On a failed save):\s*([^]*?)(?=\.\s+(?:[A-Z][a-z]+:|Mastery\b|If\b|The\b|On\b)|$)/i.exec(t)?.[1] ?? '';
   if (!damage.length && hit) {
     for (const m of hit.matchAll(new RegExp(String.raw`(?:\d+\s*\(\s*` + DICE + String.raw`\s*\)|` + DICE + String.raw`|\b(\d+))\s+(` + TYPES + String.raw`)\b`, 'gi'))) {
       const dice = clean(m[1] ?? m[2] ?? m[3] ?? ''); const type = (m[4] ?? '').toLowerCase();
@@ -366,7 +367,9 @@ export function statsOf(fields: Record<string, unknown> | null | undefined, rawT
     const parts = str.split(/;/); const mundane = parts.filter((p) => /nonmagical|non-magical|not magical|aren['’]?t magical/i.test(p));
     return [parts.filter((p) => !mundane.includes(p)).join('; '), words(mundane.join(' '))];
   };
-  const [resAll, resMundane] = split(get('damage_resistances', 'resistances'));
+  // (a player character's sheet: "Defences: Bludgeoning, Poisoned (condition)", its resistances and condition immunities)
+  const defences = get('defences', 'defenses');
+  const [resAll, resMundane] = split(get('damage_resistances', 'resistances') ?? (typeof defences === 'string' ? defences.split(',').filter((x) => !/\(condition\)/i.test(x)).join(',') : undefined));
   const s: Stats = { mods: {}, saves: {}, resist: words(resAll), resistMundane: resMundane, immune: words(get('damage_immunities', 'immunities')), vulnerable: words(get('damage_vulnerabilities', 'vulnerabilities')) };
   const ac = get('ac', 'armor_class', 'armour_class');
   s.ac = num(typeof ac === 'object' && ac && !Array.isArray(ac) ? (ac as Record<string, unknown>)['value'] : ac);

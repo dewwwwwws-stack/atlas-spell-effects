@@ -193,13 +193,19 @@ export default class AtlasSpellEffects extends Plugin {
     this.addCommand({ id: 'end', name: 'End a lasting effect…', callback: () => new EndModal(this.app, this).open() });
     this.addCommand({ id: 'end-all', name: 'End every lasting effect on this map', callback: () => this.endAllHere() });
     this.addCommand({ id: 'snap', name: 'Snap effects to the grid on or off', callback: () => { void this.toggleSnap(); } });
+    this.addCommand({ id: 'apply-all', name: 'Apply damage from every card (the whole turn)', checkCallback: (checking) => {
+      const t = this.atlasTab(); const map = t ? this.mapOf(t) : null;
+      const ok = this.settings.caught.some((x) => x.map === map && this.hasToApply(x));
+      if (!checking && ok) this.applyAll();
+      return ok;
+    } });
     this.addCommand({ id: 'apply-latest', name: 'Apply damage from the latest card', checkCallback: (checking) => {
       const t = this.atlasTab(); const map = t ? this.mapOf(t) : null;
       const ok = this.settings.caught.some((x) => x.map === map && x.roll?.rows.some((r) => !r.applied && (r.damage > 0 || !!r.temp)));
       if (!checking && ok) this.applyLatest();
       return ok;
     } });
-    this.registerInterval(window.setInterval(() => this.autoCloseCards(), 500));
+    this.registerInterval(window.setInterval(() => { this.autoCloseCards(); this.backToDmScreen(); }, 500));
     // ── cards, from the keyboard ──
     const latest = (want: (c: Caught) => boolean): Caught | undefined => { const t = this.atlasTab(); const map = t ? this.mapOf(t) : null; return [...this.settings.caught].reverse().find((x) => x.map === map && want(x)); };
     const cmd = (id: string, name: string, find: () => unknown, run: () => void) => this.addCommand({ id, name, checkCallback: (checking) => { const ok = !!find(); if (ok && !checking) run(); return ok; } });
@@ -699,7 +705,7 @@ export default class AtlasSpellEffects extends Plugin {
         ?? (() => { let found: WorkspaceLeaf | undefined; this.app.workspace.iterateAllLeaves((l) => { if (!found && l.view.containerEl.contains(sb)) found = l; }); return found; })();
       const v = leaf?.view;
       const fp = v instanceof MarkdownView ? v.file?.path : (() => { const f = field(v, 'file'); return f instanceof TFile ? f.path : field(v, 'path'); })();
-      const path = typeof fp === 'string' ? fp : undefined;
+      const path = typeof fp === 'string' ? fp : this.dmScreenPath(sb);
       if (t && path) {
         const linked = Object.entries(tokens).filter(([, tok]) => tok.statblockPath === path && !tok.offMap).map(([id]) => id);
         const picked = linked.length === 1 ? linked[0] : linked.find((id) => sel.length === 1 && sel[0] === id);
@@ -761,7 +767,52 @@ export default class AtlasSpellEffects extends Plugin {
     if (how.shift) { m.casterToken = tok?.id; m.open(); return; }
     const p = this.withSequence(await m.pending(), link);
     if (!this.atlasTab()) { new Notice('Combat+: open an Atlas map first.'); return; }
+    this.leaveDmScreen(how.statblock);
     this.place(p, tok && this.mapOf(tok.tab) === this.mapOf(this.atlasTab()!) ? tok.id : undefined);
+  }
+
+  // ── Atlas's DM screen: a cast from one of its statblocks shows the map, and the screen comes back once done ──
+  /** The note of a statblock on the DM screen (Atlas keeps each there by its note: React's key of its place). */
+  private dmScreenPath(sb: HTMLElement): string | undefined {
+    const item = sb.closest('.atlas-dm-statblock-feed-item'); if (!item) return undefined;
+    const fk = Object.keys(item).find((k) => k.startsWith('__reactFiber$'));
+    let fiber = fk ? field(item, fk) : undefined;
+    for (let i = 0; fiber && i < 6; i++) {
+      const props = field(fiber, 'memoizedProps');
+      const path = field(props, 'path');
+      if (typeof path === 'string' && path) return path;
+      if (i === 0) { const key = field(fiber, 'key'); if (typeof key === 'string' && /\.md$/i.test(key)) return key.replace(/^\.\$/, ''); }
+      fiber = field(fiber, 'child');
+    }
+    return undefined;
+  }
+  /** Told once (each time Obsidian starts) that a player character's cast isn't rolled. */
+  private toldPlayers = false;
+  /** Where to go back to once a cast from the DM screen is done: its map's tab, and the cards the cast made. */
+  private dmReturn: { tab: Tab; cards: Set<string>; quiet: number } | null = null;
+  /** A cast from a statblock on the DM screen: the screen's put away, so the map shows (back once it's done). */
+  private leaveDmScreen(sb: HTMLElement): void {
+    if (!sb.closest('.atlas-dm-statblock-feed-item, .atlas-dm-screen')) return;
+    const t = this.atlasTabs().find((x) => x.leaf.view.containerEl.contains(sb)) ?? this.atlasTab();
+    const st = t?.store.getState?.();
+    if (!t || !st?.isDMScreenOpen || typeof st.setDMScreenOpen !== 'function') return;
+    st.setDMScreenOpen(false);
+    this.dmReturn = { tab: t, cards: new Set(), quiet: 0 };
+  }
+  /**
+   * Back to the DM screen once nothing's left to do there: no spell being aimed, and every card the cast made
+   * applied (or with nothing to apply) or closed; a moment later, to see it land. Opened again by you: done.
+   */
+  private backToDmScreen(): void {
+    const r = this.dmReturn; if (!r) return;
+    const st = r.tab.store.getState?.();
+    if (!st || st.isDMScreenOpen || !r.tab.canvas.isConnected) { this.dmReturn = null; return; }
+    const busy = !!this.placing || [...r.cards].some((id) => { const c = this.settings.caught.find((x) => x.id === id); return !!c?.roll && !this.cardDone(c); });
+    if (busy) { r.quiet = 0; return; }
+    if (!r.quiet) { r.quiet = Date.now(); return; }
+    if (Date.now() - r.quiet < 1500) return;
+    this.dmReturn = null;
+    st.setDMScreenOpen?.(true);
   }
 
   /**
@@ -786,6 +837,7 @@ export default class AtlasSpellEffects extends Plugin {
       this.sbMenu = null;
       if (last.open) last.menu.hide();
       if (!this.atlasTab()) { new Notice('Combat+: open an Atlas map first.'); return; }
+      this.leaveDmScreen(how.statblock);
       this.place(p, here?.id);
       return;
     }
@@ -793,16 +845,21 @@ export default class AtlasSpellEffects extends Plugin {
     const mine = { key, open: true, hidden: 0, menu };
     this.sbMenu = mine;
     menu.onHide(() => { mine.open = false; mine.hidden = Date.now(); });
-    menu.addItem((i) => i.setTitle([who ?? 'No caster on the map', range].filter(Boolean).join('   ·   ')).setIcon('user').setDisabled(true));
+    // what it is, first (the statblock may be gone by the time you pick: one opened by hovering a token)
+    const attack = !!link.attack || !!link.multi?.length;
+    menu.addItem((i) => i.setTitle(`${attack ? 'Attack' : link.ability !== undefined ? 'Use' : 'Cast'}: ${link.name}`).setIcon(attack ? 'sword' : link.ability !== undefined ? 'zap' : 'sparkles').setDisabled(true));
+    menu.addItem((i) => i.setTitle([who ? `By ${who}` : 'No caster on the map', range].filter(Boolean).join('   ·   ')).setIcon('user').setDisabled(true));
+    menu.addSeparator();
     menu.addItem((i) => i.setTitle(castWord(p, who)).setIcon('wand-sparkles').onClick(() => {
       if (!this.atlasTab()) { new Notice('Combat+: open an Atlas map first.'); return; }
+      this.leaveDmScreen(how.statblock);
       this.place(p, here?.id);
     }));
     // its animation once on the caster, aimed at no one (a flourish: the DM deals with what it does)
     // (not a plain attack: there's nothing to see)
     if (!p.plain) menu.addItem((i) => {
       i.setTitle('Cast with no target').setIcon('sparkle').setDisabled(!here);
-      if (here) i.onClick(() => this.castOnCaster(p, here.tab, here.id));
+      if (here) i.onClick(() => { this.leaveDmScreen(how.statblock); this.castOnCaster(p, here.tab, here.id); });
     });
     // a creature to cast it on, straight from the list (in range of the caster, nearest first)
     const a = p.area;
@@ -812,7 +869,7 @@ export default class AtlasSpellEffects extends Plugin {
         menu.addSeparator();
         const max = 12;
         for (const k of list.slice(0, max)) {
-          menu.addItem((i) => i.setTitle(k.ft === null ? k.name : `${k.name}   ·   ${k.ft} ${unitLabel()}`).setIcon('crosshair').onClick(() => this.castOnTarget(tab, p, k.id, here?.id)));
+          menu.addItem((i) => i.setTitle(k.ft === null ? k.name : `${k.name}   ·   ${k.ft} ${unitLabel()}`).setIcon('crosshair').onClick(() => { this.leaveDmScreen(how.statblock); this.castOnTarget(tab, p, k.id, here?.id); }));
         }
         if (list.length > max) menu.addItem((i) => i.setTitle(`${list.length - max} more: click them on the map`).setDisabled(true));
         menu.addSeparator();
@@ -822,6 +879,7 @@ export default class AtlasSpellEffects extends Plugin {
     }
     if (!p.plain) menu.addItem((i) => i.setTitle('Edit look…').setIcon('palette').onClick(() => { m.casterToken = tok?.id; m.open(); }));
     menu.showAtPosition({ x: how.x, y: how.y }, how.statblock.ownerDocument);
+    (field(menu, 'dom') as HTMLElement | undefined)?.addClass?.('sfx-sb-menu');
   }
 
   /** The statblock button's menu last opened (pressed again: it casts). */
@@ -1878,10 +1936,7 @@ export default class AtlasSpellEffects extends Plugin {
           if (!conds.length) continue;
           for (const token of this.insideOf(t, e)) for (const cond of conds) want.set(`${e.id}|${token}|${cond}`, { from: e.id, token, cond });
         }
-        if (marker) for (const c of this.settings.caught) {
-          if (c.map !== map) continue;
-          for (const k of c.tokens) if (tokens[k.id]) want.set(`caught:${c.id}|${k.id}|${IN_SPELL_ID}`, { from: 'caught:' + c.id, token: k.id, cond: IN_SPELL_ID });
-        }
+        // (an instant spell or an attack puts nothing on: its card lists who it hit; marks it put on before come off)
       }
       const has = (token: string, cond: string) => (tokens[token]?.conditions ?? []).includes(cond);
       const add = new Map<string, string[]>(), drop = new Map<string, string[]>();
@@ -2089,6 +2144,11 @@ export default class AtlasSpellEffects extends Plugin {
    * leaps on goes from it to the nearest others in reach of it (each its own bolt).
    */
   private afterTarget(t: Tab, pending: Pending, target: string | null, caster: Point | null, casterId?: string): void {
+    // rolling on, but not for this caster (a player character, rolling for NPCs only): said once, so it's no mystery
+    if (target && pending.roll && this.settings.rolling && !this.rollsFor(t, casterId) && casterId && !this.toldPlayers) {
+      this.toldPlayers = true;
+      new Notice(`Combat+: ${this.tokenName(t, casterId)} is a player character and rolling is set to NPCs only, so they roll their own. Settings → Rolling → Everyone rolls for them too.`, 8000);
+    }
     if (target && this.rollsFor(t, casterId) && pending.roll) {
       const after = pending.roll.after;
       void this.rollOn(t, uid(), pending.name, pending.roll, [target], casterId).then((roll) => {
@@ -2122,7 +2182,7 @@ export default class AtlasSpellEffects extends Plugin {
     if (m.push && caster) window.setTimeout(() => { if (this.shove(t, target, caster, m.push ?? 0)) this.wake(); }, 350);
   }
 
-  /** An instant spell (Fireball) just went off: the creatures it hit (a card, and "In a spell" on them till it's closed). */
+  /** An instant spell (Fireball) just went off: the creatures it hit, on a card. */
   private catchIn(e: Effect): void {
     if (e.lasting || e.bolt || e.outline || e.on) return;
     const tr = this.atlasTabs().find((x) => this.mapOf(x) === e.map);
@@ -2233,7 +2293,6 @@ export default class AtlasSpellEffects extends Plugin {
     for (const ev of ['mousedown', 'pointerup', 'mouseup', 'click', 'dblclick', 'contextmenu'] as const) this.registerDomEvent(win, ev, quiet, { capture: true });
   }
 
-  /** An instant spell's card closed: done with (its "In a spell" marks come off). */
   /** Cards whose damage is all applied: when (or when the pointer last left them), to close a few seconds on. */
   private doneAt = new Map<string, number>();
   /** Cards done with, closed once they've been left alone for a few seconds (not while the pointer's on one). */
@@ -2250,6 +2309,15 @@ export default class AtlasSpellEffects extends Plugin {
   /** Whether a card has nothing left to do: no damage, healing or temp HP to apply, no player's save or Legendary Resistance to answer. */
   private cardDone(c: Caught): boolean {
     return !!c.roll && !c.roll.rows.some((r) => (!r.applied && (r.damage > 0 || !!r.temp)) || !!r.own || (!!r.onSave && !r.applied));
+  }
+  /** Whether a card has damage, healing or temp HP still to apply. */
+  private hasToApply(c: Caught): boolean { return !!c.roll?.rows.some((r) => !r.applied && (r.damage > 0 || !!r.temp)); }
+  /** Every card on the open map with damage (or healing, or temp HP) still to apply: applied, oldest first. How many. */
+  applyAll(): number {
+    const t = this.atlasTab(); const map = t ? this.mapOf(t) : null;
+    const ids = this.settings.caught.filter((x) => x.map === map && this.hasToApply(x)).map((x) => x.id);
+    for (const id of ids) this.applyRoll(id);
+    return ids.length;
   }
   /** The newest card on the open map with damage (or healing, or temp HP) still to apply: applied. */
   applyLatest(): boolean {
@@ -2289,6 +2357,14 @@ export default class AtlasSpellEffects extends Plugin {
 
   /** A spell's rolls against these creatures, onto its card (and Atlas's table log, if asked and a table runs). */
   async rollOn(t: Tab, id: string, name: string, spec: RollSpec, ids: string[], by: string | undefined, edge: Edge = 'normal', slot?: number): Promise<CastRoll | null> {
+    try { return await this.rollOnNow(t, id, name, spec, ids, by, edge, slot); } catch (e) {
+      // never silently: say so, and why
+      console.error('Combat+: could not roll', name, e);
+      new Notice(`Combat+: couldn’t roll ${name}: ${e instanceof Error ? e.message : String(e)}`);
+      return null;
+    }
+  }
+  private async rollOnNow(t: Tab, id: string, name: string, spec: RollSpec, ids: string[], by: string | undefined, edge: Edge, slot?: number): Promise<CastRoll | null> {
     const caster = await this.statsOfToken(t, by);
     const c0 = by ? this.tokenOf(t, by) : null, ppf = pxPerFoot(this.scaleOf(t));
     const map = this.mapOf(t);
@@ -2310,6 +2386,7 @@ export default class AtlasSpellEffects extends Plugin {
     const c: Caught = { id, map, name, tokens: targets.map((x) => ({ id: x.id, name: x.name })), roll, spec, ...(by ? { by } : {}), level, edge, ...(slot ? { slot } : {}), ...(spec.kind === 'attack' && caster?.extras?.length ? { extras: caster.extras } : {}) };
     const at = this.settings.caught.findIndex((x) => x.id === id);
     if (at >= 0) this.settings.caught[at] = c; else this.settings.caught.push(c);
+    if (this.dmReturn && this.mapOf(this.dmReturn.tab) === map) this.dmReturn.cards.add(id);
     this.saveSoon(); this.wake();
     if (this.settings.rollPost) void this.postRoll(c);
     return roll;
@@ -2410,6 +2487,19 @@ export default class AtlasSpellEffects extends Plugin {
       const key = JSON.stringify(list);
       if (box.dataset.k === key) continue;
       box.dataset.k = key; box.empty();
+      // two cards or more with damage to apply (a Multiattack, a turn's attacks): all at once, at the top
+      const pending = list.filter((c) => this.hasToApply(c));
+      if (pending.length > 1) {
+        const bar = box.createDiv({ cls: 'sfx-caught-card sfx-caught-all' });
+        const total = new Map<string, { name: string; n: number }>();
+        for (const c of pending) for (const r of c.roll?.rows ?? []) {
+          if (r.applied || !(r.damage > 0) || r.outcome === 'heal') continue;
+          const was = total.get(r.id); total.set(r.id, { name: r.name, n: (was?.n ?? 0) + r.damage });
+        }
+        const b = bar.createEl('button', { cls: 'sfx-roll-btn mod-cta sfx-caught-all-btn', text: `Apply all (${pending.length} cards)` }); b.dataset.act = '1';
+        this.caughtActs.set(b, () => { this.applyAll(); });
+        if (total.size) bar.createDiv({ cls: 'sfx-caught-all-sum', text: [...total.values()].map((x) => `${x.name} ${x.n}`).join(' · ') });
+      }
       for (const c of list) {
         // nothing left to do on it (its damage applied; or none to apply: all missed or saved): it closes itself a
         // few seconds on, once the pointer's off it (one with nothing applied waits a little longer, to be read)
@@ -3156,6 +3246,8 @@ export default class AtlasSpellEffects extends Plugin {
    */
   private castAt(tab: Tab, pending: Pending, casterToken?: string, done = 0): void {
     const a = pending.area;
+    // the caster's token, when it's clicked first (a bolt cast from the cast window): theirs are the rolls' bonuses and level
+    let by = casterToken;
     const bolt = a.target === 'bolt';
     const doc = tab.canvas.ownerDocument;
     const hint = (tab.canvas.parentElement ?? doc.body).createDiv({ cls: 'sfx-hint' });
@@ -3163,7 +3255,8 @@ export default class AtlasSpellEffects extends Plugin {
     let caster: { x: number; y: number } | null = ct ? { x: ct.x, y: ct.y } : null;
     let count = done;
     // how many it makes (darts, rays; more beams as the caster's level goes up): it stops by itself after the last
-    const total = pending.sequence?.length ? pending.sequence.length : pending.more && ((pending.more.count ?? 1) > 1 || pending.more.steps?.length) ? countAt(pending.more, this.levelOf(tab, casterToken)) : 0;
+    const totalFor = (who: string | undefined) => pending.sequence?.length ? pending.sequence.length : pending.more && ((pending.more.count ?? 1) > 1 || pending.more.steps?.length) ? countAt(pending.more, this.levelOf(tab, who)) : 0;
+    let total = totalFor(casterToken);
     const ring = (c: { x: number; y: number; r: number } | null) => { if (this.placing) this.placing.range = c ? this.rangeRing(tab, pending, c)?.ring ?? null : null; };
     const toWorld = (e: PointerEvent | MouseEvent): Point | null => {
       const r = tab.canvas.getBoundingClientRect();
@@ -3187,11 +3280,12 @@ export default class AtlasSpellEffects extends Plugin {
       if (bolt && !caster) {
         const tok = this.tokenAt(tab, p);
         caster = tok ? { x: tok.x, y: tok.y } : this.snapPoint(tab, p, e);
+        if (tok) { by = tok.id; total = totalFor(by); }
         ring({ ...caster, r: tok?.r ?? 0 });
         say(); return;
       }
       const fx = effect(uid(), p);
-      if (fx) { this.castTarget(fx, pending); count++; this.afterTarget(tab, this.stepOf(pending, count - 1), this.tokenAt(tab, p)?.id ?? null, caster, casterToken); }
+      if (fx) { this.castTarget(fx, pending); count++; this.afterTarget(tab, this.stepOf(pending, count - 1), this.tokenAt(tab, p)?.id ?? null, caster, by); }
       if (fx && a.self) { this.placing.stop(); return; }          // only the caster: done
       if (fx && total > 1 && count >= total) { this.placing.stop(); return; }          // its last dart, ray or beam: done
       say();

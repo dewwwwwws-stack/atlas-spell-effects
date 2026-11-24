@@ -67,6 +67,9 @@ export interface AtlasState {
   initiative?: { isActive?: boolean; round?: number };
   currentCollectionId?: string;
   isPlayerView?: boolean;
+  /** Atlas's DM screen (its statblocks), drawn over the map. */
+  isDMScreenOpen?: boolean;
+  setDMScreenOpen?: (open: boolean) => void;
 }
 
 /** Atlas's collections (its asset service): a collection's settings, its conditions among them. */

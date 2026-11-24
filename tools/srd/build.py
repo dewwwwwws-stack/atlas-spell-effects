@@ -53,7 +53,8 @@ def monster_note(m, ed):
     saves, skills = [], []
     for p in m.get('proficiencies', []):
         i = p['proficiency']['index']
-        if i.startswith('saving-throw-'): saves.append(f"  - {i[13:]}: {p['value']}")
+        # (by the ability's full name, as Atlas's 5E templates and Fantasy Statblocks key them: strength, not str)
+        if i.startswith('saving-throw-'): saves.append(f"  - {dict(str='strength', dex='dexterity', con='constitution', int='intelligence', wis='wisdom', cha='charisma')[i[13:]]}: {p['value']}")
         elif i.startswith('skill-'): skills.append(f"  - {i[6:].replace('-', '_')}: {p['value']}")
     # the source's 2024 Mule carries the Octopus's traits, attack and reaction (a copying slip there): left out
     if ed == '2024' and m['name'] == 'Mule':

@@ -457,7 +457,8 @@ creature that saved stays off while it's still inside. An aura round its caster 
 caster.
 
 **Instant spells.** The creatures an instant spell hits (Fireball, Thunderwave…) are listed on a small card beside
-the map, on your screen only, and are *In a spell* while it shows. Close it with **×** when you've dealt with them.
+the map, on your screen only. Close it with **×** when you've dealt with them. (Only lasting spells put *In a
+spell* on a creature; an instant spell or an attack doesn't.)
 A line, cone or aura from a caster never catches the caster.
 
 **A spell's conditions** are read from its text ("has the Restrained condition", "falls Prone"; not the ones it ends
@@ -531,6 +532,9 @@ On the card, change any damage, then **Apply damage** takes it off each creature
 it back). **Reroll**, **Adv** and **Dis** roll again, normally or with advantage or disadvantage. **Post rolls to
 the table log** also sends each card's results to Atlas's table log when an online table is running.
 
+When two or more cards have damage waiting (a Multiattack, or a whole turn's attacks), **Apply all** at the top of
+the cards applies every one at once, and shows what each creature takes in total.
+
 **D&D's own rules, handled for you:**
 - **Upcasting:** a spell that does more at a higher slot ("increases by 1d6 for each slot level above 3") gets a
   **Slot** picker on its card; pick a slot and it's rolled again. Temporary hit points that grow by slot too.
@@ -571,10 +575,15 @@ a miss or a successful save is red.
 
 **Hotkeys.** Every command can have a key: Settings → Combat+ → **Set hotkeys** opens Obsidian's hotkeys showing
 only Combat+'s. There are commands to apply the latest damage, close the latest card or every card, reroll the
-latest card (normally, with advantage or with disadvantage), mark the next player's save as saved or failed, use
+latest card (normally, with advantage or with disadvantage), apply every card's damage at once, mark the next player's save as saved or failed, use
 Legendary Resistance, cast the last effect again, end the newest or every lasting effect, and switch rolling,
 rolling for NPCs only, spell effects, the players' preview, areas through walls, spells over tokens, cards closing
 themselves and the built-in SRD spells. None has a key until you give it one.
+
+**From Atlas's DM screen.** A statblock's Cast, Use or Attack button on the DM screen works too: its creature is
+the caster (when one token on the map uses that statblock, or you've selected it). Picking how to cast puts the DM
+screen away so you can see the map, and it comes back by itself once you're done: nothing left to aim, and its
+cards' damage applied (or nothing to apply). The menu says at the top what you're casting, using or attacking with.
 
 **Middle-click** a statblock's Cast, Use or Attack button to go straight to clicking a token on the map, without
 the menu.
