@@ -14,7 +14,7 @@ It's a homebrew side project, so expect the odd rough edge. Bug reports and idea
 - **Buttons on your statblocks.** Cast, Attack and Use next to spells, weapons, breath weapons and Multiattacks, even on Atlas's DM screen.
 - **Your own spell library.** Tweak a spell's look once and it sticks. Make up your own spells too.
 - **The fiddly bits.** Walls of fire, magical darkness, Misty Step teleports, Thunderwave's push, Chain Lightning leaping between targets, Spiritual Weapon as its own token, difficult terrain, a round counter for lasting spells, and conditions on whoever's standing inside.
-- **Atlas Online view.** See only what your online players will see.
+- **Pick your look.** Settings → **Animation style**: Atlas areas only (exactly what Atlas Online players see), Combat+'s own drawn animations on top of Atlas's areas (no downloads), or JB2A's animations.
 - **Hotkeys** for nearly everything: apply damage, reroll, end a spell, toggle the effects…
 - **The SRD, built in** (optional). The free 5e spells and monsters, ready to drop into your vault.
 
@@ -343,7 +343,7 @@ Still yours to run: concentration checks, damage from lasting spells each turn (
 
 **From Atlas's DM screen.** A statblock's Cast, Use or Attack button on the DM screen works too: its creature is the caster (when one token on the map uses that statblock, or you've selected it). Picking how to cast puts the DM screen away so you can see the map, and it comes back by itself once you're done: nothing left to aim, and its cards' damage applied (or nothing to apply). The menu says at the top what you're casting, using or attacking with.
 
-**Middle-click** a statblock's Cast, Use or Attack button to go straight to clicking a token on the map, without the menu.
+**Shift+click** (or middle-click) a statblock's Cast, Use or Attack button to go straight to clicking a token on the map, without the menu. In the menu, clicking the top line ("Attack: Multiattack", "Cast: Fireball") does the same, as does clicking the button a second time.
 
 **Ranges.** Distances count as D&D counts them: next to you is 5 ft, and diagonals count the same as straight lines. An attack reaches as far as its farthest range ("reach 5 ft. or range 150 ft.": 150 ft). Past its normal range it has disadvantage, and past its long range it's marked out of range ("range 150/600 ft."). A ranged attack at a creature next to the attacker has disadvantage, unless that creature can't act.
 

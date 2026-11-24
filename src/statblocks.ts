@@ -376,7 +376,16 @@ export class StatblockLinker {
     b.addEventListener('mousedown', quiet);
     b.addEventListener('pointerenter', () => { const sb = b.closest<HTMLElement>(STATBLOCK); const l = this.buttons.get(b); if (sb && l) this.peek(l, { statblock: sb, rect: b.getBoundingClientRect() }); });
     b.addEventListener('pointerleave', () => this.peek(null, null));
-    b.addEventListener('click', (e) => { const r = b.getBoundingClientRect(); open(e, r.left, r.bottom); });
+    b.addEventListener('click', (e) => {
+      // Shift+click: straight to clicking a token on the map, as a second click on the button does (no menu)
+      if (e.shiftKey) {
+        quiet(e);
+        const sb = b.closest<HTMLElement>(STATBLOCK); const link = this.buttons.get(b);
+        if (sb && link) this.cast(link, { shift: false, statblock: sb, x: e.clientX, y: e.clientY });
+        return;
+      }
+      const r = b.getBoundingClientRect(); open(e, r.left, r.bottom);
+    });
     // a middle click: straight to clicking a token on the map (no menu)
     b.addEventListener('auxclick', (e) => {
       if (e.button !== 1) return;

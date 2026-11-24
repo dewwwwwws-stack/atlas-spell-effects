@@ -20,6 +20,8 @@ export interface Surface {
   mapping(): Mapping | null;
   /** Whether this surface shows the map `map` now. */
   shows(map: string): boolean;
+  /** The layer's size, as last measured (no reading it off the page every frame); else read off the layer. */
+  size?(): { w: number; h: number };
   /** The players' view: only tokens the players have show through lasting effects. */
   players?: boolean;
 }
@@ -75,6 +77,10 @@ export class Painter {
     const m = layer ? this.surface.mapping() : null;
     const keep = new Set<string>();
     const holes: { x: number; y: number; r: number; sel: boolean }[] = [];
+    // (its size read once, before anything here is written: a read after a write makes the browser lay out the whole
+    // page again, every frame)
+    const sz = layer ? (this.surface.size?.() ?? { w: layer.clientWidth, h: layer.clientHeight }) : { w: 0, h: 0 };
+    const lw = sz.w, lh = sz.h;
     if (layer && m) {
       const extra = (Array.isArray(preview) ? preview : [preview]).filter((x): x is Effect => !!x);
       const all = extra.length ? [...effects, ...extra] : effects;
@@ -84,7 +90,7 @@ export class Painter {
       for (const e of effects) if (e.lasting && this.surface.shows(e.map)) maps.add(e.map);
       for (const map of maps) for (const t of this.world.tokens(map, !!this.surface.players)) {
         const q = m.toLocal(t.x, t.y); const r = t.r * m.scale;
-        if (r > 1 && q.x > -r - 80 && q.y > -r - 80 && q.x < layer.clientWidth + r + 80 && q.y < layer.clientHeight + r + 80) holes.push({ x: q.x, y: q.y, r, sel: !!t.sel });
+        if (r > 1 && q.x > -r - 80 && q.y > -r - 80 && q.x < lw + r + 80 && q.y < lh + r + 80) holes.push({ x: q.x, y: q.y, r, sel: !!t.sel });
       }
       for (const e of all) {
         if (!this.surface.shows(e.map)) continue;
@@ -102,7 +108,7 @@ export class Painter {
     }
     for (const [id, el] of this.els) if (!keep.has(id)) { el.remove(); this.els.delete(id); }
     if (this.under) {
-      const mask = holes.length ? holesMask(holes.slice(0, 120), this.surface.layer()?.clientWidth ?? 0, this.surface.layer()?.clientHeight ?? 0) : '';
+      const mask = holes.length ? holesMask(holes.slice(0, 120), lw, lh) : '';
       if (mask !== this.mask) {
         this.mask = mask;
         // the holes go in a CSS variable; the class (styles.css) puts them to use

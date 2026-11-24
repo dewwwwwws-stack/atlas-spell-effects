@@ -21,6 +21,7 @@ var __toCommonJS = (mod2) => __copyProps(__defProp({}, "__esModule", { value: tr
 // src/main.ts
 var main_exports = {};
 __export(main_exports, {
+  cellsAcross: () => cellsAcross,
   default: () => AtlasSpellEffects
 });
 module.exports = __toCommonJS(main_exports);
@@ -1633,6 +1634,8 @@ var Painter = class {
     const m = layer ? this.surface.mapping() : null;
     const keep = /* @__PURE__ */ new Set();
     const holes = [];
+    const sz = layer ? this.surface.size?.() ?? { w: layer.clientWidth, h: layer.clientHeight } : { w: 0, h: 0 };
+    const lw = sz.w, lh = sz.h;
     if (layer && m) {
       const extra = (Array.isArray(preview) ? preview : [preview]).filter((x) => !!x);
       const all2 = extra.length ? [...effects, ...extra] : effects;
@@ -1647,7 +1650,7 @@ var Painter = class {
       for (const map of maps) for (const t of this.world.tokens(map, !!this.surface.players)) {
         const q = m.toLocal(t.x, t.y);
         const r = t.r * m.scale;
-        if (r > 1 && q.x > -r - 80 && q.y > -r - 80 && q.x < layer.clientWidth + r + 80 && q.y < layer.clientHeight + r + 80) holes.push({ x: q.x, y: q.y, r, sel: !!t.sel });
+        if (r > 1 && q.x > -r - 80 && q.y > -r - 80 && q.x < lw + r + 80 && q.y < lh + r + 80) holes.push({ x: q.x, y: q.y, r, sel: !!t.sel });
       }
       for (const e of all2) {
         if (!this.surface.shows(e.map)) continue;
@@ -1679,7 +1682,7 @@ var Painter = class {
       this.els.delete(id);
     }
     if (this.under) {
-      const mask = holes.length ? holesMask(holes.slice(0, 120), this.surface.layer()?.clientWidth ?? 0, this.surface.layer()?.clientHeight ?? 0) : "";
+      const mask = holes.length ? holesMask(holes.slice(0, 120), lw, lh) : "";
       if (mask !== this.mask) {
         this.mask = mask;
         if (mask) setVar(this.under, "--sfx-holes", mask);
@@ -3797,6 +3800,13 @@ var StatblockLinker = class {
     });
     b.addEventListener("pointerleave", () => this.peek(null, null));
     b.addEventListener("click", (e) => {
+      if (e.shiftKey) {
+        quiet(e);
+        const sb = b.closest(STATBLOCK);
+        const link2 = this.buttons.get(b);
+        if (sb && link2) this.cast(link2, { shift: false, statblock: sb, x: e.clientX, y: e.clientY });
+        return;
+      }
       const r = b.getBoundingClientRect();
       open(e, r.left, r.bottom);
     });
@@ -4492,8 +4502,12 @@ function rowText(r, withDamage = true) {
   const out = OUT[r.outcome] ?? "";
   return [dice, out].filter(Boolean).join(": ") + (withDamage ? `${dice || out ? ", " : ""}${r.outcome === "heal" ? `heals ${r.damage}` : `${r.damage} damage`}${r.why ? ` (${r.why})` : ""}` : "");
 }
+function cellsAcross(size) {
+  const s = typeof size === "number" && size > 0 ? size : 1;
+  return Math.max(0.5, 2 * s - 1);
+}
 var isCanvas = (c) => !!c && typeof c.instanceOf === "function" && c.instanceOf(HTMLCanvasElement);
-var DEFAULTS = { folders: "", online: false, attackAnims: false, attackMelee: "slash", attackRanged: "arrow", autoClose: true, srdSpells: false, srdEdition: "2024", srdFolder: "Combat+ SRD", rolling: false, rollWho: "all", rollPost: false, above: "none", legendary: {}, tempResource: "Temp HP", animations: true, made: [], remember: {}, abilities: {}, lasting: [], snap: true, storage: "Spell Storage", bases: [], presets: [], jb2aFolder: "JB2A_DnD5e", jb2aOffer: true, noteSpells: true, orphanLights: [], coneAngle: 0, artTrim: {}, showAim: false, aimLook: "outline", markCreatures: true, showRounds: true, atlasAreas: true, throughWalls: false, areas: {}, roundSecs: {}, marks: [], caught: [], recent: [] };
+var DEFAULTS = { folders: "", online: false, attackAnims: false, attackMelee: "slash", attackRanged: "arrow", autoClose: true, srdSpells: false, srdEdition: "2024", srdFolder: "Combat+ SRD", rolling: false, rollWho: "all", rollPost: false, above: "none", legendary: {}, tempResource: "Temp HP", animations: true, made: [], remember: {}, abilities: {}, lasting: [], snap: true, storage: "Spell Storage", bases: [], presets: [], jb2aFolder: "JB2A_DnD5e", jb2aOffer: true, noJb2a: false, noteSpells: true, orphanLights: [], coneAngle: 0, artTrim: {}, showAim: false, aimLook: "outline", markCreatures: true, showRounds: true, atlasAreas: true, throughWalls: false, areas: {}, roundSecs: {}, marks: [], caught: [], recent: [] };
 function pickOpt(s, feet, choice) {
   const all2 = s.alts?.length ? s.alts : [s];
   if (choice !== null) return all2[choice % all2.length];
@@ -4674,6 +4688,10 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
     flip("toggle-effects", "Spell effects (animations) on or off", () => this.settings.animations, (v) => {
       this.settings.animations = v;
     }, (v) => `spell effects ${v ? "on" : "off"}.`);
+    for (const [k, v, t] of [["atlas", "Atlas areas only (works with Atlas Online)", "Atlas areas only"], ["drawn", "Combat+ animations, with Atlas areas", "Combat+ animations"], ["jb2a", "JB2A animations, with Atlas areas", "JB2A animations"]])
+      this.addCommand({ id: `style-${k}`, name: `Animation style: ${v}`, callback: () => {
+        void this.setStyle(k).then(() => new import_obsidian4.Notice(`Combat+: ${t}.`));
+      } });
     flip("toggle-aim-preview", "Show players the area while you aim, on or off", () => this.settings.showAim, (v) => {
       this.settings.showAim = v;
     }, (v) => `players ${v ? "see" : "don\u2019t see"} the area while you aim.`);
@@ -5204,6 +5222,7 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
     if (badge) badge.textContent = n ? String(n) : "";
   }
   onunload() {
+    window.clearTimeout(this.condTimer);
     this.placing?.stop();
     if (this.loop) window.cancelAnimationFrame(this.loop);
     for (const p of this.painters.values()) p.stop();
@@ -5511,17 +5530,18 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
       mine.hidden = Date.now();
     });
     const attack = !!link.attack || !!link.multi?.length;
-    menu.addItem((i) => i.setTitle(`${attack ? "Attack" : link.ability !== void 0 ? "Use" : "Cast"}: ${link.name}`).setIcon(attack ? "sword" : link.ability !== void 0 ? "zap" : "sparkles").setDisabled(true));
-    menu.addItem((i) => i.setTitle([who ? `By ${who}` : "No caster on the map", range].filter(Boolean).join("   \xB7   ")).setIcon("user").setDisabled(true));
-    menu.addSeparator();
-    menu.addItem((i) => i.setTitle(castWord(p, who)).setIcon("wand-sparkles").onClick(() => {
+    const go = () => {
       if (!this.atlasTab()) {
         new import_obsidian4.Notice("Combat+: open an Atlas map first.");
         return;
       }
       this.leaveDmScreen(how.statblock);
       this.place(p, here?.id);
-    }));
+    };
+    menu.addItem((i) => i.setTitle(`${attack ? "Attack" : link.ability !== void 0 ? "Use" : "Cast"}: ${link.name}`).setIcon(attack ? "sword" : link.ability !== void 0 ? "zap" : "sparkles").onClick(go));
+    menu.addItem((i) => i.setTitle([who ? `By ${who}` : "No caster on the map", range].filter(Boolean).join("   \xB7   ")).setIcon("user").setDisabled(true));
+    menu.addSeparator();
+    menu.addItem((i) => i.setTitle(castWord(p, who)).setIcon("wand-sparkles").onClick(go));
     if (!p.plain) menu.addItem((i) => {
       i.setTitle("Cast with no target").setIcon("sparkle").setDisabled(!here);
       if (here) i.onClick(() => {
@@ -5937,6 +5957,32 @@ ${text}`);
     this.storedChoices.delete(st.path);
     this.namesChanged();
   }
+  /** A JB2A animation (in its download folder, or any folder named for it). */
+  isJb2a(path) {
+    return path.startsWith(this.jb2aRoot() + "/") || /(^|\/)[^/]*jb2a[^/]*\//i.test(path);
+  }
+  /** Which of the three animation styles the settings make (custom: changed by hand since). */
+  styleNow() {
+    const s = this.settings;
+    if (s.online) return "atlas";
+    if (!s.animations || !s.atlasAreas) return "custom";
+    return s.noJb2a ? "drawn" : "jb2a";
+  }
+  /** Sets one of the three animation styles. */
+  async setStyle(v) {
+    const s = this.settings;
+    s.atlasAreas = true;
+    if (v === "atlas") s.online = true;
+    else {
+      s.online = false;
+      s.animations = true;
+      s.noJb2a = v === "drawn";
+      if (v === "jb2a") s.jb2aOffer = true;
+    }
+    await this.save();
+    this.indexVault();
+    this.wake();
+  }
   folders() {
     return this.settings.folders.split(",").map((f) => f.trim().replace(/^\/+|\/+$/g, "")).filter(Boolean);
   }
@@ -5947,12 +5993,13 @@ ${text}`);
     const want = this.folders();
     const root = this.jb2aRoot() + "/";
     const paths = this.app.vault.getFiles().map((f) => f.path).filter((p) => {
+      if (this.settings.noJb2a && this.isJb2a(p)) return false;
       if (p.startsWith(root)) return true;
       if (want.length) return want.some((w) => p === w || p.startsWith(w + "/"));
       return /(^|\/)[^/]*jb2a[^/]*\//i.test(p) || /(^|\/)spell effects\//i.test(p);
     });
     const files = indexFiles(paths);
-    if (this.settings.jb2aOffer) {
+    if (this.settings.jb2aOffer && !this.settings.noJb2a) {
       const have = new Set(paths.map((p) => {
         const i = p.indexOf("Library/");
         return i >= 0 ? p.slice(i) : p;
@@ -6022,7 +6069,7 @@ ${text}`);
   atlasTab() {
     const all2 = this.atlasTabs();
     const active = this.app.workspace.getMostRecentLeaf?.();
-    return all2.find((t) => t.leaf === active) ?? all2.find((t) => t.canvas.offsetParent !== null) ?? all2[0] ?? null;
+    return all2.find((t) => t.leaf === active) ?? all2.find((t) => t.canvas.isConnected && this.sizeOf(t.canvas).w > 0) ?? all2[0] ?? null;
   }
   mapOf(t) {
     return String(t.store.getState()?.mapPath ?? "");
@@ -6101,7 +6148,7 @@ ${text}`);
     const tok = t.store.getState()?.objects?.tokens?.[id];
     if (!tok || !Number.isFinite(tok.x) || !Number.isFinite(tok.y)) return null;
     const cell = this.scaleOf(t).cell;
-    return { x: tok.x, y: tok.y, r: (typeof tok.size === "number" && tok.size > 0 ? tok.size : 1) * cell / 2, rot: (Number(tok.rotation) || 0) * Math.PI / 180 };
+    return { x: tok.x, y: tok.y, r: cellsAcross(tok.size) * cell / 2, rot: (Number(tok.rotation) || 0) * Math.PI / 180 };
   }
   tokenName(t, id) {
     const tok = t.store.getState()?.objects?.tokens?.[id];
@@ -6219,23 +6266,58 @@ ${text}`);
       }
     };
   }
+  /**
+   * An element's size on the page (and where it sits in its parent), kept by a ResizeObserver: read every frame, it
+   * would make the browser lay the page out again each time (after Atlas's and the add-on's own changes), which
+   * slows Atlas down. Read straight off the element where the browser has no ResizeObserver.
+   */
+  sizes = /* @__PURE__ */ new WeakMap();
+  sizeOf(el, where = false) {
+    let z = this.sizes.get(el);
+    const RO = el.ownerDocument.defaultView?.ResizeObserver;
+    if (!z || !RO) {
+      z = { w: el.offsetWidth, h: el.offsetHeight, left: where ? el.offsetLeft : 0, top: where ? el.offsetTop : 0, ro: null };
+      if (RO) {
+        const zz = z;
+        zz.ro = new RO(() => {
+          zz.w = el.offsetWidth;
+          zz.h = el.offsetHeight;
+          if (where) {
+            zz.left = el.offsetLeft;
+            zz.top = el.offsetTop;
+          }
+          this.wake();
+        });
+        zz.ro.observe(el);
+        const ro = zz.ro;
+        this.register(() => ro.disconnect());
+        this.sizes.set(el, zz);
+      }
+    }
+    return z;
+  }
   /** The layer over a DM tab's map canvas. */
   tabSurface(t) {
     return {
       doc: t.canvas.ownerDocument,
       layer: () => {
         const parent = t.canvas.parentElement;
-        if (!parent || t.canvas.offsetParent === null) return null;
+        if (!parent || !t.canvas.isConnected) return null;
+        {
+          const z0 = this.sizeOf(t.canvas, true);
+          if (!z0.w && !z0.h) return null;
+        }
         let el = parent.querySelector(":scope > .sfx-layer");
         if (!el) {
           el = parent.createDiv({ cls: "sfx-layer" });
           if (getComputedStyle(parent).position === "static") parent.addClass("sfx-relative");
           t.canvas.insertAdjacentElement("afterend", el);
         }
-        const k = `${t.canvas.offsetLeft}|${t.canvas.offsetTop}|${t.canvas.clientWidth}|${t.canvas.clientHeight}`;
+        const z = this.sizeOf(t.canvas, true);
+        const k = `${z.left}|${z.top}|${z.w}|${z.h}`;
         if (el.dataset.at !== k) {
           el.dataset.at = k;
-          el.setCssStyles({ position: "absolute", left: t.canvas.offsetLeft + "px", top: t.canvas.offsetTop + "px", width: t.canvas.clientWidth + "px", height: t.canvas.clientHeight + "px", transform: "none" });
+          el.setCssStyles({ position: "absolute", left: z.left + "px", top: z.top + "px", width: z.w + "px", height: z.h + "px", transform: "none" });
         }
         return el;
       },
@@ -6249,7 +6331,8 @@ ${text}`);
           return { x: p.x, y: p.y };
         }, scale };
       },
-      shows: (map) => this.mapOf(t) === map
+      shows: (map) => this.mapOf(t) === map,
+      size: () => this.sizeOf(t.canvas, true)
     };
   }
   /** The layer over the player window's canvas, turned with the TV; it follows what players see (their own view too). */
@@ -6275,11 +6358,12 @@ ${text}`);
         if (!c || !live()) return null;
         let el = doc.body.querySelector(":scope > .sfx-layer");
         if (!el) el = doc.body.createDiv({ cls: "sfx-layer sfx-tv" });
-        const k = `${c.offsetWidth}|${c.offsetHeight}`;
+        const z = this.sizeOf(c);
+        const k = `${z.w}|${z.h}`;
         if (el.dataset.at !== k) {
           el.dataset.at = k;
-          el.style.width = `${c.offsetWidth}px`;
-          el.style.height = `${c.offsetHeight}px`;
+          el.style.width = `${z.w}px`;
+          el.style.height = `${z.h}px`;
         }
         return el;
       },
@@ -6289,7 +6373,8 @@ ${text}`);
         const v = l?.pv.view;
         if (!c || !v) return null;
         const vw = v.right - v.left, vh = v.bottom - v.top;
-        const bw = c.width, bh = c.height, boxW = c.offsetWidth, boxH = c.offsetHeight;
+        const z = this.sizeOf(c);
+        const bw = c.width, bh = c.height, boxW = z.w, boxH = z.h;
         if (!(vw > 0 && vh > 0 && bw > 0 && bh > 0)) return null;
         const s = Math.max(boxW / bw, boxH / bh);
         return { toLocal: (x, y) => ({ x: ((x - v.left) / vw * bw - bw / 2) * s + boxW / 2, y: ((y - v.top) / vh * bh - bh / 2) * s + boxH / 2 }), scale: bw / vw * s };
@@ -6297,6 +6382,10 @@ ${text}`);
       shows: (map) => {
         const l = live();
         return !!l && this.mapOf(l.t) === map;
+      },
+      size: () => {
+        const c = doc.getElementById(PLAYER_CANVAS);
+        return c ? this.sizeOf(c) : { w: 0, h: 0 };
       },
       players: true
     };
@@ -6324,7 +6413,7 @@ ${text}`);
         this.clearPainters();
         return;
       }
-      if (!this.loop && (busy || this.still < 20)) this.loop = window.requestAnimationFrame(step);
+      if (!this.loop && (busy || this.still < 6)) this.loop = window.requestAnimationFrame(step);
     };
     this.loop = window.requestAnimationFrame(step);
   }
@@ -6367,7 +6456,8 @@ ${text}`);
     const parts = [this.effects, this.placing?.preview ?? null, this.selected?.ids ?? [], artInfo.size];
     for (const t of this.atlasTabs()) {
       const vp = t.viewport;
-      parts.push(vp?.x, vp?.y, vp?.scale?.x, t.canvas?.clientWidth, t.canvas?.clientHeight, this.idOf(t.store?.getState?.()?.objects?.tokens));
+      const z = t.canvas ? this.sizeOf(t.canvas) : null;
+      parts.push(vp?.x, vp?.y, vp?.scale?.x, z?.w, z?.h, this.idOf(t.store?.getState?.()?.objects?.tokens));
       const pv = call(t.renderer, "playersView");
       if (pv?.view) parts.push(pv.view.left, pv.view.top, pv.view.right, pv.view.bottom);
     }
@@ -6400,14 +6490,17 @@ ${text}`);
     }
     const out = /* @__PURE__ */ new Set();
     const before = this.effects.length;
-    this.effects = this.effects.filter((e) => {
+    const still = this.effects.filter((e) => {
       if (e.lasting) return true;
       const ms = instantMs(e);
       if (now - e.started >= ms) return false;
       if (now - e.started >= ms - FADE_MS) out.add(e.id);
       return true;
     });
-    if (this.effects.length !== before) this.saveSoon();
+    if (still.length !== before) {
+      this.effects = still;
+      this.saveSoon();
+    }
     const world = this.world();
     const live = /* @__PURE__ */ new Set();
     let inCanvas = false;
@@ -6826,6 +6919,9 @@ ${text}`);
    * and not dealt with yet, "In a spell". Only what the add-on put on is taken off: a condition the creature had
    * already stays, and one you take off while it's still inside stays off.
    */
+  condKey = /* @__PURE__ */ new WeakMap();
+  condAt = /* @__PURE__ */ new WeakMap();
+  condTimer = 0;
   syncConditions() {
     if (!this.settings.markCreatures && !this.settings.marks.length) return;
     let changed = false;
@@ -6834,7 +6930,20 @@ ${text}`);
       if (!st || st.isPlayerView || typeof st.setTokensCondition !== "function") continue;
       const map = this.mapOf(t);
       const tokens = st.objects?.tokens ?? {};
+      const lasting2 = this.effects.filter((e) => e.map === map && e.lasting);
       const defs = this.conditionDefs(t);
+      const key = [this.idOf(tokens), this.idOf(st.objects?.measures), this.idOf(this.settings.marks), this.settings.markCreatures, defs.map((d) => d.id).join(","), JSON.stringify(lasting2)].join("|");
+      if (this.condKey.get(t.view) === key) continue;
+      const since = Date.now() - (this.condAt.get(t.view) ?? 0);
+      const rest = (k) => k?.slice(k.indexOf("|"));
+      if (since < 200 && rest(this.condKey.get(t.view)) === rest(key)) {
+        if (!this.condTimer) this.condTimer = window.setTimeout(() => {
+          this.condTimer = 0;
+          this.wake();
+        }, 210 - since);
+        continue;
+      }
+      this.condAt.set(t.view, Date.now());
       const marker = this.settings.markCreatures && this.ensureMarker(t);
       const want = /* @__PURE__ */ new Map();
       if (this.settings.markCreatures) {
@@ -6859,9 +6968,9 @@ ${text}`);
           kept.push(m);
           continue;
         }
-        const key = `${m.from}|${m.token}|${m.cond}`;
-        if (want.has(key)) {
-          known.add(key);
+        const key2 = `${m.from}|${m.token}|${m.cond}`;
+        if (want.has(key2)) {
+          known.add(key2);
           if (m.state === "on" && !has2(m.token, m.cond)) {
             kept.push({ ...m, state: "off" });
             changed = true;
@@ -6871,8 +6980,8 @@ ${text}`);
         changed = true;
         if (m.state === "on" && has2(m.token, m.cond) && ![...want.values()].some((w) => w.token === m.token && w.cond === m.cond)) push(drop, m.cond, m.token);
       }
-      for (const [key, w] of want) {
-        if (known.has(key)) continue;
+      for (const [key2, w] of want) {
+        if (known.has(key2)) continue;
         changed = true;
         const other = kept.some((m) => m.map === map && m.token === w.token && m.cond === w.cond && m.state === "on");
         if (has2(w.token, w.cond) && !other) kept.push({ map, ...w, state: "theirs" });
@@ -6881,11 +6990,12 @@ ${text}`);
           if (!has2(w.token, w.cond)) push(add, w.cond, w.token);
         }
       }
-      this.settings.marks = kept;
+      if (changed) this.settings.marks = kept;
       if (add.size || drop.size) this.untracked(t, () => {
         for (const [cond, ids] of add) st.setTokensCondition(ids, cond, true);
         for (const [cond, ids] of drop) st.setTokensCondition(ids, cond, false);
       });
+      this.condKey.set(t.view, [this.idOf(t.store.getState?.()?.objects?.tokens ?? {}), this.idOf(st.objects?.measures), this.idOf(this.settings.marks), this.settings.markCreatures, defs.map((d) => d.id).join(","), JSON.stringify(lasting2)].join("|"));
     }
     if (changed) this.saveSoon();
   }
@@ -7519,9 +7629,9 @@ ${text}`);
   /** Whether a map is on screen (its tab in front, its canvas laid out). */
   shown(t) {
     const c = t.canvas;
-    if (!c.isConnected || c.offsetParent === null) return false;
-    const r = c.getBoundingClientRect();
-    return r.width > 0 && r.height > 0;
+    if (!c.isConnected) return false;
+    const z = this.sizeOf(c);
+    return z.w > 0 && z.h > 0;
   }
   paintCaught() {
     const showing = new Set(this.atlasTabs().filter((t) => this.shown(t)).map((t) => this.viewKey(t)));
@@ -8301,7 +8411,7 @@ ${text}`);
         return d <= max || d === 0 ? q2 : { x: caster.x + dx * max / d, y: caster.y + dy * max / d };
       };
       const tok = t0();
-      const cells = Math.max(1, Math.round(typeof tok?.size === "number" && tok.size > 0 ? tok.size : 1));
+      const cells = Math.max(1, Math.round(cellsAcross(tok?.size)));
       const cell = this.scaleOf(tab).cell;
       const snap = (q2) => {
         if (!this.snapOn(ev)) return q2;
@@ -8762,7 +8872,8 @@ ${text}`);
   feetBetween(t, a, b) {
     const ka = a ? this.tokenOf(t, a) : null, kb = b ? this.tokenOf(t, b) : null;
     if (!ka || !kb) return void 0;
-    return Math.max(0, Math.max(Math.abs(kb.x - ka.x), Math.abs(kb.y - ka.y)) - kb.r - ka.r) / pxPerFoot(this.scaleOf(t)) + square();
+    const half = this.scaleOf(t).cell / 2;
+    return Math.max(0, Math.max(Math.abs(kb.x - ka.x), Math.abs(kb.y - ka.y)) - Math.max(kb.r, half) - Math.max(ka.r, half)) / pxPerFoot(this.scaleOf(t)) + square();
   }
   /** A creature and those within `feet` of it (as the rules count: next to it, 5 ft). */
   near(t, id, feet) {
@@ -8774,7 +8885,8 @@ ${text}`);
       if (o === id) continue;
       const p = this.tokenOf(t, o);
       if (!p) continue;
-      const gap = Math.max(0, Math.max(Math.abs(p.x - k.x), Math.abs(p.y - k.y)) - p.r - k.r) / ppf + square();
+      const half = this.scaleOf(t).cell / 2;
+      const gap = Math.max(0, Math.max(Math.abs(p.x - k.x), Math.abs(p.y - k.y)) - Math.max(p.r, half) - Math.max(k.r, half)) / ppf + square();
       if (feet > 0 && gap <= feet + 0.5) out.push(o);
     }
     return out;
@@ -9020,7 +9132,7 @@ ${text}`);
     return true;
   }
   cast(e) {
-    if (!this.settings.animations && e.file) delete e.file;
+    if (e.file && (!this.settings.animations || this.settings.noJb2a && this.isJb2a(e.file))) delete e.file;
     this.fitCone(e, this.atlasTabs().find((x) => this.mapOf(x) === e.map) ?? null);
     window.setTimeout(() => this.bars(), 0);
     const before = this.snapshot();
@@ -10957,9 +11069,11 @@ var EffectSettings = class extends import_obsidian4.PluginSettingTab {
       render: (st) => {
         st.addToggle((t) => t.setValue(get2()).onChange((v) => {
           void (async () => {
+            const was = p.styleNow();
             put(v);
             await p.save();
             p.wake();
+            if (p.styleNow() !== was) this.redraw();
           })();
         }));
       }
@@ -11025,6 +11139,24 @@ var EffectSettings = class extends import_obsidian4.PluginSettingTab {
     main.push({ name: "Hotkeys", desc: "Every Combat+ command can have a key: apply the latest damage, reroll, close cards, mark a player\u2019s save, end effects, cast again, switch rolling or effects on and off, and more.", render: (st) => {
       st.addButton((b) => b.setButtonText("Set hotkeys").onClick(() => p.openHotkeys()));
     } });
+    main.push({
+      name: "Animation style",
+      desc: "Atlas areas only: just Atlas\u2019s own areas (Fire, Frost\u2026 looks), lights and conditions, so you see what online players see. Combat+ animations: Combat+\u2019s own drawn animations on top of Atlas\u2019s areas (no downloads). JB2A animations: JB2A\u2019s animated spells and attacks (fetched the first time each is used), on top of Atlas\u2019s areas.",
+      render: (st) => {
+        st.addDropdown((d) => {
+          d.addOption("atlas", "Atlas areas only (works with Atlas Online)").addOption("drawn", "Combat+ animations, with Atlas areas").addOption("jb2a", "JB2A animations, with Atlas areas");
+          const now = p.styleNow();
+          if (now === "custom") d.addOption("custom", "Custom (set below)");
+          d.setValue(now).onChange((v) => {
+            if (v === "custom") return;
+            void (async () => {
+              await p.setStyle(v);
+              this.redraw();
+            })();
+          });
+        });
+      }
+    });
     main.push(toggle("Atlas Online view", "Show only what online players see: Atlas\u2019s own areas (with their Fire, Frost\u2026 looks), lights, conditions, terrain and summoned tokens. Animations and the add-on\u2019s drawn shapes are hidden here and on the player window, since they never reach Atlas Online. Spells are made as Atlas areas while it\u2019s on. You still see where you aim.", () => s.online, (v) => {
       s.online = v;
     }));

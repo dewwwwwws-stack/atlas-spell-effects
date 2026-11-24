@@ -54,6 +54,8 @@ interface Settings {
   aimLook: AimLook;                // how: its outline, filled in, or its animation
   jb2aFolder: string;              // where JB2A animations are downloaded to
   jb2aOffer: boolean;              // offer every JB2A animation (downloaded when first used)
+  /** Combat+'s own drawn animations only: JB2A's (in the vault or offered) left out. */
+  noJb2a: boolean;
   orphanLights: { map: string; id: string; wall?: boolean }[];   // lights of ended effects on maps that weren't open: removed when they are
   noteSpells: boolean;             // offer the vault's spell notes (notes whose properties say they are spells)
   artTrim: Record<string, Trim | 0>;   // where each animation's picture is in its frame (0: looked, nothing to trim)
@@ -113,10 +115,19 @@ function rowText(r: import('./rolls').RollRow, withDamage = true): string {
   return [dice, out].filter(Boolean).join(': ') + (withDamage ? `${dice || out ? ', ' : ''}${r.outcome === 'heal' ? `heals ${r.damage}` : `${r.damage} damage`}${r.why ? ` (${r.why})` : ''}` : '');
 }
 
+/**
+ * How many squares across a token is. Atlas's size is a multiplier, not squares: Medium 1, Large 1.5, Huge 2,
+ * Gargantuan 2.5, and a token covers 2 × size − 1 squares (Large 2, Huge 3, Gargantuan 4; Tiny and Small less than 1).
+ */
+export function cellsAcross(size: unknown): number {
+  const s = typeof size === 'number' && size > 0 ? size : 1;
+  return Math.max(0.5, 2 * s - 1);
+}
+
 /** A canvas, whichever window it's in (a popped-out one's too). */
 const isCanvas = (c: unknown): c is HTMLCanvasElement => !!c && typeof (c as Node).instanceOf === 'function' && (c as Node).instanceOf(HTMLCanvasElement);
 
-const DEFAULTS: Settings = { folders: '', online: false, attackAnims: false, attackMelee: 'slash', attackRanged: 'arrow', autoClose: true, srdSpells: false, srdEdition: '2024', srdFolder: 'Combat+ SRD', rolling: false, rollWho: 'all', rollPost: false, above: 'none', legendary: {}, tempResource: 'Temp HP', animations: true, made: [], remember: {}, abilities: {}, lasting: [], snap: true, storage: 'Spell Storage', bases: [], presets: [], jb2aFolder: 'JB2A_DnD5e', jb2aOffer: true, noteSpells: true, orphanLights: [], coneAngle: 0, artTrim: {}, showAim: false, aimLook: 'outline', markCreatures: true, showRounds: true, atlasAreas: true, throughWalls: false, areas: {}, roundSecs: {}, marks: [], caught: [], recent: [] };
+const DEFAULTS: Settings = { folders: '', online: false, attackAnims: false, attackMelee: 'slash', attackRanged: 'arrow', autoClose: true, srdSpells: false, srdEdition: '2024', srdFolder: 'Combat+ SRD', rolling: false, rollWho: 'all', rollPost: false, above: 'none', legendary: {}, tempResource: 'Temp HP', animations: true, made: [], remember: {}, abilities: {}, lasting: [], snap: true, storage: 'Spell Storage', bases: [], presets: [], jb2aFolder: 'JB2A_DnD5e', jb2aOffer: true, noJb2a: false, noteSpells: true, orphanLights: [], coneAngle: 0, artTrim: {}, showAim: false, aimLook: 'outline', markCreatures: true, showRounds: true, atlasAreas: true, throughWalls: false, areas: {}, roundSecs: {}, marks: [], caught: [], recent: [] };
 
 /** A spell to pick in the cast window: a saved one, or a spell note (from a Base or found in the vault). */
 export interface Choice { key: string; name: string; source: 'stored' | 'note'; entry?: SpellEntry; stored?: StoredSpell; notePath?: string; /** A creature's ability from a statblock (Fire Breath), not a spell. */ ability?: boolean; /** Whose ability it is (its creature's name). */ owner?: string; /** A built-in SRD spell (no note of its own). */ srd?: boolean }
@@ -254,6 +265,8 @@ export default class AtlasSpellEffects extends Plugin {
     this.addCommand({ id: 'rolling-who', name: 'Rolling for everyone or NPCs only', callback: () => { void (async () => { this.settings.rollWho = this.settings.rollWho === 'npcs' ? 'all' : 'npcs'; await this.save(); this.rescanStatblocks(); new Notice(`Combat+: rolling for ${this.settings.rollWho === 'npcs' ? 'NPCs only' : 'everyone'}${this.settings.rolling ? '' : ' (rolling is off)'}.`); })(); } });
     flip('toggle-online', 'Atlas Online view on or off', () => this.settings.online, (v) => { this.settings.online = v; }, (v) => v ? 'Atlas Online view: only what online players see.' : 'Atlas Online view off: animations and drawn effects shown.');
     flip('toggle-effects', 'Spell effects (animations) on or off', () => this.settings.animations, (v) => { this.settings.animations = v; }, (v) => `spell effects ${v ? 'on' : 'off'}.`);
+    for (const [k, v, t] of [['atlas', 'Atlas areas only (works with Atlas Online)', 'Atlas areas only'], ['drawn', 'Combat+ animations, with Atlas areas', 'Combat+ animations'], ['jb2a', 'JB2A animations, with Atlas areas', 'JB2A animations']] as const)
+      this.addCommand({ id: `style-${k}`, name: `Animation style: ${v}`, callback: () => { void this.setStyle(k).then(() => new Notice(`Combat+: ${t}.`)); } });
     flip('toggle-aim-preview', 'Show players the area while you aim, on or off', () => this.settings.showAim, (v) => { this.settings.showAim = v; }, (v) => `players ${v ? 'see' : 'don’t see'} the area while you aim.`);
     flip('toggle-walls', 'Areas go through walls, on or off', () => this.settings.throughWalls, (v) => { this.settings.throughWalls = v; }, (v) => `areas ${v ? 'go through' : 'stop at'} walls.`);
     flip('toggle-auto-close', 'Close cards once applied, on or off', () => this.settings.autoClose, (v) => { this.settings.autoClose = v; }, (v) => `cards ${v ? 'close themselves once applied' : 'stay until closed'}.`);
@@ -653,6 +666,7 @@ export default class AtlasSpellEffects extends Plugin {
   }
 
   onunload(): void {
+    window.clearTimeout(this.condTimer);
     this.placing?.stop();
     if (this.loop) window.cancelAnimationFrame(this.loop);
     for (const p of this.painters.values()) p.stop();
@@ -913,14 +927,16 @@ export default class AtlasSpellEffects extends Plugin {
     menu.onHide(() => { mine.open = false; mine.hidden = Date.now(); });
     // what it is, first (the statblock may be gone by the time you pick: one opened by hovering a token)
     const attack = !!link.attack || !!link.multi?.length;
-    menu.addItem((i) => i.setTitle(`${attack ? 'Attack' : link.ability !== undefined ? 'Use' : 'Cast'}: ${link.name}`).setIcon(attack ? 'sword' : link.ability !== undefined ? 'zap' : 'sparkles').setDisabled(true));
-    menu.addItem((i) => i.setTitle([who ? `By ${who}` : 'No caster on the map', range].filter(Boolean).join('   ·   ')).setIcon('user').setDisabled(true));
-    menu.addSeparator();
-    menu.addItem((i) => i.setTitle(castWord(p, who)).setIcon('wand-sparkles').onClick(() => {
+    // (its name: pressed, as pressing the button again: cast its usual way)
+    const go = () => {
       if (!this.atlasTab()) { new Notice('Combat+: open an Atlas map first.'); return; }
       this.leaveDmScreen(how.statblock);
       this.place(p, here?.id);
-    }));
+    };
+    menu.addItem((i) => i.setTitle(`${attack ? 'Attack' : link.ability !== undefined ? 'Use' : 'Cast'}: ${link.name}`).setIcon(attack ? 'sword' : link.ability !== undefined ? 'zap' : 'sparkles').onClick(go));
+    menu.addItem((i) => i.setTitle([who ? `By ${who}` : 'No caster on the map', range].filter(Boolean).join('   ·   ')).setIcon('user').setDisabled(true));
+    menu.addSeparator();
+    menu.addItem((i) => i.setTitle(castWord(p, who)).setIcon('wand-sparkles').onClick(go));
     // its animation once on the caster, aimed at no one (a flourish: the DM deals with what it does)
     // (not a plain attack: there's nothing to see)
     if (!p.plain) menu.addItem((i) => {
@@ -1264,18 +1280,36 @@ export default class AtlasSpellEffects extends Plugin {
     this.namesChanged();
   }
 
+  /** A JB2A animation (in its download folder, or any folder named for it). */
+  isJb2a(path: string): boolean { return path.startsWith(this.jb2aRoot() + '/') || /(^|\/)[^/]*jb2a[^/]*\//i.test(path); }
+  /** Which of the three animation styles the settings make (custom: changed by hand since). */
+  styleNow(): 'atlas' | 'drawn' | 'jb2a' | 'custom' {
+    const s = this.settings;
+    if (s.online) return 'atlas';
+    if (!s.animations || !s.atlasAreas) return 'custom';
+    return s.noJb2a ? 'drawn' : 'jb2a';
+  }
+  /** Sets one of the three animation styles. */
+  async setStyle(v: 'atlas' | 'drawn' | 'jb2a'): Promise<void> {
+    const s = this.settings;
+    s.atlasAreas = true;
+    if (v === 'atlas') s.online = true;
+    else { s.online = false; s.animations = true; s.noJb2a = v === 'drawn'; if (v === 'jb2a') s.jb2aOffer = true; }
+    await this.save(); this.indexVault(); this.wake();
+  }
   folders(): string[] { return this.settings.folders.split(',').map((f) => f.trim().replace(/^\/+|\/+$/g, '')).filter(Boolean); }
   jb2aRoot(): string { return (this.settings.jb2aFolder || 'JB2A_DnD5e').trim().replace(/^\/+|\/+$/g, '') || 'JB2A_DnD5e'; }
   indexVault(): void {
     const want = this.folders();
     const root = this.jb2aRoot() + '/';
     const paths = this.app.vault.getFiles().map((f) => f.path).filter((p) => {
+      if (this.settings.noJb2a && this.isJb2a(p)) return false;
       if (p.startsWith(root)) return true;
       if (want.length) return want.some((w) => p === w || p.startsWith(w + '/'));
       return /(^|\/)[^/]*jb2a[^/]*\//i.test(p) || /(^|\/)spell effects\//i.test(p);
     });
     const files = indexFiles(paths);
-    if (this.settings.jb2aOffer) {
+    if (this.settings.jb2aOffer && !this.settings.noJb2a) {
       // every JB2A animation not in the vault yet (in any folder): offered, fetched when it is first used
       const have = new Set(paths.map((p) => { const i = p.indexOf('Library/'); return i >= 0 ? p.slice(i) : p; }));
       for (const j of jb2aFiles()) {
@@ -1334,7 +1368,7 @@ export default class AtlasSpellEffects extends Plugin {
   atlasTab(): Tab | null {
     const all = this.atlasTabs();
     const active = this.app.workspace.getMostRecentLeaf?.();
-    return all.find((t) => t.leaf === active) ?? all.find((t) => t.canvas.offsetParent !== null) ?? all[0] ?? null;
+    return all.find((t) => t.leaf === active) ?? all.find((t) => t.canvas.isConnected && this.sizeOf(t.canvas).w > 0) ?? all[0] ?? null;
   }
 
   mapOf(t: Tab): string { return String(t.store.getState()?.mapPath ?? ''); }
@@ -1410,7 +1444,7 @@ export default class AtlasSpellEffects extends Plugin {
     const tok = t.store.getState()?.objects?.tokens?.[id];
     if (!tok || !Number.isFinite(tok.x) || !Number.isFinite(tok.y)) return null;
     const cell = this.scaleOf(t).cell;
-    return { x: tok.x, y: tok.y, r: ((typeof tok.size === 'number' && tok.size > 0 ? tok.size : 1) * cell) / 2, rot: ((Number(tok.rotation) || 0) * Math.PI) / 180 };
+    return { x: tok.x, y: tok.y, r: (cellsAcross(tok.size) * cell) / 2, rot: ((Number(tok.rotation) || 0) * Math.PI) / 180 };
   }
 
   tokenName(t: Tab, id: string): string { const tok = t.store.getState()?.objects?.tokens?.[id]; return String(tok?.name || tok?.label || 'a token'); }
@@ -1503,20 +1537,44 @@ export default class AtlasSpellEffects extends Plugin {
     };
   }
 
+  /**
+   * An element's size on the page (and where it sits in its parent), kept by a ResizeObserver: read every frame, it
+   * would make the browser lay the page out again each time (after Atlas's and the add-on's own changes), which
+   * slows Atlas down. Read straight off the element where the browser has no ResizeObserver.
+   */
+  private sizes = new WeakMap<Element, { w: number; h: number; left: number; top: number; ro: ResizeObserver | null }>();
+  private sizeOf(el: HTMLElement, where = false): { w: number; h: number; left: number; top: number } {
+    let z = this.sizes.get(el);
+    const RO = el.ownerDocument.defaultView?.ResizeObserver;
+    if (!z || !RO) {
+      z = { w: el.offsetWidth, h: el.offsetHeight, left: where ? el.offsetLeft : 0, top: where ? el.offsetTop : 0, ro: null };
+      if (RO) {
+        const zz = z;
+        zz.ro = new RO(() => { zz.w = el.offsetWidth; zz.h = el.offsetHeight; if (where) { zz.left = el.offsetLeft; zz.top = el.offsetTop; } this.wake(); });
+        zz.ro.observe(el); const ro = zz.ro; this.register(() => ro.disconnect());
+        this.sizes.set(el, zz);
+      }
+    }
+    return z;
+  }
+
   /** The layer over a DM tab's map canvas. */
   private tabSurface(t: Tab): Surface {
     return {
       doc: t.canvas.ownerDocument,
       layer: () => {
-        const parent = t.canvas.parentElement; if (!parent || t.canvas.offsetParent === null) return null;
+        // (hidden: no size, as last measured; asking the page whether it shows would make it lay out again)
+        const parent = t.canvas.parentElement; if (!parent || !t.canvas.isConnected) return null;
+        { const z0 = this.sizeOf(t.canvas, true); if (!z0.w && !z0.h) return null; }
         let el = parent.querySelector<HTMLElement>(':scope > .sfx-layer');
         if (!el) {
           el = parent.createDiv({ cls: 'sfx-layer' });
           if (getComputedStyle(parent).position === 'static') parent.addClass('sfx-relative');
           t.canvas.insertAdjacentElement('afterend', el);
         }
-        const k = `${t.canvas.offsetLeft}|${t.canvas.offsetTop}|${t.canvas.clientWidth}|${t.canvas.clientHeight}`;
-        if (el.dataset.at !== k) { el.dataset.at = k; el.setCssStyles({ position: 'absolute', left: t.canvas.offsetLeft + 'px', top: t.canvas.offsetTop + 'px', width: t.canvas.clientWidth + 'px', height: t.canvas.clientHeight + 'px', transform: 'none' }); }
+        const z = this.sizeOf(t.canvas, true);
+        const k = `${z.left}|${z.top}|${z.w}|${z.h}`;
+        if (el.dataset.at !== k) { el.dataset.at = k; el.setCssStyles({ position: 'absolute', left: z.left + 'px', top: z.top + 'px', width: z.w + 'px', height: z.h + 'px', transform: 'none' }); }
         return el;
       },
       mapping: (): Mapping | null => {
@@ -1527,6 +1585,7 @@ export default class AtlasSpellEffects extends Plugin {
         return { toLocal: (x, y) => { const p = toScreen(x, y); return { x: p.x, y: p.y }; }, scale };
       },
       shows: (map) => this.mapOf(t) === map,
+      size: () => this.sizeOf(t.canvas, true),
     };
   }
 
@@ -1547,8 +1606,9 @@ export default class AtlasSpellEffects extends Plugin {
         let el = doc.body.querySelector<HTMLElement>(':scope > .sfx-layer');
         // plain DOM only here: the player window may not have Obsidian's element helpers
         if (!el) el = doc.body.createDiv({ cls: 'sfx-layer sfx-tv' });
-        const k = `${c.offsetWidth}|${c.offsetHeight}`;
-        if (el.dataset.at !== k) { el.dataset.at = k; el.style.width = `${c.offsetWidth}px`; el.style.height = `${c.offsetHeight}px`; }
+        const z = this.sizeOf(c);
+        const k = `${z.w}|${z.h}`;
+        if (el.dataset.at !== k) { el.dataset.at = k; el.style.width = `${z.w}px`; el.style.height = `${z.h}px`; }
         return el;
       },
       mapping: (): Mapping | null => {
@@ -1556,12 +1616,13 @@ export default class AtlasSpellEffects extends Plugin {
         const v = l?.pv.view;
         if (!c || !v) return null;
         const vw = v.right - v.left, vh = v.bottom - v.top;
-        const bw = c.width, bh = c.height, boxW = c.offsetWidth, boxH = c.offsetHeight;
+        const z = this.sizeOf(c); const bw = c.width, bh = c.height, boxW = z.w, boxH = z.h;
         if (!(vw > 0 && vh > 0 && bw > 0 && bh > 0)) return null;
         const s = Math.max(boxW / bw, boxH / bh);                 // object-fit: cover
         return { toLocal: (x, y) => ({ x: ((x - v.left) / vw * bw - bw / 2) * s + boxW / 2, y: ((y - v.top) / vh * bh - bh / 2) * s + boxH / 2 }), scale: bw / vw * s };
       },
       shows: (map) => { const l = live(); return !!l && this.mapOf(l.t) === map; },
+      size: () => { const c = doc.getElementById(PLAYER_CANVAS) as HTMLCanvasElement | null; return c ? this.sizeOf(c) : { w: 0, h: 0 }; },
       players: true,
     };
   }
@@ -1583,7 +1644,7 @@ export default class AtlasSpellEffects extends Plugin {
       const busy = !!this.placing || !!this.dragging || this.lightMoving.size > 0 || this.effects.some((e) => !e.lasting);
       if (!this.effects.length && !this.placing) { this.clearPainters(); return; }
       // one loop only: a wake() during the frame has already asked for the next one
-      if (!this.loop && (busy || this.still < 20)) this.loop = window.requestAnimationFrame(step);
+      if (!this.loop && (busy || this.still < 6)) this.loop = window.requestAnimationFrame(step);
     };
     this.loop = window.requestAnimationFrame(step);
   }
@@ -1618,7 +1679,8 @@ export default class AtlasSpellEffects extends Plugin {
     const parts: unknown[] = [this.effects, this.placing?.preview ?? null, this.selected?.ids ?? [], artInfo.size];
     for (const t of this.atlasTabs()) {
       const vp = t.viewport;
-      parts.push(vp?.x, vp?.y, vp?.scale?.x, t.canvas?.clientWidth, t.canvas?.clientHeight, this.idOf(t.store?.getState?.()?.objects?.tokens));
+      const z = t.canvas ? this.sizeOf(t.canvas) : null;
+      parts.push(vp?.x, vp?.y, vp?.scale?.x, z?.w, z?.h, this.idOf(t.store?.getState?.()?.objects?.tokens));
       const pv = call<PlayersView>(t.renderer, 'playersView');
       if (pv?.view) parts.push(pv.view.left, pv.view.top, pv.view.right, pv.view.bottom);
     }
@@ -1637,14 +1699,14 @@ export default class AtlasSpellEffects extends Plugin {
     if (sig === this.lastSig) this.still++; else { this.still = 0; this.lastSig = sig; }
     const out = new Set<string>();
     const before = this.effects.length;
-    this.effects = this.effects.filter((e) => {
+    const still = this.effects.filter((e) => {
       if (e.lasting) return true;
       const ms = instantMs(e);
       if (now - e.started >= ms) return false;
       if (now - e.started >= ms - FADE_MS) out.add(e.id);
       return true;
     });
-    if (this.effects.length !== before) this.saveSoon();
+    if (still.length !== before) { this.effects = still; this.saveSoon(); }
     const world = this.world();
     const live = new Set<object>();
     // in Atlas's own canvas, under the tokens, where it can be; else over it (the overlay)
@@ -1984,6 +2046,9 @@ export default class AtlasSpellEffects extends Plugin {
    * and not dealt with yet, "In a spell". Only what the add-on put on is taken off: a condition the creature had
    * already stays, and one you take off while it's still inside stays off.
    */
+  private condKey = new WeakMap<object, string>();
+  private condAt = new WeakMap<object, number>();
+  private condTimer = 0;
   syncConditions(): void {
     if (!this.settings.markCreatures && !this.settings.marks.length) return;
     let changed = false;
@@ -1991,7 +2056,16 @@ export default class AtlasSpellEffects extends Plugin {
       const st = t.store.getState?.(); if (!st || st.isPlayerView || typeof st.setTokensCondition !== 'function') continue;
       const map = this.mapOf(t);
       const tokens = st.objects?.tokens ?? {};
+      // (the same tokens, areas, spells and marks as last time: nothing to do; worked out every frame otherwise)
+      const lasting = this.effects.filter((e) => e.map === map && e.lasting);
       const defs = this.conditionDefs(t);
+      const key = [this.idOf(tokens), this.idOf(st.objects?.measures), this.idOf(this.settings.marks), this.settings.markCreatures, defs.map((d) => d.id).join(','), JSON.stringify(lasting)].join('|');
+      if (this.condKey.get(t.view) === key) continue;
+      // (while tokens are dragged: at most five times a second, and once more when they stop)
+      const since = Date.now() - (this.condAt.get(t.view) ?? 0);
+      const rest = (k: string | undefined) => k?.slice(k.indexOf('|'));
+      if (since < 200 && rest(this.condKey.get(t.view)) === rest(key)) { if (!this.condTimer) this.condTimer = window.setTimeout(() => { this.condTimer = 0; this.wake(); }, 210 - since); continue; }
+      this.condAt.set(t.view, Date.now());
       const marker = this.settings.markCreatures && this.ensureMarker(t);
       // what should be on, by whom: "effect|token|condition"
       const want = new Map<string, { from: string; token: string; cond: string }>();
@@ -2029,11 +2103,12 @@ export default class AtlasSpellEffects extends Plugin {
         if (has(w.token, w.cond) && !other) kept.push({ map, ...w, state: 'theirs' });
         else { kept.push({ map, ...w, state: 'on' }); if (!has(w.token, w.cond)) push(add, w.cond, w.token); }
       }
-      this.settings.marks = kept;
+      if (changed) this.settings.marks = kept;
       if (add.size || drop.size) this.untracked(t, () => {
         for (const [cond, ids] of add) st.setTokensCondition!(ids, cond, true);
         for (const [cond, ids] of drop) st.setTokensCondition!(ids, cond, false);
       });
+      this.condKey.set(t.view, [this.idOf(t.store.getState?.()?.objects?.tokens ?? {}), this.idOf(st.objects?.measures), this.idOf(this.settings.marks), this.settings.markCreatures, defs.map((d) => d.id).join(','), JSON.stringify(lasting)].join('|'));
     }
     if (changed) this.saveSoon();
   }
@@ -2556,9 +2631,9 @@ export default class AtlasSpellEffects extends Plugin {
 
   /** Whether a map is on screen (its tab in front, its canvas laid out). */
   private shown(t: Tab): boolean {
-    const c = t.canvas; if (!c.isConnected || c.offsetParent === null) return false;
-    const r = c.getBoundingClientRect();
-    return r.width > 0 && r.height > 0;
+    const c = t.canvas; if (!c.isConnected) return false;
+    const z = this.sizeOf(c);
+    return z.w > 0 && z.h > 0;
   }
 
   paintCaught(): void {
@@ -3146,7 +3221,7 @@ export default class AtlasSpellEffects extends Plugin {
       const max = reach * ppf;
       const clamp = (q: Point): Point => { const dx = q.x - caster!.x, dy = q.y - caster!.y, d = Math.hypot(dx, dy); return d <= max || d === 0 ? q : { x: caster!.x + dx * max / d, y: caster!.y + dy * max / d }; };
       const tok = t0();
-      const cells = Math.max(1, Math.round(typeof tok?.size === 'number' && tok.size > 0 ? tok.size : 1));
+      const cells = Math.max(1, Math.round(cellsAcross(tok?.size)));
       const cell = this.scaleOf(tab).cell;
       const snap = (q: Point): Point => {
         if (!this.snapOn(ev)) return q;
@@ -3482,7 +3557,9 @@ export default class AtlasSpellEffects extends Plugin {
   feetBetween(t: Tab, a: string | undefined, b: string | undefined): number | undefined {
     const ka = a ? this.tokenOf(t, a) : null, kb = b ? this.tokenOf(t, b) : null;
     if (!ka || !kb) return undefined;
-    return Math.max(0, Math.max(Math.abs(kb.x - ka.x), Math.abs(kb.y - ka.y)) - kb.r - ka.r) / pxPerFoot(this.scaleOf(t)) + square();
+    // (from the edge of each one's space, as Atlas measures: a tiny one's space is still a square)
+    const half = this.scaleOf(t).cell / 2;
+    return Math.max(0, Math.max(Math.abs(kb.x - ka.x), Math.abs(kb.y - ka.y)) - Math.max(kb.r, half) - Math.max(ka.r, half)) / pxPerFoot(this.scaleOf(t)) + square();
   }
 
   /** A creature and those within `feet` of it (as the rules count: next to it, 5 ft). */
@@ -3493,7 +3570,8 @@ export default class AtlasSpellEffects extends Plugin {
     for (const o of Object.keys(t.store.getState()?.objects?.tokens ?? {})) {
       if (o === id) continue;
       const p = this.tokenOf(t, o); if (!p) continue;
-      const gap = Math.max(0, Math.max(Math.abs(p.x - k.x), Math.abs(p.y - k.y)) - p.r - k.r) / ppf + square();
+      const half = this.scaleOf(t).cell / 2;
+      const gap = Math.max(0, Math.max(Math.abs(p.x - k.x), Math.abs(p.y - k.y)) - Math.max(p.r, half) - Math.max(k.r, half)) / ppf + square();
       if (feet > 0 && gap <= feet + 0.5) out.push(o);
     }
     return out;
@@ -3659,7 +3737,7 @@ export default class AtlasSpellEffects extends Plugin {
   }
 
   cast(e: Effect): void {
-    if (!this.settings.animations && e.file) delete e.file;
+    if (e.file && (!this.settings.animations || (this.settings.noJb2a && this.isJb2a(e.file)))) delete e.file;
     this.fitCone(e, this.atlasTabs().find((x) => this.mapOf(x) === e.map) ?? null);
     window.setTimeout(() => this.bars(), 0);
     const before = this.snapshot();
@@ -4911,7 +4989,7 @@ class EffectSettings extends PluginSettingTab {
 
     // ── on the map ──
     const toggle = (name: string, desc: string, get: () => boolean, put: (v: boolean) => void): Row => ({
-      name, desc, render: (st) => { st.addToggle((t) => t.setValue(get()).onChange((v) => { void (async () => { put(v); await p.save(); p.wake(); })(); })); },
+      name, desc, render: (st) => { st.addToggle((t) => t.setValue(get()).onChange((v) => { void (async () => { const was = p.styleNow(); put(v); await p.save(); p.wake(); if (p.styleNow() !== was) this.redraw(); })(); })); },
     });
     game.push({ name: 'Snap to grid', desc: 'Areas land on the nearest grid corner, as the rules place them. Hold Alt to do the opposite once.', render: (st) => { st.addToggle((t) => t.setValue(s.snap).onChange((v) => { void (async () => { s.snap = v; await p.save(); })(); })); } });
     players.push(toggle('Show players the area while you aim', 'The player window shows where a spell will land before you cast it. Also in the ✨ button’s menu.', () => s.showAim, (v) => { s.showAim = v; }));
@@ -4925,6 +5003,15 @@ class EffectSettings extends PluginSettingTab {
     // (a row, so it shows however Obsidian draws the tab: from its definitions, or by display())
     main.push({ name: 'Combat+ for Atlas VTT', desc: 'Spell effects and areas on your Atlas maps (your screen and the player window), and D&D 5e rolls for spells, abilities and attacks. Cast with ✨ in Atlas’s toolbar, or from a statblock.', render: () => { /* words only */ } });
     main.push({ name: 'Hotkeys', desc: 'Every Combat+ command can have a key: apply the latest damage, reroll, close cards, mark a player’s save, end effects, cast again, switch rolling or effects on and off, and more.', render: (st) => { st.addButton((b) => b.setButtonText('Set hotkeys').onClick(() => p.openHotkeys())); } });
+    main.push({
+      name: 'Animation style',
+      desc: 'Atlas areas only: just Atlas’s own areas (Fire, Frost… looks), lights and conditions, so you see what online players see. Combat+ animations: Combat+’s own drawn animations on top of Atlas’s areas (no downloads). JB2A animations: JB2A’s animated spells and attacks (fetched the first time each is used), on top of Atlas’s areas.',
+      render: (st) => { st.addDropdown((d) => {
+        d.addOption('atlas', 'Atlas areas only (works with Atlas Online)').addOption('drawn', 'Combat+ animations, with Atlas areas').addOption('jb2a', 'JB2A animations, with Atlas areas');
+        const now = p.styleNow(); if (now === 'custom') d.addOption('custom', 'Custom (set below)');
+        d.setValue(now).onChange((v) => { if (v === 'custom') return; void (async () => { await p.setStyle(v as 'atlas' | 'drawn' | 'jb2a'); this.redraw(); })(); });
+      }); },
+    });
     main.push(toggle('Atlas Online view', 'Show only what online players see: Atlas’s own areas (with their Fire, Frost… looks), lights, conditions, terrain and summoned tokens. Animations and the add-on’s drawn shapes are hidden here and on the player window, since they never reach Atlas Online. Spells are made as Atlas areas while it’s on. You still see where you aim.', () => s.online, (v) => { s.online = v; }));
     main.push(toggle('Spell effects', 'Play animations for spells and abilities. Off: casting still places the area so you can see who it catches, and rolling, conditions and pushes still work.', () => s.animations, (v) => { s.animations = v; }));
     main.push({ name: 'Rolling (D&D 5e and 2024 only)', desc: `For D&D 5e (2014) and D&D 2024 only: other game systems aren’t supported yet.${p.systemOf() && !p.systemOf().startsWith('builtin:dnd5e') ? ' Your open map isn’t D&D 5e, so rolls there may be wrong.' : ''} Rolls spells, abilities and weapon attacks against the creatures they hit, using their statblocks, with the results on a card. Apply damage takes it off their HP (Ctrl+Z undoes it). Turns on Attack buttons in statblocks. NPCs only: player characters’ own attacks, spells and saves are left to their players (their saves get Saved and Failed buttons on the card).`, render: (st) => { st.addDropdown((d) => d.addOption('off', 'Off').addOption('npcs', 'NPCs only (players roll their own)').addOption('all', 'Everyone').setValue(!s.rolling ? 'off' : s.rollWho).onChange((v) => { void (async () => { s.rolling = v !== 'off'; if (v === 'npcs' || v === 'all') s.rollWho = v; await p.save(); p.wake(); p.rescanStatblocks(); this.redraw(); })(); })); } });
