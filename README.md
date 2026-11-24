@@ -605,7 +605,9 @@ failed save gives a condition (*Stunned*, *Grappled*, *Prone*), its row has a **
 token; take it off yourself.
 
 **Multiattack.** A statblock's Multiattack gets a **Use** button: click it, then click a target for each attack it
-makes, in turn. Where it offers a choice of attacks, the first is used.
+makes, in turn. Where it offers a choice (*three attacks, using Greatsword or Longbow in any combination*), each
+attack is picked by how far the target is: within reach, the melee one; further off, the ranged one. Press **Tab**
+while aiming to choose the next attack yourself. The hint at the bottom says which attack is next.
 
 **Animations for attacks** (optional, Settings → On the map): plain attacks play an animation from the attacker
 to the target, by the weapon's name (a greatsword's swing, a longbow's arrow, a bite's claw strike). A magical one,
@@ -620,7 +622,19 @@ like `3d6` or `2d8 radiant`, and press **Add** (or Enter). It's rolled for each 
 and resisted like the rest. With no type given, it's the attack's own.
 If the attacker's statblock has **Sneak Attack**, **Martial Advantage** or another trait that deals extra damage
 when it hits, the card has a button for it (**Sneak Attack +3d6**): press it when its rules are met (once a turn,
-with advantage or an ally beside the target…). A player's Sneak Attack is worked out from their Rogue level.
+with advantage or an ally beside the target…). A player's Sneak Attack is worked out from their Rogue level. A Genie
+warlock's **Genie's Wrath** gets a button too (its proficiency bonus, in its patron's damage type).
+
+**Bonuses to spell damage**, found by name on the caster's statblock and added for you:
+
+- **Agonizing Blast:** Charisma modifier to Eldritch Blast.
+- **Empowered Evocation:** Intelligence modifier to Evocation spells.
+- **Elemental Affinity:** Charisma modifier to spells of its dragon's damage type. The type must be on the
+  statblock, like *Elemental Affinity (Fire)* or *Draconic Ancestry: Red*.
+- **Potent Spellcasting:** Wisdom modifier to cantrips.
+
+The card shows each one: *8d6 fire + 4 (Empowered Evocation)*. They're added to spells only, not to a creature's
+own abilities or to attack lines that already include them.
 
 **Magic weapons:** every damage part is rolled with its own type (*Hit: 2d6+6 Slashing plus 1d8 Cold*). A weapon
 named with a bonus or a rarity (*+2 Greatsword*, *Frost Brand (Very Rare)*) counts as magical, so its hit gets past
@@ -689,7 +703,8 @@ Success: Half damage.`
 
 **Multiattack** (a **Use** button): name its attacks by their entry names: `The ogre makes one Bite attack and two
 Claw attacks.` Also read: `makes three Rend attacks`, `one with its bite and one with its claws` (2014), `two
-Greatsword or Heavy Crossbow attacks` (the first is used), and `…and it uses Dreadful Glare`.
+Greatsword or Heavy Crossbow attacks` and `three attacks, using Greatsword or Longbow in any combination` (each
+picked by distance, or Tab), and `…and it uses Dreadful Glare`.
 
 **Conditions:** `the target has the Prone condition`, `is Restrained`, `falls Prone`. They're offered as a **Give**
 button on a hit or a failed save, using your collection's condition names.

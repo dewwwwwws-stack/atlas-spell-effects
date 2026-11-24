@@ -121,7 +121,24 @@ export interface Choice { key: string; name: string; source: 'stored' | 'note'; 
 
 
 /** What is being cast: the area and look, before it is placed. */
-interface Pending { name: string; key: string; area: Area; file?: string; colour: string; colour2?: string; /** How its drawn shape moves while it lasts. */ motion?: string; /** What it rolls, from its text. */ roll?: RollSpec; /** A plain attack: rolled at each creature clicked, with nothing drawn. */ plain?: boolean; /** A Multiattack: the attacks it makes, one for each creature clicked, in turn. */ sequence?: { name: string; roll: RollSpec }[]; /** What else it does (pushes, how many, a chain, a thing it makes, difficult terrain). */ more?: More; alpha?: number; attach?: boolean; light?: EffectLight; /** How far from its caster it can be cast (feet, from the edge of their space). */ range?: number; /** The conditions it gives the creatures inside it (names). */ conditions?: string[]; /** It teleports its caster up to this far (game units). */ teleport?: number; /** Atlas's look for its area (fire, frost…); '' or missing: none. */ look?: string; /** Its Atlas area's choices (Atlas 0.15 on). */ atlas?: AtlasChoices }
+/**
+ * Which of a Multiattack's attacks this one is: the one chosen (Tab), else by distance: in reach of a melee one,
+ * that; beyond it, a ranged one that reaches (else any ranged one); else the first.
+ */
+function pickOpt(s: Step, feet: number | undefined, choice: number | null): StepOpt {
+  const all = s.alts?.length ? s.alts : [s];
+  if (choice !== null) return all[choice % all.length];
+  if (all.length === 1 || feet === undefined) return all[0];
+  const ranged = (o: StepOpt) => !!o.roll.ranged || (o.roll.short !== undefined && o.roll.reach === undefined);
+  const melee = all.filter((o) => !ranged(o));
+  if (melee.some((o) => feet <= (o.roll.reach ?? 5) + 0.01)) return melee.find((o) => feet <= (o.roll.reach ?? 5) + 0.01)!;
+  const far = all.filter(ranged);
+  return far.find((o) => feet <= (o.roll.long ?? o.roll.short ?? Infinity) + 0.01) ?? far[0] ?? all[0];
+}
+/** One attack of a Multiattack: its name, roll and animation; `alts`, the attacks it may be instead (itself first). */
+interface StepOpt { name: string; roll: RollSpec; file?: string }
+interface Step extends StepOpt { alts?: StepOpt[] }
+interface Pending { name: string; key: string; area: Area; file?: string; colour: string; colour2?: string; /** How its drawn shape moves while it lasts. */ motion?: string; /** What it rolls, from its text. */ roll?: RollSpec; /** A plain attack: rolled at each creature clicked, with nothing drawn. */ plain?: boolean; /** A Multiattack: the attacks it makes, one for each creature clicked, in turn. */ sequence?: Step[]; /** What else it does (pushes, how many, a chain, a thing it makes, difficult terrain). */ more?: More; alpha?: number; attach?: boolean; light?: EffectLight; /** How far from its caster it can be cast (feet, from the edge of their space). */ range?: number; /** The conditions it gives the creatures inside it (names). */ conditions?: string[]; /** It teleports its caster up to this far (game units). */ teleport?: number; /** Atlas's look for its area (fire, frost…); '' or missing: none. */ look?: string; /** Its Atlas area's choices (Atlas 0.15 on). */ atlas?: AtlasChoices }
 /** A spell's Atlas area, as chosen in the cast window: how it's drawn, its light, walls, players, how it's placed. */
 interface AtlasChoices { draw?: 'area' | 'animation'; areaLight?: 'atlas' | 'none'; throughWalls?: boolean; hidden?: boolean; tool?: boolean }
 /** A spell's remembered choices in the game's units now (remembered in another game system's: the same squares). */
@@ -681,7 +698,8 @@ export default class AtlasSpellEffects extends Plugin {
     for (const d of docs) {
       if (this.linkers.has(d) || !d.body) continue;
       const l = new StatblockLinker(d, () => this.spellNames(), (link, how) => void this.castFromStatblock(link, how), (link, how) => void this.statblockMenu(link, how), (sb) => { if (sb.closest('.atlas-statblock-preview-window')) this.tokenOfStatblock(sb); }, (link, how) => this.peekButton(link, how));
-      l.attacks = (sb) => { const k = this.settings.rolling && this.settings.rollWho === 'npcs' ? this.tokenOfStatblock(sb) : null; return this.settings.rolling && !(k && this.isPC(k.tab, k.id)); };
+      // (an attack does something when it's rolled, or animated)
+      l.attacks = (sb) => { if (!this.settings.rolling) return this.settings.attackAnims; const k = this.settings.rollWho === 'npcs' ? this.tokenOfStatblock(sb) : null; return !(k && this.isPC(k.tab, k.id)) || this.settings.attackAnims; };
       l.start(); this.linkers.set(d, l);
     }
     for (const [d, l] of this.linkers) if (!docs.has(d) || !d.defaultView) { l.stop(); this.linkers.delete(d); }
@@ -750,8 +768,18 @@ export default class AtlasSpellEffects extends Plugin {
   /** A Multiattack's attacks put on its cast: one roll each, in turn (a creature's own attacks: not spells). */
   private withSequence(p: Pending, link: SpellLink): Pending {
     if (!link.multi?.length) return p;
-    const seq: { name: string; roll: RollSpec }[] = [];
-    for (const x of link.multi) { const r = rollSpecOf(x.text); if (r) seq.push({ name: x.name, roll: { ...r, spell: false } }); }
+    const seq: Step[] = [];
+    const opt = (x: { name: string; text: string }): StepOpt | null => {
+      const r = rollSpecOf(x.text); if (!r) return null;
+      // animated attacks: each its own weapon's swing or shot
+      const ranged = !!r.ranged || (r.short !== undefined && r.reach === undefined);
+      const file = this.settings.attackAnims ? attackFile(x.name, x.text, this.files, { melee: MELEE_DEFAULTS[this.settings.attackMelee] ?? '', ranged: RANGED_DEFAULTS[this.settings.attackRanged] ?? '' }, () => fiveEFile(x.name, x.text, undefined, { shape: 'line', size: squares(6), width: square(), from: 'caster', lasting: false, target: 'bolt' }, this.files), ranged)?.path : undefined;
+      return { name: x.name, roll: { ...r, spell: false }, ...(file ? { file } : {}) };
+    };
+    for (const x of link.multi) {
+      const alts = (x.alts ?? [x]).map(opt).filter((o): o is StepOpt => !!o);
+      if (alts.length) seq.push(alts.length > 1 ? { ...alts[0], alts } : alts[0]);
+    }
     return seq.length ? { ...p, plain: true, sequence: seq, roll: seq[0].roll } : p;
   }
   /** A saved ability's key: its name, any case. */
@@ -3267,10 +3295,20 @@ export default class AtlasSpellEffects extends Plugin {
     const say = () => {
       hint.textContent = `${pending.name}: ` + (bolt && !caster ? 'click the caster (a token, or a spot)   ·   Esc to stop'
         : a.self ? 'click the caster’s token   ·   Esc to stop'
+        : pending.sequence?.length && total > 1 ? `attack ${Math.min(total, count + 1)} of ${total}: ${(() => { const al = altsNow(); return al ? (choice === null ? `${al.map((o) => o.name).join(' or ')} (by distance)` : al[choice % al.length].name) + '   ·   Tab to switch' : pending.sequence[Math.min(count, pending.sequence.length - 1)].name; })()}   ·   click a target   ·   Esc when done`
         : total > 1 ? `click target ${Math.min(total, count + 1)} of ${total} (the same one again for more than one on it)   ·   Esc when done`
         : count ? 'click another target, or Esc / right-click when done' : 'click a target (a creature, or a spot)   ·   Esc to stop');
     };
-    const effect = (id: string, p: Point): Effect | null => this.targetEffect(tab, pending, caster, id, p);
+    // a Multiattack's next attack where it may be one of several (Greatsword or Longbow): picked by how far the
+    // target is (in reach: the melee one), or Tab to choose
+    let choice: number | null = null;
+    const step = (p: Point | null): Pending => {
+      if (!pending.sequence?.length) return pending;
+      const tok = p ? this.tokenAt(tab, p) : null;
+      return this.stepOf(pending, count, { feet: tok ? this.feetBetween(tab, by, tok.id) : undefined, choice });
+    };
+    const altsNow = () => pending.sequence?.[Math.min(count, pending.sequence.length - 1)]?.alts;
+    const effect = (id: string, p: Point): Effect | null => this.targetEffect(tab, step(p), caster, id, p);
     const move = (e: PointerEvent) => { const p = toWorld(e); if (!p || !this.placing) return; this.placing.preview = effect('preview', p); this.wake(); };
     const down = (e: PointerEvent) => {
       const p = toWorld(e); if (!p || !this.placing) return;
@@ -3285,13 +3323,18 @@ export default class AtlasSpellEffects extends Plugin {
         say(); return;
       }
       const fx = effect(uid(), p);
-      if (fx) { this.castTarget(fx, pending); count++; this.afterTarget(tab, this.stepOf(pending, count - 1), this.tokenAt(tab, p)?.id ?? null, caster, by); }
+      if (fx) { const st = step(p); this.castTarget(fx, st); count++; choice = null; this.afterTarget(tab, st, this.tokenAt(tab, p)?.id ?? null, caster, by); }
       if (fx && a.self) { this.placing.stop(); return; }          // only the caster: done
       if (fx && total > 1 && count >= total) { this.placing.stop(); return; }          // its last dart, ray or beam: done
       say();
     };
     const swallow = (e: Event) => { if (toWorld(e as PointerEvent)) { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); } };
-    const key = (e: KeyboardEvent) => { if (e.key === 'Escape' || e.key === 'Enter') { e.preventDefault(); this.placing?.stop(); } };
+    const key = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' || e.key === 'Enter') { e.preventDefault(); this.placing?.stop(); return; }
+      // a Multiattack's next attack: the next of those it may be
+      const al = altsNow();
+      if (e.key === 'Tab' && al) { e.preventDefault(); e.stopPropagation(); choice = choice === null ? 0 : choice + 1; if (choice >= al.length) choice = null; say(); }
+    };
     const opts = { capture: true } as AddEventListenerOptions;
     const evs: [string, EventListener][] = [['pointermove', move as EventListener], ['pointerdown', down as EventListener], ['pointerup', swallow], ['click', swallow], ['contextmenu', swallow], ['keydown', key as EventListener]];
     for (const [k, f] of evs) doc.addEventListener(k, f, opts);
@@ -3359,9 +3402,17 @@ export default class AtlasSpellEffects extends Plugin {
   }
 
   /** A Multiattack's attack number `i` (its name and roll); anything else as it is. */
-  private stepOf(p: Pending, i: number): Pending {
+  private stepOf(p: Pending, i: number, pick: { feet?: number; choice?: number | null } = {}): Pending {
     const s = p.sequence?.[Math.min(i, (p.sequence?.length ?? 1) - 1)];
-    return s ? { ...p, name: `${p.name}: ${s.name}`, roll: s.roll } : p;
+    if (!s) return p;
+    const o = pickOpt(s, pick.feet, pick.choice ?? null);
+    return { ...p, name: `${p.name}: ${o.name}`, roll: o.roll, ...(o.file ? { file: o.file } : {}) };
+  }
+  /** How far apart two tokens are, as the rules count it (next to each other: 5 ft). */
+  feetBetween(t: Tab, a: string | undefined, b: string | undefined): number | undefined {
+    const ka = a ? this.tokenOf(t, a) : null, kb = b ? this.tokenOf(t, b) : null;
+    if (!ka || !kb) return undefined;
+    return Math.max(0, Math.max(Math.abs(kb.x - ka.x), Math.abs(kb.y - ka.y)) - kb.r - ka.r) / pxPerFoot(this.scaleOf(t)) + square();
   }
 
   /** A creature and those within `feet` of it (as the rules count: next to it, 5 ft). */
@@ -3403,10 +3454,11 @@ export default class AtlasSpellEffects extends Plugin {
     this.last = pending;
     if (!pending.plain) this.settings.recent = [pending, ...this.settings.recent.filter((r) => r.name !== pending.name || r.key !== pending.key)].slice(0, RECENT);
     this.saveSoon();
-    const fx = this.targetEffect(t, pending, c ? { x: c.x, y: c.y } : null, uid(), { x: k.x, y: k.y }, target);
+    const first = pending.sequence?.length ? this.stepOf(pending, 0, { feet: this.feetBetween(t, caster, target) }) : pending;
+    const fx = this.targetEffect(t, first, c ? { x: c.x, y: c.y } : null, uid(), { x: k.x, y: k.y }, target);
     if (!fx) return;
-    this.castTarget(fx, pending);
-    this.afterTarget(t, this.stepOf(pending, 0), target, c ? { x: c.x, y: c.y } : null, caster);
+    this.castTarget(fx, first);
+    this.afterTarget(t, first, target, c ? { x: c.x, y: c.y } : null, caster);
     // more than one to send (Magic Missile's darts): the rest are clicked on the map
     const total = pending.sequence?.length ? pending.sequence.length : pending.more && ((pending.more.count ?? 1) > 1 || pending.more.steps?.length) ? countAt(pending.more, this.levelOf(t, caster)) : 0;
     if (total > 1) this.castAt(t, pending, caster, 1);
@@ -4421,6 +4473,8 @@ class CastModal extends Modal {
         if (lv > 0 && lv <= 9) { spec.level = lv; if (spec.after) spec.after.level ??= lv; }
         if (spec.after) spec.after.spell = !this.choice?.ability;
         spec.spell = !this.choice?.ability;
+        // which spell it is, for the caster's damage bonuses (Empowered Evocation: an Evocation spell)
+        if (!this.choice?.ability) { spec.spellName = this.choice?.name; if (this.choice?.entry?.school) spec.school = this.choice.entry.school; if (lv === 0 || (this.choice?.entry?.level !== undefined && Number(this.choice.entry.level) === 0)) spec.cantrip = true; }
         // a magic weapon's attack: "+2 Greatsword", "Frost Brand (Very Rare)", "magic weapon" in its text
         if (this.choice?.entry?.plain === 'attack' && /(?:^|\s)\+\d\b|\((?:uncommon|rare|very rare|legendary|artifact|artefact)\)|\bmagic(?:al)? (?:weapon|attack)/i.test(`${this.choice.name} ${this.choice.entry.descFull ?? ''}`)) spec.magic = true;
         // (a lasting one's conditions follow its area instead)

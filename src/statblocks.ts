@@ -8,7 +8,9 @@
 import { abilityEntry } from './areas';
 
 /** A spell a name in a statblock stands for. */
-export interface SpellLink { key: string; name: string; /** A creature's ability, not a spell: its own text in the statblock. */ ability?: string; /** A plain attack (a sword, a bite): rolled at a creature, nothing drawn. */ attack?: boolean; /** A Multiattack: the attacks it makes, in turn (each its name and text). */ multi?: { name: string; text: string }[] }
+export interface SpellLink { key: string; name: string; /** A creature's ability, not a spell: its own text in the statblock. */ ability?: string; /** A plain attack (a sword, a bite): rolled at a creature, nothing drawn. */ attack?: boolean; /** A Multiattack: the attacks it makes, in turn (each its name and text; `alts`: the attacks it may be instead, itself first). */ multi?: MultiStep[] }
+/** One attack of a Multiattack: "Greatsword or Longbow in any combination" gives each both, to choose from. */
+export interface MultiStep { name: string; text: string; alts?: { name: string; text: string }[] }
 
 const WORDS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, a: 1, an: 1, once: 1, twice: 2 };
 /**
@@ -16,10 +18,12 @@ const WORDS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five:
  * one Bite attack and two Claw attacks", "makes two attacks, using Scimitar or Shortbow in any combination" (the
  * first named, each time: change any on the map by clicking another of its buttons). Empty: none read.
  */
-export function multiOf(text: string, attacks: { name: string; text: string }[]): { name: string; text: string }[] {
+export function multiOf(text: string, attacks: { name: string; text: string }[]): MultiStep[] {
   const t = text.replace(/\s+/g, ' ');
   const byName = (n: string) => attacks.find((a) => a.name.toLowerCase() === n.toLowerCase());
-  const out: { name: string; text: string }[] = [];
+  const out: MultiStep[] = [];
+  /** An attack that may be any of these (the first unless chosen). */
+  const either = (list: { name: string; text: string }[]): MultiStep => (list.length > 1 ? { ...list[0], alts: list } : list[0]);
   const names = attacks.map((a) => a.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).sort((a, b) => b.length - a.length);
   if (!names.length) return out;
   const num = String.raw`(\d+|one|two|three|four|five|six|seven|eight|an?|once|twice)`;
@@ -30,18 +34,24 @@ export function multiOf(text: string, attacks: { name: string; text: string }[])
     const a = byName(m[2] ?? m[4] ?? m[6] ?? ''); if (!a) continue;
     for (let i = 0; i < Math.min(n, 8); i++) out.push(a);
   }
-  // "two Javelin or Morningstar attacks" (the first, each time); "as many Bite attacks as it has heads" (one: click more)
-  if (!out.length) for (const m of t.matchAll(new RegExp(String.raw`\b` + num + String.raw`\s+(` + names.join('|') + String.raw`)\s+or\s+(?:` + names.join('|') + String.raw`)\s+attacks?\b|\bas many (` + names.join('|') + String.raw`) attacks\b`, 'gi'))) {
+  // "two Javelin or Morningstar attacks" (each either); "as many Bite attacks as it has heads" (one: click more)
+  if (!out.length) for (const m of t.matchAll(new RegExp(String.raw`\b` + num + String.raw`\s+(` + names.join('|') + String.raw`)\s+or\s+(` + names.join('|') + String.raw`)\s+attacks?\b|\bas many (` + names.join('|') + String.raw`) attacks\b`, 'gi'))) {
     const n = m[1] ? WORDS[m[1].toLowerCase()] ?? (parseInt(m[1], 10) || 1) : 1;
-    const a = byName(m[2] ?? m[3] ?? ''); if (!a) continue;
-    for (let i = 0; i < Math.min(n, 8); i++) out.push(a);
+    const list = [m[2], m[3], m[4]].map((x) => (x ? byName(x) : undefined)).filter((x): x is { name: string; text: string } => !!x);
+    if (!list.length) continue;
+    for (let i = 0; i < Math.min(n, 8); i++) out.push(either(list));
   }
   // "…and it uses Dreadful Glare"
   if (out.length) for (const m of t.matchAll(new RegExp(String.raw`\buses (` + names.join('|') + String.raw`)\b`, 'gi'))) { const a = byName(m[1]); if (a) out.push(a); }
   if (out.length) return out;
-  // "makes two attacks, using Scimitar or Shortbow in any combination"
-  const any = new RegExp(String.raw`\bmakes ` + num + String.raw`\s+(?:\w+\s+)?attacks?\b[^.]*?\b(` + names.join('|') + String.raw`)\b`, 'i').exec(t);
-  if (any) { const n = WORDS[any[1].toLowerCase()] ?? (parseInt(any[1], 10) || 1); const a = byName(any[2]); if (a) for (let i = 0; i < Math.min(n, 8); i++) out.push(a); }
+  // "makes two attacks, using Scimitar or Shortbow in any combination": each attack any of those it names
+  const any = new RegExp(String.raw`\bmakes ` + num + String.raw`\s+(?:\w+\s+)?attacks?\b([^.]*)`, 'i').exec(t);
+  if (any) {
+    const n = WORDS[any[1].toLowerCase()] ?? (parseInt(any[1], 10) || 1);
+    const said = [...any[2].matchAll(new RegExp(String.raw`\b(` + names.join('|') + String.raw`)\b`, 'gi'))].map((m) => byName(m[1])).filter((x): x is { name: string; text: string } => !!x);
+    const list = said.filter((a, i) => said.indexOf(a) === i);
+    if (list.length) for (let i = 0; i < Math.min(n, 8); i++) out.push(either(list));
+  }
   return out;
 }
 

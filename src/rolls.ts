@@ -54,6 +54,53 @@ export interface RollSpec {
   tempUp?: number;
   /** A spell (Magic Resistance counts), not a creature's ability. */
   spell?: boolean;
+  /** The spell it's from: its name, school, and whether it's a cantrip (for the caster's damage bonuses). */
+  spellName?: string; school?: string; cantrip?: boolean;
+}
+
+/**
+ * A caster's feature that adds an ability modifier to a spell's damage: Agonizing Blast (Charisma, to Eldritch
+ * Blast), Empowered Evocation (Intelligence, to Evocation spells), Elemental Affinity (Charisma, to spells of its
+ * dragon's damage type), Potent Spellcasting (Wisdom, to cantrips).
+ */
+export interface DamageBonus { name: string; ability: Ability; spells?: string[]; school?: string; type?: string; cantrip?: boolean }
+/** A dragon's colour as its damage type (Draconic Sorcery, a Dragonborn's ancestry). */
+const DRAGON_TYPES: Record<string, string> = { black: 'acid', copper: 'acid', blue: 'lightning', bronze: 'lightning', brass: 'fire', gold: 'fire', red: 'fire', green: 'poison', silver: 'cold', white: 'cold' };
+/** The damage bonuses a caster's statblock names (its features, by name; the sheet's own words where it has them). */
+export function bonusesOf(all: string): DamageBonus[] {
+  const out: DamageBonus[] = [];
+  const ag = /Agonizing Blast(?:\s*\(([^)]+)\))?/i.exec(all);
+  if (ag) out.push({ name: 'Agonizing Blast', ability: 'cha', spells: [(ag[1] && !/^\d|\/|day|rest/i.test(ag[1]) ? ag[1] : 'Eldritch Blast').trim().toLowerCase()] });
+  if (/Empowered Evocation/i.test(all)) out.push({ name: 'Empowered Evocation', ability: 'int', school: 'evocation' });
+  if (/Elemental Affinity/i.test(all)) {
+    const said = new RegExp(String.raw`(?:Elemental Affinity|Draconic (?:Ancestry|Sorcery|Bloodline|Ancestor))[^.\n]{0,60}?\b(acid|cold|fire|lightning|poison|black|copper|blue|bronze|brass|gold|red|green|silver|white)\b`, 'i').exec(all);
+    const w = said?.[1].toLowerCase();
+    const type = w ? DRAGON_TYPES[w] ?? w : undefined;
+    if (type) out.push({ name: 'Elemental Affinity', ability: 'cha', type });
+  }
+  if (/Potent Spellcasting/i.test(all)) out.push({ name: 'Potent Spellcasting', ability: 'wis', cantrip: true });
+  return out;
+}
+/** A school's name in full, lower case (5e.tools writes "V" for Evocation). */
+const schoolName = (v: string | undefined): string => {
+  const t = (v ?? '').trim().toLowerCase();
+  return ({ a: 'abjuration', c: 'conjuration', d: 'divination', e: 'enchantment', v: 'evocation', i: 'illusion', n: 'necromancy', t: 'transmutation' } as Record<string, string>)[t] ?? t;
+};
+/** Which of a caster's damage bonuses a spell gets, and how much (its ability modifier). */
+export function bonusesFor(spec: RollSpec, caster: Stats | null): { name: string; amount: number; type: string }[] {
+  if (!caster?.bonuses?.length || spec.spell === false || !spec.damage.length || spec.kind === 'heal') return [];
+  const out: { name: string; amount: number; type: string }[] = [];
+  for (const b of caster.bonuses) {
+    const amount = caster.mods[b.ability];
+    if (amount === undefined || amount === 0) continue;
+    if (b.spells && !b.spells.includes((spec.spellName ?? '').trim().toLowerCase())) continue;
+    if (b.school && schoolName(spec.school) !== b.school) continue;
+    if (b.cantrip && !spec.cantrip) continue;
+    const part = b.type ? spec.damage.find((d) => d.type === b.type) : spec.damage[0];
+    if (!part) continue;
+    out.push({ name: b.name, amount, type: part.type });
+  }
+  return out;
 }
 
 const DICE = String.raw`(\d+d\d+(?:\s*[+−–-]\s*\d+)?)`;
@@ -289,6 +336,8 @@ export interface Stats {
   hit?: number;
   /** Its proficiency bonus (given, or from its CR or level). */
   prof?: number;
+  /** Features that add to its spells' damage (Agonizing Blast, Empowered Evocation…). */
+  bonuses?: DamageBonus[];
   /** Legendary Resistance uses a day; Evasion; Magic Resistance (advantage on saves against spells). */
   legendary?: number;
   evasion?: boolean;
@@ -399,7 +448,12 @@ export function statsOf(fields: Record<string, unknown> | null | undefined, rawT
     s.dc ??= 8 + s.prof + best; s.hit ??= s.prof + best;
   }
   const extras = extrasOf(f, text, num(get('level')) ?? levelIn(String(get('class', 'classes') ?? '')));
+  // a Genie warlock's Genie's Wrath: its patron's damage type, as much as its proficiency bonus, once a turn on a hit
+  const genie = /Genie['’]s Vessel/i.test(all) ? /\b(Dao|Djinni|Efreeti|Marid)\b/i.exec(all) : null;
+  if (genie && s.prof) extras.push({ name: 'Genie’s Wrath', dice: String(s.prof), type: { dao: 'bludgeoning', djinni: 'thunder', efreeti: 'fire', marid: 'cold' }[genie[1].toLowerCase()] });
   if (extras.length) s.extras = extras;
+  const bonuses = bonusesOf(all);
+  if (bonuses.length) s.bonuses = bonuses;
   return s;
 }
 
@@ -494,7 +548,13 @@ function edgeOf(base: Edge, adv: string[], dis: string[]): { edge: Edge; note?: 
  * save for half, and half on a failure; Legendary Resistance can turn a failure (offered, not used).
  */
 export function rollAgainst(spec: RollSpec, caster: Stats | null, targets: Target[], opts: { level?: number | null; slot?: number | null; edge?: Edge; random?: () => number; casterConds?: readonly string[] } = {}): CastRoll {
-  const parts = damageAt(spec, opts.level, opts.slot);
+  const plainParts = damageAt(spec, opts.level, opts.slot);
+  // the caster's damage bonuses (Agonizing Blast +5): added to the damage of that type, shown by name
+  const plus = bonusesFor(spec, caster);
+  const parts = plainParts.map((p) => {
+    const add = plus.filter((b) => b.type === p.type).reduce((a, b) => a + b.amount, 0);
+    return add ? { ...p, dice: `${p.dice}${add > 0 ? '+' : ''}${add}` } : p;
+  });
   // on a creature missing hit points, its other die (Toll the Dead: as many d12s as it has d8s)
   const hurtParts = spec.hurt && parts.length ? [{ dice: parts[0].dice.replace(/d\d+/, `d${/d(\d+)/.exec(spec.hurt.dice)?.[1] ?? '12'}`), type: spec.hurt.type }, ...parts.slice(1)] : null;
   const partsOf = (t: Target) => (t.hurt && hurtParts ? hurtParts : parts);
@@ -504,7 +564,7 @@ export function rollAgainst(spec: RollSpec, caster: Stats | null, targets: Targe
     return { r, k: edge === 'advantage' ? Math.max(...r) : edge === 'disadvantage' ? Math.min(...r) : r[0] };
   };
   const slot = opts.slot && spec.level && opts.slot > spec.level ? opts.slot : undefined;
-  const dmgText = parts.map((p) => `${p.dice} ${p.type}`).join(' + ');
+  const dmgText = plainParts.map((p) => `${p.dice} ${p.type}`).join(' + ') + plus.map((b) => ` ${b.amount >= 0 ? '+' : '−'} ${Math.abs(b.amount)} (${b.name})`).join('');
   const magical = spec.spell !== false || !!spec.magic;
   const temp = tempAt(spec, opts.slot);
   const giveTemp = (): Partial<RollRow> => (temp ? { temp: rollDice(temp, false, opts.random).total } : {});
