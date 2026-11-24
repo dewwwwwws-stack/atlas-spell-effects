@@ -10,6 +10,7 @@ import { kitOf, PixiPainter, forgetBlobs, type AimLook } from './pixi';
 import { areaOf as atlasAreaOf, areaKey, effectFromArea, lookOf, areaCarries, atlasLightOf, toolShapeOf, AREA_LOOKS, LOOK_NAMES, LOOK_COLOURS, type AreaShape, type AreaLook } from './measures';
 import { moreOf, countAt, hasMore, type More } from './more';
 import { fiveEFile } from './fives';
+import { attackFile, MELEE_DEFAULTS, MELEE_NAMES, RANGED_DEFAULTS, RANGED_NAMES } from './attacks';
 import { paletteOf } from './elements';
 import { rollSpecOf, statsOf, rollAgainst, addExtra, type RollSpec, type CastRoll, type Edge, type Stats } from './rolls';
 import { IN_SPELL_ID, IN_SPELL, ROUND_SECS, idsOf, upFor, timeOf, secondsOf, spellConditions, type ConditionDef } from './conditions';
@@ -23,7 +24,7 @@ import { looksLikeItem, looksLikeSpell, looksLikeStatblock, spellFromNote } from
 import { loadSrd, splitNote, type SrdEdition } from './srd';
 import { lightOf, placedLights, adoptLook, lightKey, LIGHT_COLOUR, type EffectLight } from './lights';
 
-import { boxOf, dirTo, hitEffect, MOTIONS, MOTION_SPEEDS, motionOf, motionKey, snapCorner, placeOf, pxPerFoot, attachTo, detach, wallPieces, wallPoints, ringPoints, pathLength, within, controlsOf, stepSize, dragHandle, aims, CONE_ANGLE, coneLocal, type Box, type Effect, type Point, type Scale, type TokenAt } from './geometry';
+import { boxOf, wallThickness, dirTo, hitEffect, MOTIONS, MOTION_SPEEDS, motionOf, motionKey, snapCorner, placeOf, pxPerFoot, attachTo, detach, wallPieces, wallPoints, ringPoints, pathLength, within, controlsOf, stepSize, dragHandle, aims, CONE_ANGLE, coneLocal, type Box, type Effect, type Point, type Scale, type TokenAt } from './geometry';
 import { Painter, artInfo, instantMs, FADE_MS, paintHandles, drawnSample, moving, type Surface, type World, type Mapping } from './overlay';
 
 const ATLAS_VIEW = 'atlas-vtt';
@@ -80,6 +81,10 @@ interface Settings {
   /** Every spell's and ability's area goes through walls (each one's own choice aside). */
   throughWalls: boolean;
   atlasAreas: boolean;             // each spell one of Atlas's own areas too (Atlas 0.15 on)
+  /** Atlas Online view: only what online players see (Atlas's own areas, lights, conditions, tokens); no animations or drawn shapes. */
+  online: boolean;
+  /** Plain attacks animated (a sword's swing, an arrow), from the attacker to the target; and the defaults when no weapon's named. */
+  attackAnims: boolean; attackMelee: string; attackRanged: string;
   areas: Record<string, { map: string; effect: string; mine: boolean }>; // those areas (by their Atlas id), to take away with their spells
   roundSecs: Record<string, number>; // a round's length in seconds you set, for each game system (Atlas's preset id); 0: rounds only; none: the system's own
   marks: Mark[];                   // the conditions the add-on put on creatures (and takes off again)
@@ -109,7 +114,7 @@ function rowText(r: import('./rolls').RollRow, withDamage = true): string {
 /** A canvas, whichever window it's in (a popped-out one's too). */
 const isCanvas = (c: unknown): c is HTMLCanvasElement => !!c && typeof (c as Node).instanceOf === 'function' && (c as Node).instanceOf(HTMLCanvasElement);
 
-const DEFAULTS: Settings = { folders: '', autoClose: true, srdSpells: false, srdEdition: '2024', srdFolder: 'Combat+ SRD', rolling: false, rollWho: 'all', rollPost: false, above: 'none', legendary: {}, tempResource: 'Temp HP', animations: true, made: [], remember: {}, abilities: {}, lasting: [], snap: true, storage: 'Spell Storage', bases: [], presets: [], jb2aFolder: 'JB2A_DnD5e', jb2aOffer: true, noteSpells: true, orphanLights: [], coneAngle: 0, artTrim: {}, showAim: false, aimLook: 'outline', markCreatures: true, showRounds: true, atlasAreas: true, throughWalls: false, areas: {}, roundSecs: {}, marks: [], caught: [], recent: [] };
+const DEFAULTS: Settings = { folders: '', online: false, attackAnims: false, attackMelee: 'slash', attackRanged: 'arrow', autoClose: true, srdSpells: false, srdEdition: '2024', srdFolder: 'Combat+ SRD', rolling: false, rollWho: 'all', rollPost: false, above: 'none', legendary: {}, tempResource: 'Temp HP', animations: true, made: [], remember: {}, abilities: {}, lasting: [], snap: true, storage: 'Spell Storage', bases: [], presets: [], jb2aFolder: 'JB2A_DnD5e', jb2aOffer: true, noteSpells: true, orphanLights: [], coneAngle: 0, artTrim: {}, showAim: false, aimLook: 'outline', markCreatures: true, showRounds: true, atlasAreas: true, throughWalls: false, areas: {}, roundSecs: {}, marks: [], caught: [], recent: [] };
 
 /** A spell to pick in the cast window: a saved one, or a spell note (from a Base or found in the vault). */
 export interface Choice { key: string; name: string; source: 'stored' | 'note'; entry?: SpellEntry; stored?: StoredSpell; notePath?: string; /** A creature's ability from a statblock (Fire Breath), not a spell. */ ability?: boolean; /** Whose ability it is (its creature's name). */ owner?: string; /** A built-in SRD spell (no note of its own). */ srd?: boolean }
@@ -216,6 +221,7 @@ export default class AtlasSpellEffects extends Plugin {
     const flip = (id: string, name: string, get: () => boolean, set: (v: boolean) => void, said: (v: boolean) => string, after?: () => void) => this.addCommand({ id, name, callback: () => { void (async () => { set(!get()); await this.save(); this.wake(); after?.(); new Notice(`Combat+: ${said(get())}`); })(); } });
     flip('toggle-rolling', 'Rolling on or off', () => this.settings.rolling, (v) => { this.settings.rolling = v; }, (v) => `rolling ${v ? `on (${this.settings.rollWho === 'npcs' ? 'NPCs only' : 'everyone'})` : 'off'}.`, () => this.rescanStatblocks());
     this.addCommand({ id: 'rolling-who', name: 'Rolling for everyone or NPCs only', callback: () => { void (async () => { this.settings.rollWho = this.settings.rollWho === 'npcs' ? 'all' : 'npcs'; await this.save(); this.rescanStatblocks(); new Notice(`Combat+: rolling for ${this.settings.rollWho === 'npcs' ? 'NPCs only' : 'everyone'}${this.settings.rolling ? '' : ' (rolling is off)'}.`); })(); } });
+    flip('toggle-online', 'Atlas Online view on or off', () => this.settings.online, (v) => { this.settings.online = v; }, (v) => v ? 'Atlas Online view: only what online players see.' : 'Atlas Online view off: animations and drawn effects shown.');
     flip('toggle-effects', 'Spell effects (animations) on or off', () => this.settings.animations, (v) => { this.settings.animations = v; }, (v) => `spell effects ${v ? 'on' : 'off'}.`);
     flip('toggle-aim-preview', 'Show players the area while you aim, on or off', () => this.settings.showAim, (v) => { this.settings.showAim = v; }, (v) => `players ${v ? 'see' : 'don’t see'} the area while you aim.`);
     flip('toggle-walls', 'Areas go through walls, on or off', () => this.settings.throughWalls, (v) => { this.settings.throughWalls = v; }, (v) => `areas ${v ? 'go through' : 'stop at'} walls.`);
@@ -973,7 +979,16 @@ export default class AtlasSpellEffects extends Plugin {
       }
     }
     out.sort((a, b) => a.name.localeCompare(b.name) || (a.owner ?? '').localeCompare(b.owner ?? ''));
-    this.abilityChoices = out;
+    this.ownAbilities = out;
+    this.joinAbilities();
+  }
+  /** Creatures' abilities from your notes, and (built-in SRD on) the SRD's creatures', where you have none of that creature. */
+  private ownAbilities: Choice[] = [];
+  private srdAbilities: Choice[] = [];
+  private joinAbilities(): void {
+    const mine = new Set(this.ownAbilities.map((c) => (c.owner ?? '').toLowerCase()));
+    const srd = this.settings.srdSpells ? this.srdAbilities.filter((c) => !mine.has((c.owner ?? '').toLowerCase())) : [];
+    this.abilityChoices = [...this.ownAbilities, ...srd].sort((a, b) => a.name.localeCompare(b.name) || (a.owner ?? '').localeCompare(b.owner ?? ''));
     this.namesChanged();
   }
   /** Notes found to hold a statblock block when their text was read. */
@@ -1019,7 +1034,7 @@ export default class AtlasSpellEffects extends Plugin {
   /** The built-in SRD spells read again (on, off, or another edition). */
   async readSrd(): Promise<void> {
     const run = ++this.srdRun;
-    if (!this.settings.srdSpells) { this.srdChoices = []; this.namesChanged(); return; }
+    if (!this.settings.srdSpells) { this.srdChoices = []; this.srdAbilities = []; this.joinAbilities(); return; }
     let book; try { book = (await loadSrd())[this.settings.srdEdition]; } catch (e) { console.error('Combat+: the built-in SRD could not be read', e); return; }
     if (run !== this.srdRun || !book) return;
     const out: Choice[] = [];
@@ -1029,7 +1044,22 @@ export default class AtlasSpellEffects extends Plugin {
       out.push({ key: `srd:${this.settings.srdEdition}:${name.toLowerCase()}`, name, source: 'note', entry, srd: true });
     }
     this.srdChoices = out;
-    this.namesChanged();
+    // its creatures' abilities with an area (a breath, an aura, a burst): castable from the cast window too
+    const abil: Choice[] = [];
+    for (const [owner, md] of Object.entries(book.monsters)) {
+      const { fm } = splitNote(md, parseYaml);
+      for (const key of ['traits', 'actions', 'bonus_actions', 'reactions', 'legendary_actions']) {
+        const list = fm[key]; if (!Array.isArray(list)) continue;
+        for (const it of list) {
+          const o = (it ?? {}) as Record<string, unknown>;
+          const name = String(o['name'] ?? '').replace(/\s*\([^)]*\)\s*/g, ' ').trim();
+          const entry = name ? abilityEntry(name, String(o['desc'] ?? '')) : null; if (!entry || entry.plain) continue;
+          abil.push({ key: `${entry.key}@srd/${this.settings.srdEdition}/${owner}`, name, source: 'note', entry, ability: true, owner, srd: true });
+        }
+      }
+    }
+    this.srdAbilities = abil;
+    this.joinAbilities();
   }
 
   /**
@@ -1496,7 +1526,8 @@ export default class AtlasSpellEffects extends Plugin {
     // in Atlas's own canvas, under the tokens, where it can be; else over it (the overlay)
     let inCanvas = false;
     // (a spell drawn as Atlas's area alone has no animation: Atlas draws it)
-    const drawn = this.effects.filter((e) => !(e.draw === 'area' && e.measure));
+    // (Atlas Online view: none, as online players see none: only Atlas's own areas, lights and tokens; you still see where you aim)
+    const drawn = this.drawnNow();
     for (const t of this.atlasTabs()) {
       const kit = this.noCanvas.has(t.viewport) ? null : kitOf(t.viewport);
       let mine = drawn;
@@ -1598,10 +1629,16 @@ export default class AtlasSpellEffects extends Plugin {
   /** Effects whose light their Atlas area gives (so the add-on puts up none of its own). */
   private areaLight = new Set<string>();
 
+  /**
+   * The effects the add-on draws itself: not those Atlas draws (a spell that's only its area), and none in Atlas Online
+   * view (online players see none of them: only Atlas's own areas, lights and tokens).
+   */
+  drawnNow(): Effect[] { return this.settings.online ? [] : this.effects.filter((e) => !(e.draw === 'area' && e.measure)); }
+
   /** Whether a map tab's Atlas keeps areas (0.15 on) and the add-on is to use them. */
   areasOn(t: Tab): boolean {
     const st = t.store.getState?.();
-    return this.settings.atlasAreas && !!st && typeof st.addMeasure === 'function' && typeof st.deleteMeasure === 'function' && typeof st.updateMeasure === 'function' && !st.isPlayerView;
+    return (this.settings.atlasAreas || this.settings.online) && !!st && typeof st.addMeasure === 'function' && typeof st.deleteMeasure === 'function' && typeof st.updateMeasure === 'function' && !st.isPlayerView;
   }
 
   /** Atlas's light for an effect's area: as the add-on would put it up, in Atlas's words; null for none. */
@@ -1641,10 +1678,11 @@ export default class AtlasSpellEffects extends Plugin {
       const sc = this.scaleOf(t); const ppf = pxPerFoot(sc);
       const live = new Set<string>();
       for (const e of this.effects) {
-        if (e.map !== map || e.id.startsWith('preview') || e.draw === 'animation') continue;
+        // (one drawn as its animation alone has no Atlas area, except in Atlas Online view, where that's all there is)
+        if (e.map !== map || e.id.startsWith('preview') || (e.draw === 'animation' && !this.settings.online)) continue;
         const tok = e.token ? this.tokenOf(t, e.token) : null;
         if (e.token && !tok) continue;
-        const want = atlasAreaOf(e, boxOf(e, sc, tok));
+        const want = atlasAreaOf(e, boxOf(e, sc, tok), this.settings.online, e.shape === 'wall' ? { points: wallPoints(e, tok), width: wallThickness(e, sc, false) } : undefined);
         if (!want) continue;
         if (this.fitCone(e, t)) changed = true;
         // through walls, the GM's alone: as chosen in the cast window
@@ -1679,7 +1717,8 @@ export default class AtlasSpellEffects extends Plugin {
           // changed in Atlas: the spell takes its new shape, place, size and colour
           const moved = effectFromArea(e, m as unknown as AreaShape, ppf, sc.cell);
           if (moved) { Object.assign(e, moved); if (!moved.token) { delete e.token; delete e.offset; delete e.turn; } if (moved.dir === undefined) delete e.dir; }
-          const again = atlasAreaOf(e, boxOf(e, sc, e.token ? this.tokenOf(t, e.token) : null));
+          const tk2 = e.token ? this.tokenOf(t, e.token) : null;
+          const again = atlasAreaOf(e, boxOf(e, sc, tk2), this.settings.online, e.shape === 'wall' ? { points: wallPoints(e, tk2), width: wallThickness(e, sc, false) } : undefined);
           this.areaSeen.set(e.id, { ...seen, shape: areaKey(again ?? m) });
           changed = true;
           continue;
@@ -2385,6 +2424,9 @@ export default class AtlasSpellEffects extends Plugin {
         x.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); this.closeCaught(c.id); };
         if (!c.roll) { for (const k of c.tokens) card.createDiv({ cls: 'sfx-caught-row' }).createSpan({ cls: 'sfx-caught-name', text: k.name }); continue; }
         if (c.roll.damageText) card.createDiv({ cls: 'sfx-roll-dmg', text: c.roll.damageText });
+        // what a failed save (or a successful one) does besides damage: its own words
+        if (c.spec?.onFail) card.createDiv({ cls: 'sfx-roll-effect', text: `Failed: ${c.spec.onFail}` });
+        if (c.spec?.onSuccess) card.createDiv({ cls: 'sfx-roll-effect', text: `Saved: ${c.spec.onSuccess}` });
         const t3 = this.atlasTabs().find((x) => this.mapOf(x) === c.map);
         for (const r of c.roll.rows) {
           const row = card.createDiv({ cls: `sfx-caught-row sfx-roll-row is-${r.outcome}${r.applied ? ' is-applied' : ''}` });
@@ -3193,8 +3235,9 @@ export default class AtlasSpellEffects extends Plugin {
 
   /** A targeted spell's effect cast (a bolt: its animation in the length nearest the distance, fetched from JB2A the first time it's needed). */
   private castTarget(fx: Effect, pending: Pending): void {
-    // a plain attack: only its roll (afterTarget), nothing on the map
-    if (pending.plain) return;
+    // a plain attack: only its roll (afterTarget), nothing on the map (unless attacks are animated)
+    // (animated: an attack's swing or shot only, from the attacker; not a save at one creature)
+    if (pending.plain && !(this.settings.attackAnims && pending.area.target === 'bolt')) return;
     if (fx.bolt && pending.file) {
       const want = nearestLength(pending.file, this.files, fx.size / Math.max(1e-6, fromFeet(1)));
       void (async () => { if (want !== fx.file && await this.ensureFile(want)) { fx.file = want; this.indexVault(); } this.cast(fx); })();
@@ -3506,11 +3549,21 @@ export default class AtlasSpellEffects extends Plugin {
   }
   /** Obsidian's hotkeys, showing this add-on's commands. */
   openHotkeys(): void {
-    const setting = (this.app as unknown as { setting?: { open?: () => void; openTabById?: (id: string) => void; activeTab?: { searchComponent?: { setValue: (v: string) => void }; updateHotkeyVisibility?: () => void } } }).setting;
+    type Search = { setValue?: (v: string) => void; inputEl?: HTMLInputElement; onChanged?: () => void };
+    const setting = (this.app as unknown as { setting?: { open?: () => void; openTabById?: (id: string) => void; activeTab?: { searchComponent?: Search; searchInputEl?: HTMLInputElement; updateHotkeyVisibility?: () => void } } }).setting;
     try {
       setting?.open?.(); setting?.openTabById?.('hotkeys');
-      const tab = setting?.activeTab;
-      tab?.searchComponent?.setValue('Combat+'); tab?.updateHotkeyVisibility?.();
+      // the search typed in, as if by hand (setting its text alone doesn't filter the list): once the tab's drawn
+      window.setTimeout(() => {
+        try {
+          const tab = setting?.activeTab;
+          const input = tab?.searchComponent?.inputEl ?? tab?.searchInputEl ?? activeDocument.querySelector<HTMLInputElement>('.vertical-tab-content .search-input-container input, .vertical-tab-content input[type="search"]');
+          tab?.searchComponent?.setValue?.('Combat+');
+          if (input) { input.value = 'Combat+'; input.dispatchEvent(new Event('input', { bubbles: true })); input.focus(); }
+          tab?.searchComponent?.onChanged?.();
+          tab?.updateHotkeyVisibility?.();
+        } catch { /* the list as it is */ }
+      }, 60);
     } catch { new Notice('Combat+: open Settings → Hotkeys and search for “Combat+”.'); }
   }
   endAllHere(): void {
@@ -3967,6 +4020,16 @@ class CastModal extends Modal {
       // D&D 5e: the JB2A free pack's best fit for the spell (its own, else by what it is); other systems: by its name
       const five = !r && P.systemOf().startsWith('builtin:dnd5e') ? fiveEFile(c.name, entry?.descFull ?? entry?.desc, entry?.school, this.area, P.files) : null;
       this.file = entry?.plain ? undefined : r ? r.file : (five ?? defaultFor(c.name, this.area.shape, P.files, hintsOf(entry?.descFull, c.name)))?.path;
+      // a plain attack, animated (Settings → Animations for attacks): from the attacker to the target, its weapon's
+      // swing or shot (a magical one, its damage type's bolt), else the default for melee or ranged
+      if (entry?.plain === 'attack' && P.settings.attackAnims && !r) {
+        const text = entry.descFull ?? entry.desc ?? '';
+        const spec = rollSpecOf(text);
+        const ranged = !!spec && (!!spec.ranged || (spec.short !== undefined && spec.reach === undefined));
+        this.area = { shape: 'line', size: squares(6), width: square(), from: 'caster', lasting: false, target: 'bolt' };
+        const bolt = this.area;
+        this.file = attackFile(c.name, text, P.files, { melee: MELEE_DEFAULTS[P.settings.attackMelee] ?? '', ranged: RANGED_DEFAULTS[P.settings.attackRanged] ?? '' }, () => fiveEFile(c.name, text, undefined, bolt, P.files), ranged)?.path;
+      }
       if (r?.colour) this.colour = r.colour;
       this.colour2 = r?.colour2; this.alpha = r?.alpha; this.motion = r?.motion;
       // no animation (none fits, or JB2A's are off): drawn in what it's made of (Fire Bolt orange and flickering,
@@ -4509,7 +4572,6 @@ class EffectSettings extends PluginSettingTab {
   /** The tab drawn again (its counts and lists up to date). */
   private redraw(): void {
     const el = this.containerEl; el.empty();
-    el.createEl('p', { text: 'Combat+ for Atlas VTT: spell effects and areas on your Atlas maps (your screen and the player window), and D&D 5e rolls for spells, abilities and attacks. Cast with ✨ in Atlas’s toolbar, or from a statblock.' });
     for (const sec of this.sections()) {
       if (sec.heading) new Setting(el).setName(sec.heading).setHeading();
       for (const r of sec.rows) { const st = new Setting(el).setName(r.name); if (r.desc !== undefined) st.setDesc(r.desc); r.render(st); }
@@ -4634,9 +4696,17 @@ class EffectSettings extends PluginSettingTab {
     });
     game.push({ name: 'Snap to grid', desc: 'Areas land on the nearest grid corner, as the rules place them. Hold Alt to do the opposite once.', render: (st) => { st.addToggle((t) => t.setValue(s.snap).onChange((v) => { void (async () => { s.snap = v; await p.save(); })(); })); } });
     players.push(toggle('Show players the area while you aim', 'The player window shows where a spell will land before you cast it. Also in the ✨ button’s menu.', () => s.showAim, (v) => { s.showAim = v; }));
+    map.push({ name: 'Animations for attacks', desc: 'Plain attacks play an animation from the attacker to the target: the weapon its name says (a greatsword’s swing, a longbow’s arrow, a bite’s claw strike), or for a magical one (a mage’s Arcane Burst) the bolt of its damage type. Change one for good in its cast window (Shift-click its button) and Save.', render: (st) => { st.addToggle((t) => t.setValue(s.attackAnims).onChange((v) => { void (async () => { s.attackAnims = v; await p.save(); this.redraw(); })(); })); } });
+    if (s.attackAnims) {
+      map.push({ name: 'Default melee attack animation', desc: 'For a melee attack whose weapon isn’t named.', render: (st) => { st.addDropdown((d) => { for (const [k, v] of Object.entries(MELEE_NAMES)) d.addOption(k, v); d.setValue(s.attackMelee).onChange((v) => { void (async () => { s.attackMelee = v; await p.save(); })(); }); }); } });
+      map.push({ name: 'Default ranged attack animation', desc: 'For a ranged attack whose weapon isn’t named.', render: (st) => { st.addDropdown((d) => { for (const [k, v] of Object.entries(RANGED_NAMES)) d.addOption(k, v); d.setValue(s.attackRanged).onChange((v) => { void (async () => { s.attackRanged = v; await p.save(); })(); }); }); } });
+    }
     map.push(toggle('Spells as Atlas areas', 'Each spell is also one of Atlas’s own areas: lit, saved with the scene, stopped by walls and seen by online players. Move or delete it in Atlas and the spell follows.', () => s.atlasAreas, (v) => { s.atlasAreas = v; }));
     map.push({ name: 'Spells over tokens', desc: 'Draw spells under the tokens, or on top of them. Tokens can still be moved, and their bars and names stay on top either way.', render: (st) => { st.addDropdown((d) => d.addOption('none', 'Under the tokens').addOption('instant', 'Instant spells and bolts over them').addOption('all', 'All over them').setValue(s.above).onChange((v) => { void (async () => { s.above = v === 'all' || v === 'instant' ? v : 'none'; await p.save(); p.wake(); })(); })); } });
+    // (a row, so it shows however Obsidian draws the tab: from its definitions, or by display())
+    main.push({ name: 'Combat+ for Atlas VTT', desc: 'Spell effects and areas on your Atlas maps (your screen and the player window), and D&D 5e rolls for spells, abilities and attacks. Cast with ✨ in Atlas’s toolbar, or from a statblock.', render: () => { /* words only */ } });
     main.push({ name: 'Hotkeys', desc: 'Every Combat+ command can have a key: apply the latest damage, reroll, close cards, mark a player’s save, end effects, cast again, switch rolling or effects on and off, and more.', render: (st) => { st.addButton((b) => b.setButtonText('Set hotkeys').onClick(() => p.openHotkeys())); } });
+    main.push(toggle('Atlas Online view', 'Show only what online players see: Atlas’s own areas (with their Fire, Frost… looks), lights, conditions, terrain and summoned tokens. Animations and the add-on’s drawn shapes are hidden here and on the player window, since they never reach Atlas Online. Spells are made as Atlas areas while it’s on. You still see where you aim.', () => s.online, (v) => { s.online = v; }));
     main.push(toggle('Spell effects', 'Play animations for spells and abilities. Off: casting still places the area so you can see who it catches, and rolling, conditions and pushes still work.', () => s.animations, (v) => { s.animations = v; }));
     main.push({ name: 'Rolling (D&D 5e and 2024 only)', desc: `For D&D 5e (2014) and D&D 2024 only: other game systems aren’t supported yet.${p.systemOf() && !p.systemOf().startsWith('builtin:dnd5e') ? ' Your open map isn’t D&D 5e, so rolls there may be wrong.' : ''} Rolls spells, abilities and weapon attacks against the creatures they hit, using their statblocks, with the results on a card. Apply damage takes it off their HP (Ctrl+Z undoes it). Turns on Attack buttons in statblocks. NPCs only: player characters’ own attacks, spells and saves are left to their players (their saves get Saved and Failed buttons on the card).`, render: (st) => { st.addDropdown((d) => d.addOption('off', 'Off').addOption('npcs', 'NPCs only (players roll their own)').addOption('all', 'Everyone').setValue(!s.rolling ? 'off' : s.rollWho).onChange((v) => { void (async () => { s.rolling = v !== 'off'; if (v === 'npcs' || v === 'all') s.rollWho = v; await p.save(); p.wake(); p.rescanStatblocks(); this.redraw(); })(); })); } });
     if (s.rolling) {

@@ -1,7 +1,7 @@
 {
   "id": "atlas-spell-effects",
   "name": "Combat+ for Atlas VTT",
-  "version": "1.12.1",
+  "version": "1.13.0",
   "minAppVersion": "1.10.0",
   "description": "Spell effects, JB2A animations, areas and light on Atlas VTT maps, plus optional D&D 5e attack, save and damage rolls. Cast and attack from statblocks.",
   "author": "dew",

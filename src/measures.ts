@@ -33,8 +33,25 @@ const r1 = (v: number): number => Math.round(v * 10) / 10;
  * An effect's area as Atlas keeps it, from where it lies (its box, as the add-on draws it), or null for what has
  * no area of Atlas's (a wall, an effect on a creature, a bolt). `ppf`: world pixels a game unit.
  */
-export function areaOf(e: Effect, b: Box): AreaShape | null {
-  if (e.on || e.bolt || e.shape === 'wall' || e.outline) return null;
+export function areaOf(e: Effect, b: Box, all = false, wall?: { points: Point[]; width: number }): AreaShape | null {
+  // (a spell on a creature, or a bolt at one, has an Atlas area only when asked for all: Atlas Online view, so online
+  // players see it too: a circle round the creature, following it; a line from caster to target. So does a wall, as
+  // a line along it (a straight one), or a circle round it (a ring))
+  if (e.shape === 'wall' && all && wall && wall.points.length >= 2) {
+    const color = e.areaColour ?? (e.look && e.look in LOOK_COLOURS ? LOOK_COLOURS[e.look as AreaLook] : e.colour);
+    const ps = wall.points;
+    const ringish = e.closed || ps.length > 2 && Math.hypot(ps[0].x - ps[ps.length - 1].x, ps[0].y - ps[ps.length - 1].y) < wall.width * 2;
+    if (ringish || ps.length > 2) {
+      const cx = ps.reduce((a, p) => a + p.x, 0) / ps.length, cy = ps.reduce((a, p) => a + p.y, 0) / ps.length;
+      const r = Math.max(...ps.map((p) => Math.hypot(p.x - cx, p.y - cy)));
+      if (ringish) return { shape: 'circle', points: [{ x: r1(cx), y: r1(cy) }, { x: r1(cx + r), y: r1(cy) }], color };
+    }
+    // a straight wall (or the longest stretch of a bent one)
+    let a = ps[0], z = ps[1], best = 0;
+    for (let i = 1; i < ps.length; i++) { const l = Math.hypot(ps[i].x - ps[i - 1].x, ps[i].y - ps[i - 1].y); if (l > best) { best = l; a = ps[i - 1]; z = ps[i]; } }
+    return { shape: 'line', points: [{ x: r1(a.x), y: r1(a.y) }, { x: r1(z.x), y: r1(z.y) }], width: r1(wall.width), color };
+  }
+  if (((e.on || e.bolt) && !all) || e.shape === 'wall' || e.outline) return null;
   // the colour you gave the area in Atlas; else its look's own (as Atlas colours a look); else the spell's
   const color = e.areaColour ?? (e.look && e.look in LOOK_COLOURS ? LOOK_COLOURS[e.look as AreaLook] : e.colour);
   const dir = { x: Math.cos(b.rot), y: Math.sin(b.rot) };

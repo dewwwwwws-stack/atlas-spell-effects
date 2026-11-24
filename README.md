@@ -502,6 +502,14 @@ On a D&D 5e map, a spell with no animation saved picks the best fitting one from
 Only the pack's own animations are picked. Anything you pick and save for a spell stays yours. Other game systems
 pick by the spell's name, as before.
 
+## Atlas Online view
+Animations and the add-on's drawn shapes show on your screen and the player window, but never reach Atlas Online:
+online players only see Atlas's own areas, lights, conditions, terrain and tokens. Turn on **Atlas Online view** (at
+the top of the settings, or its hotkey command) to see exactly what they see. Spells are then made as Atlas areas,
+with their Fire, Frost… looks, and nothing else is drawn. You still see where you're aiming.
+In this view, spells on a creature also get an Atlas circle that follows it, bolts an Atlas line from caster to
+target, and walls an Atlas line along them (a circle for a ring), so online players see them too.
+
 ## Rolling attacks, saves and damage (D&D 5e and 2024 only)
 Rolling is for **D&D 5e (2014) and D&D 2024 only**. Other game systems aren't supported yet: their effects work,
 but leave rolling off.
@@ -590,6 +598,14 @@ token; take it off yourself.
 **Multiattack.** A statblock's Multiattack gets a **Use** button: click it, then click a target for each attack it
 makes, in turn. Where it offers a choice of attacks, the first is used.
 
+**Animations for attacks** (optional, Settings → On the map): plain attacks play an animation from the attacker
+to the target, by the weapon's name (a greatsword's swing, a longbow's arrow, a bite's claw strike). A magical one,
+like a mage's Arcane Burst, gets the bolt of its damage type. Attacks with no named weapon use the default you choose
+for melee and for ranged. Shift-click an attack's button to change its animation in the cast window, and Save.
+
+**What a save does besides damage** shows on the card, in the ability's own words: "Failed: The target has
+Disadvantage on Strength-based D20 Tests…".
+
 **Extra damage on a hit** (Sneak Attack, Divine Smite, Hex, Hunter's Mark): type it in the box on an attack's card,
 like `3d6` or `2d8 radiant`, and press **Add** (or Enter). It's rolled for each creature hit, doubled on a crit,
 and resisted like the rest. With no type given, it's the attack's own.
@@ -617,6 +633,9 @@ spells to the vault as notes*) writes:
 - **Spells** as spell notes you can edit, change the look of, or add to a Base.
 
 Notes already in the folder are never overwritten.
+
+With **Built-in SRD spells** on, every SRD creature's breath weapons, auras and bursts are also in the cast
+window's *Creature abilities*, with no notes needed. Your own note for a creature always comes first.
 
 *This plugin includes material from the System Reference Document 5.2.1 ("SRD 5.2.1") and the System Reference
 Document 5.1 ("SRD 5.1") by Wizards of the Coast LLC, available at https://www.dndbeyond.com/srd and

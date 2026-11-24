@@ -68,9 +68,30 @@ const SCHOOLS: Record<string, { colour: string; colour2: string; motion: string 
   evocation: { colour: '#ff8a2a', colour2: '#ffe0b0', motion: '' }, illusion: { colour: '#b388ff', colour2: '#efe4ff', motion: 'shimmer' },
   necromancy: { colour: '#6b3fa0', colour2: '#1e1230', motion: 'breathe' }, transmutation: { colour: '#c9a227', colour2: '#fff2c0', motion: 'breathe' },
 };
+const ABILITY_PALETTES: readonly [RegExp, { colour: string; colour2: string; motion: string }][] = [
+  [/\bsleep|\bslow|\bweaken|\brepuls|\bparaly/, { colour: '#c9b8ff', colour2: '#f4efff', motion: 'breathe' }],
+  [/\bpetrif|\bstone|\bgaze\b/, { colour: '#9e9e8e', colour2: '#e2e2d6', motion: 'shimmer' }],
+  [/\billuminat|\blight\b|\bglow/, { colour: '#ffcf6b', colour2: '#fff4cc', motion: 'flicker' }],
+  [/\bdark/, { colour: '#3a2a5c', colour2: '#120b20', motion: 'breathe' }],
+  [/\bstench|\bfetid|\btoxic|\bink\b|\bspore|\bnoxious/, { colour: '#6f8f2e', colour2: '#c4d68a', motion: 'breathe' }],
+  [/\bfear|\bfright|\bmoan|\bblasphem|\bturn defiance|\bwail|\bvisage|\bvile|\bhorr|\bterrif/, { colour: '#5b2a6e', colour2: '#c08ad6', motion: 'pulse' }],
+  [/\bgibber|\btelepath|\bsong\b|\bcharm|\bauthority|\blur/, { colour: '#e055c8', colour2: '#ffc4f2', motion: 'pulse' }],
+  [/\bdust|\bblind|\bshaking|\bsand\b|\bwhirlwind|\bground\b|\bstomp|\bquake/, { colour: '#c2a26b', colour2: '#efe2c4', motion: 'shimmer' }],
+  [/\bmetal|\brust\b/, { colour: '#b5652b', colour2: '#e8b48a', motion: '' }],
+];
+
 export function paletteOf(name: string, text: string | undefined, school?: string): { colour: string; colour2: string; motion: string } | null {
   if (/\bregains?\b[^.]*\bhit points\b/i.test(String(text ?? ''))) return { colour: '#5fd35f', colour2: '#e2ffd8', motion: 'breathe' };   // healing
   const e = elementsOf(name, text)[0];
   if (e) return PALETTE[e];
-  return SCHOOLS[String(school ?? '').trim().toLowerCase()] ?? null;
+  // what a creature's ability does, where it deals no damage (a sleeping breath, a petrifying gaze, a stench…)
+  // (a spell by its name alone: its text says "dim light" or "darkness" in passing; a creature's ability by both)
+  const n = (school ? name : `${name} ${String(text ?? '').slice(0, 400)}`).toLowerCase();
+  for (const [re, pal] of ABILITY_PALETTES) if (re.test(n)) return pal;
+  const sc = SCHOOLS[String(school ?? '').trim().toLowerCase()];
+  if (sc) return sc;
+  // a creature's ability of plain force (a wing buffet, a thrown boulder, a burst of something chosen): pale, like
+  // dust and air
+  if (school === undefined && /\b(?:bludgeoning|piercing|slashing|damage)\b/i.test(String(text ?? ''))) return { colour: '#d8d2c4', colour2: '#f6f3ec', motion: 'shimmer' };
+  return null;
 }

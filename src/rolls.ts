@@ -29,6 +29,8 @@ export interface RollSpec {
   hurt?: DamagePart;
   /** The damage type the higher slot adds to (else the first). */
   upcastType?: string;
+  /** What else a failed save, or a successful one, does (beyond its damage), as its text says: shown on its card. */
+  onFail?: string; onSuccess?: string;
   /** A weapon attack made with the spell (Booming Blade): the weapon's damage is yours to add on its card. */
   weapon?: boolean;
   /** Healing (Cure Wounds): `damage[0]` is the dice healed (no type), plus the caster's spellcasting modifier. */
@@ -134,7 +136,7 @@ export function rollSpecOf(text: string | undefined): RollSpec | null {
     if (damage.length >= 3) break;
   }
   // a type you choose: "6d6 damage of the chosen type" (no resistance can be judged)
-  if (!damage.length && (m0 = new RegExp(DICE + String.raw`\s+damage of (?:the|a|that) (?:chosen )?type`, 'i').exec(t))) damage.push({ dice: clean(m0[1]), type: '' });
+  if (!damage.length && (m0 = new RegExp(DICE + String.raw`\s*\)?\s+damage of (?:the|a|that|your) (?:chosen |same )?(?:type|kind)\b`, 'i').exec(t))) damage.push({ dice: clean(m0[1]), type: '' });
   // a weapon's hit, as players' sheets and 2024 statblocks write it: "Hit: 1d6-1 Bludgeoning", "Hit: 30 Bludgeoning
   // damage", "Hit: 1d8 + 3 piercing plus 1d6 fire"
   const hit = /\bHit:\s*([^]*?)(?=\.\s+(?:[A-Z][a-z]+:|Mastery\b|If\b|The\b|On\b)|$)/i.exec(t)?.[1] ?? '';
@@ -186,6 +188,15 @@ export function rollSpecOf(text: string | undefined): RollSpec | null {
   if ((m = new RegExp(String.raw`\b(?:gains?|gets?|has|have)\s+` + String.raw`(\d+d\d+(?:\s*\+\s*\d+)?|\d+)` + String.raw`\s+temporary hit points`, 'i').exec(t))) spec.temp = clean(m[1]);
   if ((m = /\b(\d+) (?:additional |more )?temporary hit points for each (?:spell )?slot level above (\d+)/i.exec(t))) { spec.tempUp = Number(m[1]); spec.level ??= Number(m[2]); }
   if (hurt) spec.hurt = hurt;
+  // what a failure or a success does besides damage ("Failure: … has Disadvantage on Strength-based D20 Tests";
+  // "On a failed save, the creature is frightened for 1 minute"): the words, for the card
+  if (spec.kind === 'save') {
+    const said = (re: RegExp) => { const m = re.exec(t); if (!m) return undefined; const w = m[1].trim(); const rest = w.replace(new RegExp(String.raw`\b\d+\s*\(\s*` + DICE + String.raw`\s*\)\s*\w*\s*damage\b|` + DICE + String.raw`\s+\w+\s+damage\b|\bhalf (?:as much )?damage\b|\btakes?\b`, 'gi'), '').replace(/[^A-Za-z]+/g, ' ').trim(); return rest.split(' ').length >= 4 ? (w.length > 240 ? `${w.slice(0, 237).trimEnd()}…` : w) : undefined; };
+    const f = said(/\bFailure:\s*([^]*?)(?=\s*(?:Success:|Failure or Success:|First Failure:|Second Failure:)|$)/i) ?? said(/\bOn a failed save,\s*([^.]*\.(?:[^.]*\.)?)/i) ?? said(/\bor (be(?:come)? [^.]*|have the [^.]* condition[^.]*)\./i);
+    const s2 = said(/\bSuccess:\s*([^]*?)(?=\s*(?:Failure or Success:)|$)/i) ?? said(/\bOn a successful save,\s*([^.]*\.)/i);
+    if (f) spec.onFail = f;
+    if (s2) spec.onSuccess = s2;
+  }
   // a smite, cast as you hit ("As you hit the target, it takes an extra 1d6 Fire damage from the attack"): its damage,
   // no roll of its own (a save after it is for what lasts)
   if (/\bextra (?:\d+\s*\(\s*)?\d+d\d+\)?\s*\w*\s*damage from the attack\b|\bAs you hit\b|\btakes an extra\b[^.]*\bfrom the attack\b/i.test(t) && spec.kind !== 'attack') { spec.kind = 'damage'; delete spec.save; delete spec.dc; delete spec.half; }

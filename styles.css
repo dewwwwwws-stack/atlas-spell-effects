@@ -280,3 +280,6 @@ canvas.sfx-cursor-move{cursor:move}
 .sfx-roll-extra { display: flex; gap: var(--size-4-1); flex: 1 0 100%; }
 .sfx-roll-extra-input { flex: 1 1 auto; min-width: 0; font-size: var(--font-ui-smaller); }
 .sfx-roll-extra-input.is-bad { border-color: var(--text-error); }
+
+/* what a failed (or successful) save does besides damage, on its card */
+.sfx-roll-effect { font-size: var(--font-ui-smaller); color: var(--text-muted); line-height: 1.35; margin: 2px 0 4px; }
