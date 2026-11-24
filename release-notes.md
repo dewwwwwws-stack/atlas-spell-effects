@@ -1,9 +1,6 @@
-## New
-
-- **Explain the buttons on open statblocks** (a command). Lists every open statblock's entries, whether each got a Cast, Attack or Use button, and if not, why: rolling off, attack animations off, no attack found in its text, and so on. Copy it to send with a bug report.
-
 ## Fixes
 
-- **Attack animations now download before they play.** A melee attack's JB2A animation (a spear's thrust, a greatsword's swing) that wasn't in the vault yet played as a plain coloured square. It's now fetched from JB2A first.
-- **Statblocks on Atlas's DM screen** find their own creature by their note. Before, with rolling set to NPCs only, a statblock there could be taken for whichever token was selected (a player's), and its attacks got no buttons.
-- **One awkward entry no longer stops a statblock's other buttons.** If something goes wrong reading one entry, the rest still get their buttons, and the problem is shown in the console and in the Explain command.
+- **Statblocks from Fantasy Statblocks notes now get their buttons** (the Warrior Commander, the Warrior Veteran). Atlas puts a hidden "Edit" label on each name and text of such a statblock, and sets the name right against its text, so Combat+ read "GreatswordEdit trait name" and found no attack. It now reads the text as it shows on screen.
+- **Edit an attack's animation.** With animations for attacks on, an attack's button menu now has **Edit animation…**: pick the animation in the cast window and Save. It's used for every attack of that name from then on, Multiattacks included. Before, there was no way to open it, and a saved one was ignored.
+- **Attack animations picked by name, much more often.** Every attack in the SRD (2014 and 2024) and the full bestiary was checked: about 9,000 attacks. Bites now get a bite, slams and tails a heavy blow, crab pincers a pincer, flails and morningstars a flail, sickles and hooks a sickle, battleaxes a battleaxe, whips, vines and tongues a lash, touches an unarmed strike, branches and lutes a club, and so on. Only about 1 in 100 attacks still falls back to your default (nets, garrotes and the odd one-off).
+- **Players' weapons get the right animation too.** Every SRD and PHB weapon on the character sheet was checked, plus magic weapons and your players' own gear. A magic weapon with its own name (Blade of the Chosen, Dwarven Thrower, Focus Breaker) now plays its base weapon's animation, because the updated character sheet says what it is ("*Greatsword · Melee:*"). Unarmed Strikes get a plain punch (a glowing one only if it deals magic damage), laser and antimatter guns a laser, and the hoopak's ranged attack a sling stone. Magic weapons like a Lightning Launcher now fire the bolt of their damage type.

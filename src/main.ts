@@ -784,7 +784,8 @@ export default class AtlasSpellEffects extends Plugin {
       const r = rollSpecOf(x.text); if (!r) return null;
       // animated attacks: each its own weapon's swing or shot
       const ranged = !!r.ranged || (r.short !== undefined && r.reach === undefined);
-      const file = this.settings.attackAnims ? attackFile(x.name, x.text, this.files, { melee: MELEE_DEFAULTS[this.settings.attackMelee] ?? '', ranged: RANGED_DEFAULTS[this.settings.attackRanged] ?? '' }, () => fiveEFile(x.name, x.text, undefined, { shape: 'line', size: squares(6), width: square(), from: 'caster', lasting: false, target: 'bolt' }, this.files), ranged)?.path : undefined;
+      const saved = this.settings.abilities[this.abilityKey(x.name)]?.file;
+      const file = this.settings.attackAnims ? saved ? saved : attackFile(x.name, x.text, this.files, { melee: MELEE_DEFAULTS[this.settings.attackMelee] ?? '', ranged: RANGED_DEFAULTS[this.settings.attackRanged] ?? '' }, (said) => fiveEFile(x.name, said, undefined, { shape: 'line', size: squares(6), width: square(), from: 'caster', lasting: false, target: 'bolt' }, this.files), ranged)?.path : undefined;
       return { name: x.name, roll: { ...r, spell: false }, ...(file ? { file } : {}) };
     };
     for (const x of link.multi) {
@@ -942,7 +943,7 @@ export default class AtlasSpellEffects extends Plugin {
         menu.addItem((i) => i.setTitle(`No one within ${p.range} ${unitLabel()}`).setIcon('crosshair').setDisabled(true));
       }
     }
-    if (!p.plain) menu.addItem((i) => i.setTitle('Edit look…').setIcon('palette').onClick(() => { m.casterToken = tok?.id; m.open(); }));
+    if (!p.plain || (this.settings.attackAnims && link.attack && !link.multi?.length)) menu.addItem((i) => i.setTitle(p.plain ? 'Edit animation…' : 'Edit look…').setIcon('palette').onClick(() => { m.casterToken = tok?.id; m.open(); }));
     menu.showAtPosition({ x: how.x, y: how.y }, how.statblock.ownerDocument);
     (field(menu, 'dom') as HTMLElement | undefined)?.addClass?.('sfx-sb-menu');
   }
@@ -4237,13 +4238,14 @@ class CastModal extends Modal {
       this.file = entry?.plain ? undefined : r ? r.file : (five ?? defaultFor(c.name, this.area.shape, P.files, hintsOf(entry?.descFull, c.name)))?.path;
       // a plain attack, animated (Settings → Animations for attacks): from the attacker to the target, its weapon's
       // swing or shot (a magical one, its damage type's bolt), else the default for melee or ranged
-      if (entry?.plain === 'attack' && P.settings.attackAnims && !r) {
+      // (one saved for it, Edit animation… then Save: that one, for every statblock's attack of this name)
+      if (entry?.plain === 'attack' && P.settings.attackAnims) {
         const text = entry.descFull ?? entry.desc ?? '';
         const spec = rollSpecOf(text);
         const ranged = !!spec && (!!spec.ranged || (spec.short !== undefined && spec.reach === undefined));
         this.area = { shape: 'line', size: squares(6), width: square(), from: 'caster', lasting: false, target: 'bolt' };
         const bolt = this.area;
-        this.file = attackFile(c.name, text, P.files, { melee: MELEE_DEFAULTS[P.settings.attackMelee] ?? '', ranged: RANGED_DEFAULTS[P.settings.attackRanged] ?? '' }, () => fiveEFile(c.name, text, undefined, bolt, P.files), ranged)?.path;
+        this.file = r?.file ?? attackFile(c.name, text, P.files, { melee: MELEE_DEFAULTS[P.settings.attackMelee] ?? '', ranged: RANGED_DEFAULTS[P.settings.attackRanged] ?? '' }, (said) => fiveEFile(c.name, said, undefined, bolt, P.files), ranged)?.path;
       }
       if (r?.colour) this.colour = r.colour;
       this.colour2 = r?.colour2; this.alpha = r?.alpha; this.motion = r?.motion;

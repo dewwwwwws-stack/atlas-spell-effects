@@ -118,6 +118,18 @@ const ROW = 'sfx-sb-row';
 /** What's left between a list's spells once each has its own line: commas, "and", "or". */
 const SEP = /^[\s,;]*(?:\b(?:and|or)\b)?[\s,;]*$/i;
 const LIST = '.atlas-sb-spell-list, .atlas-sb-spell-header, .atlas-sb-spells-block';
+/** Text no one sees: a hidden label (Atlas's "Edit trait name" on an editable statblock), the add-on's own buttons. */
+const UNSEEN = '[hidden], [aria-hidden="true"], .sr-only, .visually-hidden';
+/** An element's text as it reads on screen: without its hidden labels ("GreatswordEdit trait name" is "Greatsword"). */
+export function shownText(n: Node | null | undefined): string {
+  if (!n) return '';
+  if (n.nodeType === 3) return (n as Text).data;
+  if (n.nodeType !== 1 && n.nodeType !== 11) return '';
+  if (n.nodeType === 1 && ((n as Element).matches(UNSEEN) || (n as Element).classList.contains(CAST_BTN))) return '';
+  let out = '';
+  for (const c of Array.from(n.childNodes)) out += shownText(c);
+  return out;
+}
 const HL = 'sfx-spell';
 /** The Cast button's class (its word is drawn by CSS, so it's no text of the statblock's). */
 export const CAST_BTN = 'sfx-sb-cast';
@@ -236,7 +248,7 @@ export class StatblockLinker {
         const display = new Map<Element, string>();
         for (let n = walker.nextNode() as Text | null; n; n = walker.nextNode() as Text | null) {
           const text = n.data; if (text.trim().length < 3) continue;
-          const host = n.parentElement; if (!host || host.closest('input, textarea, [contenteditable=true], ' + OWN)) continue;
+          const host = n.parentElement; if (!host || host.closest('input, textarea, [contenteditable=true], ' + UNSEEN + ', ' + OWN)) continue;
           // a spell list, or a paragraph about spellcasting: the block the name is in (Atlas sets a trait's text in
           // spans and links, inside a block of its own)
           const unit = host.closest(LIST) ?? this.blockOf(host, sb, display);
@@ -246,7 +258,7 @@ export class StatblockLinker {
             // or under a heading or label about spells ("Spells", "Cantrips", a "Magic" tab); or, not under one about
             // gear, a name that is the whole of its block (a chip, a list item, a table cell, an entry's heading) in a
             // statblock that has spells, or a run of spell names ("Magic Initiate: Fire Bolt, Mage Hand")
-            const t = unit.textContent ?? '';
+            const t = shownText(unit);
             const kind = this.kindOf(unit, sb, kinds);
             ok = !!unit.closest(LIST) || SPELL_TEXT.test(t) || kind === 'spell'
               || (kind !== 'gear' && ((spelly && !!names.exact(t)) || names.isRun(t)));
@@ -403,23 +415,24 @@ export class StatblockLinker {
       for (const tr of Array.from(sb.querySelectorAll<HTMLElement>('.atlas-sb-trait'))) {
         if (tr.matches('.atlas-sb-pane-entry-editor') || tr.closest(LIST)) continue;
         const nameEl = tr.querySelector(':scope > .atlas-sb-trait-name'); if (!nameEl) continue;
-        let own = tr.textContent ?? '';
+        // its name, then its text, a space between (Fantasy Statblocks-style entries set them side by side: "GreatswordMelee…")
+        let own = `${shownText(nameEl).trim()} ${Array.from(tr.childNodes).filter((c) => c !== nameEl).map(shownText).join('')}`;
         for (const li of Array.from(tr.querySelectorAll('li'))) {
-          const t = li.textContent ?? '', nm = lead(t);
+          const t = shownText(li), nm = lead(t);
           const first = Array.from(li.childNodes).find((c) => !(c.instanceOf(Element) && c.classList.contains(CAST_BTN)));
           const ae = nm ? abilityEntry(nm, t) : null;
           if (!nm || !first || !ae || (ae.plain && !this.attacks(sb))) continue;
           units.push({ anchor: first, name: nm, text: t }); own = own.replace(t, ' ');
         }
-        const nm = clean(nameEl.textContent ?? '');
+        const nm = clean(shownText(nameEl));
         if (nm && !/spellcasting/i.test(nm)) units.push({ anchor: nameEl, name: nm, text: own });
       }
       for (const blk of Array.from(sb.querySelectorAll<HTMLElement>('p, li'))) {
         if (blk.closest('.atlas-sb-trait, ' + LIST + ', ' + OWN)) continue;
         const el = Array.from(blk.children).find((c) => !c.classList.contains(CAST_BTN));
         if (!el || !el.matches('strong, em, b')) continue;
-        const t = blk.textContent ?? '', nm = clean(el.textContent ?? '');
-        if (nm.length < 3 || nm.length > 60 || !t.trimStart().startsWith((el.textContent ?? '').trim())) continue;
+        const t = shownText(blk), nm = clean(shownText(el));
+        if (nm.length < 3 || nm.length > 60 || !t.trimStart().startsWith(shownText(el).trim())) continue;
         units.push({ anchor: el, name: nm, text: t });
       }
       // its attacks, for a Multiattack to make
@@ -435,7 +448,7 @@ export class StatblockLinker {
           const link: SpellLink = { key: 'ability:multiattack', name: u.name, ability: u.text, multi: seq };
           if (prev?.instanceOf(Element) && prev.classList.contains(CAST_BTN)) { if (prev.classList.contains('is-ability')) { this.buttons.set(prev, link); keep.add(prev); } continue; }
           const parent = u.anchor.parentElement; if (!parent) continue;
-          keep.add(this.put(parent, u.anchor, link, u.anchor.textContent ?? u.name));
+          keep.add(this.put(parent, u.anchor, link, shownText(u.anchor) || u.name));
           continue;
         }
         const ae = abilityEntry(u.name, u.text);
@@ -450,7 +463,7 @@ export class StatblockLinker {
           continue;
         }
         const parent = u.anchor.parentElement; if (!parent) { why.push(`${u.name}: no button (nowhere to put it)`); continue; }
-        keep.add(this.put(parent, u.anchor, link, u.anchor.textContent ?? u.name));
+        keep.add(this.put(parent, u.anchor, link, shownText(u.anchor) || u.name));
         why.push(`${u.name}: ${link.attack ? 'Attack' : 'Use'} button`);
        } catch (e) { why.push(`${u.name}: ` + this.problem(u.name, e)); }
       }
@@ -499,7 +512,7 @@ export class StatblockLinker {
   private tidy(): void {
     for (const b of Array.from(this.doc.querySelectorAll<HTMLElement>('.' + CAST_BTN))) {
       const next = b.nextSibling;
-      if (next && bare(next.textContent ?? '').startsWith(bare(b.dataset.spell ?? '\u0000'))) continue;
+      if (next && bare(shownText(next)).startsWith(bare(b.dataset.spell ?? '\u0000'))) continue;
       const row = b.parentElement?.classList.contains(ROW) ? b.parentElement : null;
       b.remove();
       if (row) row.replaceWith(...Array.from(row.childNodes));
