@@ -63,7 +63,11 @@ export interface RollSpec {
  * Blast), Empowered Evocation (Intelligence, to Evocation spells), Elemental Affinity (Charisma, to spells of its
  * dragon's damage type), Potent Spellcasting (Wisdom, to cantrips).
  */
-export interface DamageBonus { name: string; ability: Ability; spells?: string[]; school?: string; type?: string; cantrip?: boolean }
+export interface DamageBonus { name: string; ability: Ability; spells?: string[]; school?: string; type?: string; cantrip?: boolean;
+  /** A type chosen by the player that the statblock doesn't say (Elemental Affinity): one of these, asked for once. */
+  choose?: string[] }
+/** Elemental Affinity's damage types. */
+export const AFFINITY_TYPES = ['acid', 'cold', 'fire', 'lightning', 'poison'];
 /** A dragon's colour as its damage type (Draconic Sorcery, a Dragonborn's ancestry). */
 const DRAGON_TYPES: Record<string, string> = { black: 'acid', copper: 'acid', blue: 'lightning', bronze: 'lightning', brass: 'fire', gold: 'fire', red: 'fire', green: 'poison', silver: 'cold', white: 'cold' };
 /** The damage bonuses a caster's statblock names (its features, by name; the sheet's own words where it has them). */
@@ -76,7 +80,7 @@ export function bonusesOf(all: string): DamageBonus[] {
     const said = new RegExp(String.raw`(?:Elemental Affinity|Draconic (?:Ancestry|Sorcery|Bloodline|Ancestor))[^.\n]{0,60}?\b(acid|cold|fire|lightning|poison|black|copper|blue|bronze|brass|gold|red|green|silver|white)\b`, 'i').exec(all);
     const w = said?.[1].toLowerCase();
     const type = w ? DRAGON_TYPES[w] ?? w : undefined;
-    if (type) out.push({ name: 'Elemental Affinity', ability: 'cha', type });
+    out.push({ name: 'Elemental Affinity', ability: 'cha', ...(type ? { type } : { choose: AFFINITY_TYPES }) });
   }
   if (/Potent Spellcasting/i.test(all)) out.push({ name: 'Potent Spellcasting', ability: 'wis', cantrip: true });
   return out;
@@ -96,6 +100,7 @@ export function bonusesFor(spec: RollSpec, caster: Stats | null): { name: string
     if (b.spells && !b.spells.includes((spec.spellName ?? '').trim().toLowerCase())) continue;
     if (b.school && schoolName(spec.school) !== b.school) continue;
     if (b.cantrip && !spec.cantrip) continue;
+    if (b.choose && !b.type) continue;
     const part = b.type ? spec.damage.find((d) => d.type === b.type) : spec.damage[0];
     if (!part) continue;
     out.push({ name: b.name, amount, type: part.type });
@@ -453,6 +458,8 @@ export function statsOf(fields: Record<string, unknown> | null | undefined, rawT
   if (genie && s.prof) extras.push({ name: 'Genie’s Wrath', dice: String(s.prof), type: { dao: 'bludgeoning', djinni: 'thunder', efreeti: 'fire', marid: 'cold' }[genie[1].toLowerCase()] });
   if (extras.length) s.extras = extras;
   const bonuses = bonusesOf(all);
+  // Elemental Affinity's type unsaid: the one of its types it resists (the 2024 feature gives that resistance)
+  for (const b of bonuses) if (b.choose && !b.type) { const r = s.resist.filter((x) => b.choose!.includes(x)); if (r.length === 1) { b.type = r[0]; delete b.choose; } }
   if (bonuses.length) s.bonuses = bonuses;
   return s;
 }

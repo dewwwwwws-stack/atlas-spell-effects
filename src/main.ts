@@ -70,6 +70,8 @@ interface Settings {
   rollPost: boolean;
   /** Legendary Resistance used, by map and token ("map|token"): reset by hand on the card. */
   legendary: Record<string, number>;
+  /** Choices a statblock doesn't say, asked for once: "<note>|Elemental Affinity" → "fire". */
+  chosen?: Record<string, string>;
   /** The name of the Atlas resource that holds temporary hit points (a bar, once it's added in Atlas). */
   tempResource: string;
   /** Play animations (off: spells are their areas only, rolls and all else the same). */
@@ -210,6 +212,11 @@ export default class AtlasSpellEffects extends Plugin {
     this.addCommand({ id: 'end', name: 'End a lasting effect…', callback: () => new EndModal(this.app, this).open() });
     this.addCommand({ id: 'end-all', name: 'End every lasting effect on this map', callback: () => this.endAllHere() });
     this.addCommand({ id: 'snap', name: 'Snap effects to the grid on or off', callback: () => { void this.toggleSnap(); } });
+    this.addCommand({ id: 'forget-choices', name: 'Forget chosen damage types (Elemental Affinity…)', callback: () => {
+      const n = Object.keys(this.settings.chosen ?? {}).length;
+      this.settings.chosen = {}; this.saveSoon();
+      new Notice(n ? `Combat+: forgot ${n} chosen damage type${n === 1 ? '' : 's'}. You'll be asked again.` : 'Combat+: nothing chosen yet.');
+    } });
     this.addCommand({ id: 'apply-all', name: 'Apply damage from every card (the whole turn)', checkCallback: (checking) => {
       const t = this.atlasTab(); const map = t ? this.mapOf(t) : null;
       const ok = this.settings.caught.some((x) => x.map === map && this.hasToApply(x));
@@ -2364,6 +2371,32 @@ export default class AtlasSpellEffects extends Plugin {
    * The cards of creatures hit by instant spells, over each map they're on (yours only). Kept in the tab's own
    * frame, outside Atlas's map (whose pointer handling would take the clicks), over its top right.
    */
+  /**
+   * A caster's damage bonus whose type its statblock doesn't say (Elemental Affinity): the type chosen for it before,
+   * else asked for, once, when it casts a spell that could get it.
+   */
+  private async chooseBonuses(t: Tab, by: string, caster: Stats, spec: RollSpec): Promise<void> {
+    const tok = t.store.getState()?.objects?.tokens?.[by] as Record<string, unknown> | undefined;
+    const who = String(tok?.statblockPath ?? tok?.notePath ?? tok?.name ?? by);
+    for (const b of caster.bonuses ?? []) {
+      if (!b.choose || b.type) continue;
+      const key = `${who}|${b.name}`;
+      let got = this.settings.chosen?.[key];
+      if (!got && spec.spell !== false && spec.damage.some((d) => b.choose!.includes(d.type))) {
+        const name = String(tok?.name ?? 'This caster');
+        got = await new Promise<string | undefined>((done) => {
+          let picked = false;
+          const m = new SrdPicker(this.app, b.choose!.map((x) => x[0].toUpperCase() + x.slice(1)), (x) => { picked = true; done(x.toLowerCase()); });
+          m.setPlaceholder(`${name}'s ${b.name}: which damage type? (asked once)`);
+          const close = typeof m.onClose === 'function' ? m.onClose.bind(m) : () => undefined;
+          m.onClose = () => { close(); window.setTimeout(() => { if (!picked) done(undefined); }, 50); };
+          m.open();
+        });
+        if (got) { this.settings.chosen = { ...(this.settings.chosen ?? {}), [key]: got }; this.saveSoon(); }
+      }
+      if (got) { b.type = got; delete b.choose; }
+    }
+  }
   /** A creature's statblock numbers (AC, saves, resistances, its spell DC): from its note's properties and statblock. */
   async statsOfToken(t: Tab, id: string | undefined): Promise<Stats | null> {
     if (!id) return null;
@@ -2394,6 +2427,7 @@ export default class AtlasSpellEffects extends Plugin {
   }
   private async rollOnNow(t: Tab, id: string, name: string, spec: RollSpec, ids: string[], by: string | undefined, edge: Edge, slot?: number): Promise<CastRoll | null> {
     const caster = await this.statsOfToken(t, by);
+    if (caster) await this.chooseBonuses(t, by!, caster, spec);
     const c0 = by ? this.tokenOf(t, by) : null, ppf = pxPerFoot(this.scaleOf(t));
     const map = this.mapOf(t);
     const targets = await Promise.all(ids.map(async (k) => {

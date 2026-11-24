@@ -436,6 +436,17 @@ export class StatblockLinker {
         const lead = /^[\s,;]+/.exec(t.data)?.[0] ?? '';
         const tail = /[\s,;]+$/.exec(t.data.slice(lead.length))?.[0] ?? '';
         const body = t.data.slice(lead.length, t.data.length - tail.length);
+        // a note in brackets just after a spell ("(ritual)", "(1/day, Magic Initiate)"): on that spell's line
+        let before: ChildNode | null = t.previousSibling;
+        while (before instanceof HTMLElement && before.classList.contains('sfx-sb-sep')) before = before.previousSibling;
+        if (body.startsWith('(') && before instanceof HTMLElement && before.classList.contains(ROW) && !before.classList.contains('is-plain')) {
+          const note = host.createSpan({ cls: 'sfx-sb-note' });
+          note.append(' ' + body);
+          before.append(note);
+          t.data = tail;
+          if (tail) { const s2 = host.createSpan({ cls: 'sfx-sb-sep' }); host.insertBefore(s2, t); s2.append(t); } else t.remove();
+          continue;
+        }
         const rest = host.createSpan({ cls: ROW + ' is-plain' });
         host.insertBefore(rest, t);
         if (lead) { const s1 = host.createSpan({ cls: 'sfx-sb-sep' }); s1.append(lead); host.insertBefore(s1, rest); }

@@ -212,6 +212,7 @@ canvas.sfx-cursor-move{cursor:move}
 .sfx-sb-cols .sfx-sb-row.is-plain{margin-left:.25em}
 .sfx-sb-cols .sfx-sb-sep{display:none}
 .sfx-sb-cols .atlas-sb-spell-level{display:block;margin-bottom:2px}
+.sfx-sb-cols .sfx-sb-note{color:var(--text-muted,#999);white-space:pre}
 
 /* our part of Atlas's area window */
 .sfx-pop { display: flex; flex-direction: column; gap: 6px; }
