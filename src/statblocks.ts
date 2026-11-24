@@ -190,7 +190,24 @@ export class StatblockLinker {
 
   start(): void {
     const d = this.doc;
-    this.obs = new MutationObserver(() => this.soon());
+    // (only changes in or to a statblock: Atlas's page changes all the time elsewhere, and looking over every
+    // statblock again for each of those kept the add-on busy)
+    const about = (n: Node | null): boolean => {
+      if (!n) return false;
+      const el = n.nodeType === 1 ? n as Element : n.parentElement;
+      if (!el) return false;
+      if (el.classList?.contains(CAST_BTN)) return false;
+      // (never the page itself: Atlas marks <body> with a class naming statblocks while one's window is shown)
+      const c = el.closest?.(STATBLOCK);
+      return (!!c && c !== this.doc.body && c !== this.doc.documentElement) || (n.nodeType === 1 && n !== this.doc.body && !!(n as Element).querySelector?.(STATBLOCK));
+    };
+    this.obs = new MutationObserver((recs) => {
+      for (const r of recs) {
+        if (about(r.target) && !(r.type === 'childList' && [...r.addedNodes, ...r.removedNodes].every((x) => x.nodeType === 1 && (x as Element).classList.contains(CAST_BTN)))) { this.soon(); return; }
+        for (const x of r.addedNodes) if (x.nodeType === 1 && about(x)) { this.soon(); return; }
+        for (const x of r.removedNodes) if (x.nodeType === 1 && ((x as Element).matches?.(STATBLOCK) || (x as Element).querySelector?.(STATBLOCK))) { this.soon(); return; }
+      }
+    });
     this.watch();
     const opts = { capture: true } as AddEventListenerOptions;
     const move = (e: PointerEvent) => this.over(e);

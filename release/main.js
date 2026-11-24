@@ -22,7 +22,8 @@ var __toCommonJS = (mod2) => __copyProps(__defProp({}, "__esModule", { value: tr
 var main_exports = {};
 __export(main_exports, {
   cellsAcross: () => cellsAcross,
-  default: () => AtlasSpellEffects
+  default: () => AtlasSpellEffects,
+  storeMatters: () => storeMatters
 });
 module.exports = __toCommonJS(main_exports);
 var import_obsidian4 = require("obsidian");
@@ -212,13 +213,20 @@ var ABILITY_PALETTES = [
   [/\bfear|\bfright|\bmoan|\bblasphem|\bturn defiance|\bwail|\bvisage|\bvile|\bhorr|\bterrif/, { colour: "#5b2a6e", colour2: "#c08ad6", motion: "pulse" }],
   [/\bgibber|\btelepath|\bsong\b|\bcharm|\bauthority|\blur/, { colour: "#e055c8", colour2: "#ffc4f2", motion: "pulse" }],
   [/\bdust|\bblind|\bshaking|\bsand\b|\bwhirlwind|\bground\b|\bstomp|\bquake/, { colour: "#c2a26b", colour2: "#efe2c4", motion: "shimmer" }],
-  [/\bmetal|\brust\b/, { colour: "#b5652b", colour2: "#e8b48a", motion: "" }]
+  [/\bmetal|\brust\b/, { colour: "#b5652b", colour2: "#e8b48a", motion: "" }],
+  [/\bantimagic|\bnullif|\bdispel|\bsuppress/, { colour: "#8fa3b8", colour2: "#e4ecf4", motion: "shimmer" }],
+  [/\btime\b|\btemporal|\bchrono|\bstasis/, { colour: "#3fc1c9", colour2: "#f3e3a1", motion: "pulse" }],
+  [/\bwing\b|\bgust\b|\bwind\b|\bbuffet/, { colour: "#cfe3ee", colour2: "#ffffff", motion: "shimmer" }],
+  [/\bentangl|\bvines?\b|\bplants?\b|\broots?\b|\bthorns?\b/, { colour: "#4f8a2b", colour2: "#bfe08a", motion: "breathe" }],
+  [/\bblood\b/, { colour: "#a3151b", colour2: "#ff6b6b", motion: "pulse" }],
+  [/\bbravery|\bprotect|\binvulnerab|\bbolster|\brally|\binspir|\bmarshal|\bbattle cry\b/, { colour: "#ffd54a", colour2: "#fff6c8", motion: "breathe" }]
 ];
 function paletteOf(name, text, school) {
   if (/\bregains?\b[^.]*\bhit points\b/i.test(String(text ?? ""))) return { colour: "#5fd35f", colour2: "#e2ffd8", motion: "breathe" };
   const e = elementsOf(name, text)[0];
   if (e) return PALETTE[e];
   const n = (school ? name : `${name} ${String(text ?? "").slice(0, 400)}`).toLowerCase();
+  for (const [re, pal] of ABILITY_PALETTES) if (re.test(name.toLowerCase())) return pal;
   for (const [re, pal] of ABILITY_PALETTES) if (re.test(n)) return pal;
   const sc = SCHOOLS[String(school ?? "").trim().toLowerCase()];
   if (sc) return sc;
@@ -1591,7 +1599,8 @@ function abilityEntry(name, text) {
   const within3 = new RegExp(String.raw`\b(?:point|space|location|ground|creature|target)\b[^.]*?\bwithin (\d+)\s*-?\s*` + UNIT, "i").exec(t) ?? new RegExp(String.raw`\brange (\d+)(?:\/\d+)?\s*` + UNIT, "i").exec(t);
   const last = /\blasts? (?:for|until)\b|\b(?:until|during)\b[^.]*\b(?:that|the|this) (?:area|movement|emanation|cone|sphere|cube|cylinder|line|cloud|zone|aura)\b/i.test(t);
   const e = { key: "", name: nm, range: "", duration: last ? "Lasting" : "Instantaneous", descFull: t, ability: true };
-  const a = areaOf(e);
+  const attackFirst = /^(?:melee|ranged)(?: or ranged)?(?: weapon| spell)? attack(?: roll)?\s*:|^(?:melee|ranged)(?:, [^:]{0,40})?:\s*[+-]\d+ to hit/i.test(t);
+  const a = attackFirst ? null : areaOf(e);
   if (!a || !(a.size > 0)) {
     const r = rollSpecOf(t);
     const attack = !!r && r.kind === "attack" && r.bonus !== void 0 && (r.damage.length > 0 || !!r.after || /\bHit:/i.test(t));
@@ -2485,7 +2494,10 @@ var PixiPainter = class _PixiPainter {
         const t = Math.min(1, (now - e.started) / DRAWN_MS);
         a *= t < 0.18 ? t / 0.18 : t < 0.55 ? 1 : Math.max(0, 1 - (t - 0.55) / 0.45);
         const grow = t < 0.55 ? 0.15 + 0.85 * (t / 0.55) : 1;
-        for (const sp of it.sprites) sp.scale.set(e.shape === "cone" || e.shape === "line" ? grow : grow, e.shape === "cone" || e.shape === "line" ? 1 : grow);
+        for (const sp of it.sprites) {
+          const k0 = sp.sfxBase ?? { x: 1, y: 1 };
+          sp.scale.set(k0.x * grow, k0.y * (e.shape === "cone" || e.shape === "line" ? 1 : grow));
+        }
         animating = true;
       }
       let grown = 1;
@@ -2585,6 +2597,7 @@ var PixiPainter = class _PixiPainter {
         const padK = Math.max(b.w, b.h) * 0.08;
         sp2.width = b.w + padK * 2;
         sp2.height = b.h + padK * 2;
+        sp2.sfxBase = { x: sp2.scale.x, y: sp2.scale.y };
         it.node.addChild(sp2);
         it.sprites = [sp2];
       }
@@ -2858,7 +2871,9 @@ function lookOf(spell) {
   const given = (Array.isArray(spell.damageInflict) ? spell.damageInflict.map((d) => String(d ?? "")) : String(spell.damageInflict ?? "").split(/[^\p{L}]+/u)).filter(Boolean).map((d) => `${d} damage`).join(", ");
   if (/darkness/i.test(name) || /magical darkness/i.test(text)) return "shadow";
   if (/\b(fog|mist|cloud|smoke|steam)\b/i.test(name)) return "mist";
-  for (const e of [...given ? elementsOf("", given) : [], ...elementsOf(name, text)]) {
+  if (/\b(?:poison|noxious|toxic|sleep|slowing|weakening|paraly[sz]ing|repulsion|euphoria|stench|fetid|spores?|miasma|vapou?rs?|gas|dust)\b/i.test(name)) return "mist";
+  if (/\billuminat|\bradiance\b|\bluminous\b/i.test(name)) return "radiance";
+  for (const e of [...given ? elementsOf("", given) : [], .../\bdamage\b/i.test(text) ? elementsOf(name, text) : elementsOf(name, "")]) {
     const l = LOOKS[e];
     if (l) return l;
   }
@@ -2955,7 +2970,7 @@ var ABILITY_LOOKS = [
   [/\baberrant ground\b|\bmire\b|\bmud\b/, "1st_Level/Grease/"],
   [/\bdestroy metal\b|\brust\b/, "Generic/Impact/Impact_01"],
   [/\bwhirlwind\b/, "7th_Level/Whirlwind/"],
-  [/\bdeath burst\b|\bexplodes?\b|\bdeath throes\b/, "Generic/Explosion/"],
+  [/\bwing attack\b|\bwing buffet\b|\bwings? beat|\bgust\b|\bbuffet\b/, "TMFX/OutPulse/Circle/"],
   [/\bspittle\b|\bdust\b|\bsand\b/, "Generic/Smoke/SmokePuff01"],
   [/\bblasphemous\b|\bhorror\b|\bnimbus\b/, "Generic/Template/Circle/TemplateHorrorCircle"]
 ];
@@ -3187,8 +3202,8 @@ function fiveEFile(name, text, school, area, files) {
     if (f) return f;
   }
   const sc = String(school ?? "").trim().toLowerCase();
-  const kind = !area ? "on" : area.target === "bolt" ? "bolt" : area.target || area.self ? "on" : area.shape === "cone" ? "cone" : area.shape === "line" || area.shape === "wall" ? "line" : area.shape === "cube" ? "square" : area.shape === "emanation" ? "aura" : "burst";
-  const hurts = /\d+d\d+[^.]{0,60}?\b[a-z]+ damage\b/i.test(t);
+  const kind = !area ? "on" : area.target === "bolt" ? "bolt" : area.target || area.self ? "on" : area.shape === "cone" ? "cone" : area.shape === "line" || area.shape === "wall" ? "line" : area.shape === "cube" ? "square" : area.shape === "emanation" && (lasting2 || /\baura\b|\bpresence\b|\bnimbus\b|\bshroud\b|\bfield\b/.test(n)) ? "aura" : "burst";
+  const hurts = /\d+d\d+[^.]{0,60}?\b[a-z]+ damage\b/i.test(t) || /\b\d+(?:\s*\([^)]*\))?\s+[a-z]+ damage\b/i.test(t);
   bolt = kind === "bolt";
   if (!hurts && /(?<!can['’]?t |cannot )\bregains? (?:a number of |\d+(?:d\d+)?(?:\s*\+\s*\d+)? )?hit points\b|\brestores? [^.]*hit points\b/i.test(t)) {
     const f = own(kind === "aura" || kind === "burst" || kind === "square" ? "Generic/Healing/HealingAbility_02_Regular_GreenOrange" : "Generic/Healing/HealingAbility_01_Green");
@@ -3205,9 +3220,17 @@ function fiveEFile(name, text, school, area, files) {
   const els = hurts ? elementsOf(name, t) : [];
   let el = els[0];
   if (hurts && !el && /\b(?:bludgeoning|piercing|slashing)\s+damage\b/i.test(t)) el = /\b(?:earth|stone|rock|ground|rubble)\b/i.test(t) ? "earth" : "weapon";
+  if ((!el || el === "weapon") && /\bdeath burst\b|\bexplodes?\b|\bdeath throes\b/.test(n)) {
+    const f = own("Generic/Explosion/");
+    if (f) return f;
+  }
   if (el) {
     const p = BY_ELEMENT[el]?.[kind] ?? BY_ELEMENT[el]?.burst;
     const f = p ? own(p) : null;
+    if (f) return f;
+  }
+  if (/\bdeath burst\b|\bexplodes?\b|\bdeath throes\b/.test(n)) {
+    const f = own("Generic/Explosion/");
     if (f) return f;
   }
   if (kind === "on" || kind === "bolt") {
@@ -3595,7 +3618,30 @@ var StatblockLinker = class {
   }
   start() {
     const d = this.doc;
-    this.obs = new MutationObserver(() => this.soon());
+    const about = (n) => {
+      if (!n) return false;
+      const el = n.nodeType === 1 ? n : n.parentElement;
+      if (!el) return false;
+      if (el.classList?.contains(CAST_BTN)) return false;
+      const c = el.closest?.(STATBLOCK);
+      return !!c && c !== this.doc.body && c !== this.doc.documentElement || n.nodeType === 1 && n !== this.doc.body && !!n.querySelector?.(STATBLOCK);
+    };
+    this.obs = new MutationObserver((recs) => {
+      for (const r of recs) {
+        if (about(r.target) && !(r.type === "childList" && [...r.addedNodes, ...r.removedNodes].every((x) => x.nodeType === 1 && x.classList.contains(CAST_BTN)))) {
+          this.soon();
+          return;
+        }
+        for (const x of r.addedNodes) if (x.nodeType === 1 && about(x)) {
+          this.soon();
+          return;
+        }
+        for (const x of r.removedNodes) if (x.nodeType === 1 && (x.matches?.(STATBLOCK) || x.querySelector?.(STATBLOCK))) {
+          this.soon();
+          return;
+        }
+      }
+    });
     this.watch();
     const opts = { capture: true };
     const move = (e) => this.over(e);
@@ -4506,6 +4552,15 @@ function cellsAcross(size) {
   const s = typeof size === "number" && size > 0 ? size : 1;
   return Math.max(0.5, 2 * s - 1);
 }
+var onAlts = (e) => !!e.target?.closest?.(".sfx-alts");
+var STORE_KEYS = ["objects", "selectedIds", "grid", "isDMScreenOpen", "isPlayerView", "measureTool", "measurePopover", "lightPopover", "activeTool", "selectionMode", "mapPath", "currentCollectionId", "initiative"];
+function storeMatters(now, before) {
+  if (!now || !before || typeof now !== "object" || typeof before !== "object") return true;
+  const a = now, b = before;
+  for (const k of STORE_KEYS) if (a[k] !== b[k]) return true;
+  for (const k in a) if (/level/i.test(k) && typeof a[k] !== "function" && a[k] !== b[k]) return true;
+  return false;
+}
 var isCanvas = (c) => !!c && typeof c.instanceOf === "function" && c.instanceOf(HTMLCanvasElement);
 var DEFAULTS = { folders: "", online: false, attackAnims: false, attackMelee: "slash", attackRanged: "arrow", autoClose: true, srdSpells: false, srdEdition: "2024", srdFolder: "Combat+ SRD", rolling: false, rollWho: "all", rollPost: false, above: "none", legendary: {}, tempResource: "Temp HP", animations: true, made: [], remember: {}, abilities: {}, lasting: [], snap: true, storage: "Spell Storage", bases: [], presets: [], jb2aFolder: "JB2A_DnD5e", jb2aOffer: true, noJb2a: false, noteSpells: true, orphanLights: [], coneAngle: 0, artTrim: {}, showAim: false, aimLook: "outline", markCreatures: true, showRounds: true, atlasAreas: true, throughWalls: false, areas: {}, roundSecs: {}, marks: [], caught: [], recent: [] };
 function pickOpt(s, feet, choice) {
@@ -4763,6 +4818,7 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
       window.setTimeout(() => this.wake(), 120);
     }));
     this.registerInterval(window.setInterval(() => {
+      this.rects = /* @__PURE__ */ new WeakMap();
       this.wake();
       this.bars();
       this.linkStatblocks();
@@ -4817,8 +4873,8 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
     this.dragDocs.add(doc);
     const tabAt = (ev) => {
       for (const t of this.atlasTabs()) {
-        if (t.canvas.ownerDocument !== doc || t.canvas.offsetParent === null) continue;
-        const r = t.canvas.getBoundingClientRect();
+        if (t.canvas.ownerDocument !== doc || !t.canvas.isConnected || !this.sizeOf(t.canvas).w) continue;
+        const r = this.rectOf(t.canvas);
         if (ev.clientX < r.left || ev.clientY < r.top || ev.clientX > r.right || ev.clientY > r.bottom) continue;
         const under = doc.elementFromPoint(ev.clientX, ev.clientY);
         if (under !== t.canvas && !under?.closest?.(".sfx-layer")) continue;
@@ -4869,6 +4925,7 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
       const group = this.isPicked(fx.id) && this.selected.ids.length > 1 ? this.effects.filter((e) => this.isPicked(e.id) && e.id !== fx.id).map((e) => structuredClone(e)) : void 0;
       this.dragging = { tab: at.t, id: fx.id, start: at.p, startX: ev.clientX, startY: ev.clientY, orig: JSON.parse(JSON.stringify(fx)), moved: false, before: this.snapshot(), ...group ? { group } : {} };
     };
+    let hoverAt = null, hoverFrame = 0;
     const move = (ev) => {
       const d = this.dragging;
       if (!d && this.marquee) {
@@ -4878,21 +4935,27 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
       }
       if (!d) {
         if (ev.ctrlKey || ev.metaKey) {
-          const at2 = tabAt(ev);
-          if (at2) this.trackHover(at2.t, at2.p);
+          const at = tabAt(ev);
+          if (at) this.trackHover(at.t, at.p);
         }
         if (this.placing || !this.effects.length) return;
-        const at = tabAt(ev);
-        const over = !!at && !this.tokenAt(at.t, at.p) && !!this.effectAt(at.t, at.p);
-        if (over && at) {
-          if (!at.t.canvas.hasClass("sfx-cursor-move")) {
-            at.t.canvas.addClass("sfx-cursor-move");
-            this.cursorSet = at.t.canvas;
+        hoverAt = { clientX: ev.clientX, clientY: ev.clientY };
+        if (!hoverFrame) hoverFrame = (doc.defaultView ?? window).requestAnimationFrame(() => {
+          hoverFrame = 0;
+          const e2 = hoverAt;
+          if (!e2 || this.dragging) return;
+          const at = tabAt(e2);
+          const over = !!at && !this.tokenAt(at.t, at.p) && !!this.effectAt(at.t, at.p);
+          if (over && at) {
+            if (!at.t.canvas.hasClass("sfx-cursor-move")) {
+              at.t.canvas.addClass("sfx-cursor-move");
+              this.cursorSet = at.t.canvas;
+            }
+          } else if (this.cursorSet) {
+            this.cursorSet.removeClass("sfx-cursor-move");
+            this.cursorSet = null;
           }
-        } else if (this.cursorSet) {
-          this.cursorSet.removeClass("sfx-cursor-move");
-          this.cursorSet = null;
-        }
+        });
         return;
       }
       stopAll(ev);
@@ -6272,6 +6335,17 @@ ${text}`);
    * slows Atlas down. Read straight off the element where the browser has no ResizeObserver.
    */
   sizes = /* @__PURE__ */ new WeakMap();
+  /** Where an element is on the page, as last read (again after it's resized, and every couple of seconds). */
+  rects = /* @__PURE__ */ new WeakMap();
+  rectOf(el) {
+    this.sizeOf(el);
+    let r = this.rects.get(el);
+    if (!r) {
+      r = el.getBoundingClientRect();
+      this.rects.set(el, r);
+    }
+    return r;
+  }
   sizeOf(el, where = false) {
     let z = this.sizes.get(el);
     const RO = el.ownerDocument.defaultView?.ResizeObserver;
@@ -6280,6 +6354,7 @@ ${text}`);
       if (RO) {
         const zz = z;
         zz.ro = new RO(() => {
+          this.rects.delete(el);
           zz.w = el.offsetWidth;
           zz.h = el.offsetHeight;
           if (where) {
@@ -6428,7 +6503,9 @@ ${text}`);
       this.watchAtlasHistory(t);
       if (t.store && !this.hooked.has(t.store) && typeof t.store.subscribe === "function") {
         this.hooked.add(t.store);
-        this.register(t.store.subscribe(wake));
+        this.register(t.store.subscribe((now, before) => {
+          if (storeMatters(now, before)) wake();
+        }));
       }
       const vp = t.viewport;
       if (vp && !this.hooked.has(vp) && typeof vp.on === "function") {
@@ -6443,10 +6520,15 @@ ${text}`);
       if (this.hooked.has(d)) continue;
       this.hooked.add(d);
       const o = { capture: true, passive: true };
-      for (const ev of ["pointermove", "pointerdown", "pointerup", "wheel", "keydown"]) d.addEventListener(ev, wake, o);
+      const moved = (e) => {
+        if (e.buttons) wake();
+      };
+      d.addEventListener("pointermove", moved, o);
+      for (const ev of ["pointerdown", "pointerup", "wheel", "keydown"]) d.addEventListener(ev, wake, o);
       d.defaultView?.addEventListener("resize", wake);
       this.register(() => {
-        for (const ev of ["pointermove", "pointerdown", "pointerup", "wheel", "keydown"]) d.removeEventListener(ev, wake, o);
+        d.removeEventListener("pointermove", moved, o);
+        for (const ev of ["pointerdown", "pointerup", "wheel", "keydown"]) d.removeEventListener(ev, wake, o);
         d.defaultView?.removeEventListener("resize", wake);
       });
     }
@@ -7649,7 +7731,7 @@ ${text}`);
         box?.remove();
         continue;
       }
-      const r = t.canvas.getBoundingClientRect();
+      const r = this.rectOf(t.canvas);
       if (!box) {
         box = doc.body.createDiv({ cls: "sfx-caught" });
         box.dataset.view = this.viewKey(t);
@@ -8699,10 +8781,29 @@ ${text}`);
       const p = call(tab.viewport, "toWorld", e.clientX - r.left, e.clientY - r.top);
       return p && Number.isFinite(p.x) ? { x: p.x, y: p.y } : null;
     };
+    const alts = (tab.canvas.parentElement ?? doc.body).createDiv({ cls: "sfx-alts" });
+    let hovered = "";
+    const showAlts = () => {
+      const al = altsNow();
+      alts.empty();
+      alts.toggleClass("sfx-hidden", !al);
+      if (!al) return;
+      const opts2 = [[null, hovered ? `By distance (${hovered})` : "By distance"], ...al.map((o, i) => [i, o.name])];
+      opts2.forEach(([v, label], i) => {
+        const b = alts.createEl("button", { cls: "sfx-alt" + (choice === v || v !== null && choice !== null && choice % al.length === v ? " is-on" : ""), text: `${i}  ${label}` });
+        b.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          choice = v;
+          say();
+        });
+      });
+    };
     const say = () => {
+      showAlts();
       hint.textContent = `${pending.name}: ` + (bolt && !caster ? "click the caster (a token, or a spot)   \xB7   Esc to stop" : a.self ? "click the caster\u2019s token   \xB7   Esc to stop" : pending.sequence?.length && total > 1 ? `attack ${Math.min(total, count2 + 1)} of ${total}: ${(() => {
         const al = altsNow();
-        return al ? (choice === null ? `${al.map((o) => o.name).join(" or ")} (by distance)` : al[choice % al.length].name) + "   \xB7   Tab to switch" : pending.sequence[Math.min(count2, pending.sequence.length - 1)].name;
+        return al ? (choice === null ? `${al.map((o) => o.name).join(" or ")} (by distance)` : al[choice % al.length].name) + "   \xB7   Tab, a number key or the buttons below to switch" : pending.sequence[Math.min(count2, pending.sequence.length - 1)].name;
       })()}   \xB7   click a target   \xB7   Esc when done` : total > 1 ? `click target ${Math.min(total, count2 + 1)} of ${total} (the same one again for more than one on it)   \xB7   Esc when done` : count2 ? "click another target, or Esc / right-click when done" : "click a target (a creature, or a spot)   \xB7   Esc to stop");
     };
     let choice = null;
@@ -8718,8 +8819,17 @@ ${text}`);
       if (!p || !this.placing) return;
       this.placing.preview = effect("preview", p);
       this.wake();
+      if (altsNow() && choice === null) {
+        const tok = this.tokenAt(tab, p);
+        const name = tok ? pickOpt(pending.sequence[Math.min(count2, pending.sequence.length - 1)], this.feetBetween(tab, by, tok.id), null).name : "";
+        if (name !== hovered) {
+          hovered = name;
+          showAlts();
+        }
+      }
     };
     const down = (e) => {
+      if (onAlts(e)) return;
       const p = toWorld(e);
       if (!p || !this.placing) return;
       e.preventDefault();
@@ -8760,7 +8870,7 @@ ${text}`);
       say();
     };
     const swallow = (e) => {
-      if (toWorld(e)) {
+      if (!onAlts(e) && toWorld(e)) {
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();
@@ -8780,6 +8890,12 @@ ${text}`);
         if (choice >= al.length) choice = null;
         say();
       }
+      if (al && /^[0-9]$/.test(e.key) && Number(e.key) <= al.length) {
+        e.preventDefault();
+        e.stopPropagation();
+        choice = e.key === "0" ? null : Number(e.key) - 1;
+        say();
+      }
     };
     const opts = { capture: true };
     const evs = [["pointermove", move], ["pointerdown", down], ["pointerup", swallow], ["click", swallow], ["contextmenu", swallow], ["keydown", key]];
@@ -8787,6 +8903,7 @@ ${text}`);
     const stop = () => {
       for (const [k, f] of evs) doc.removeEventListener(k, f, opts);
       hint.remove();
+      alts.remove();
       if (this.placing?.tab === tab) this.placing = null;
     };
     this.placing = { tab, pending, caster: null, preview: null, stop: () => {

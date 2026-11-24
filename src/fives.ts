@@ -19,7 +19,7 @@ const ABILITY_LOOKS: readonly [RegExp, string][] = [
   [/\baberrant ground\b|\bmire\b|\bmud\b/, '1st_Level/Grease/'],
   [/\bdestroy metal\b|\brust\b/, 'Generic/Impact/Impact_01'],
   [/\bwhirlwind\b/, '7th_Level/Whirlwind/'],
-  [/\bdeath burst\b|\bexplodes?\b|\bdeath throes\b/, 'Generic/Explosion/'],
+  [/\bwing attack\b|\bwing buffet\b|\bwings? beat|\bgust\b|\bbuffet\b/, 'TMFX/OutPulse/Circle/'],
   [/\bspittle\b|\bdust\b|\bsand\b/, 'Generic/Smoke/SmokePuff01'],
   [/\bblasphemous\b|\bhorror\b|\bnimbus\b/, 'Generic/Template/Circle/TemplateHorrorCircle'],
 ];
@@ -136,9 +136,10 @@ export function fiveEFile(name: string, text: string | undefined, school: string
   const sc = String(school ?? '').trim().toLowerCase();
   const kind: 'cone' | 'line' | 'burst' | 'aura' | 'square' | 'bolt' | 'on' =
     !area ? 'on' : area.target === 'bolt' ? 'bolt' : area.target || area.self ? 'on' : area.shape === 'cone' ? 'cone' : area.shape === 'line' || area.shape === 'wall' ? 'line'
-      : area.shape === 'cube' ? 'square' : area.shape === 'emanation' ? 'aura' : 'burst';
+      : area.shape === 'cube' ? 'square' : area.shape === 'emanation' && (lasting || /\baura\b|\bpresence\b|\bnimbus\b|\bshroud\b|\bfield\b/.test(n)) ? 'aura' : 'burst';   // (an instant one round a creature, not an aura it has: a burst)
   // what it does (a spell that hurts is what it's made of first: Vampiric Touch is necrotic)
-  const hurts = /\d+d\d+[^.]{0,60}?\b[a-z]+ damage\b/i.test(t);
+  // (dice, or a set amount: an aura's "takes 10 fire damage")
+  const hurts = /\d+d\d+[^.]{0,60}?\b[a-z]+ damage\b/i.test(t) || /\b\d+(?:\s*\([^)]*\))?\s+[a-z]+ damage\b/i.test(t);
   bolt = kind === 'bolt';
   if (!hurts && /(?<!can['’]?t |cannot )\bregains? (?:a number of |\d+(?:d\d+)?(?:\s*\+\s*\d+)? )?hit points\b|\brestores? [^.]*hit points\b/i.test(t)) {
     const f = own(kind === 'aura' || kind === 'burst' || kind === 'square' ? 'Generic/Healing/HealingAbility_02_Regular_GreenOrange' : 'Generic/Healing/HealingAbility_01_Green'); if (f) return f;
@@ -149,10 +150,14 @@ export function fiveEFile(name: string, text: string | undefined, school: string
   const els = hurts ? elementsOf(name, t) : [];
   let el: string | undefined = els[0];
   if (hurts && !el && /\b(?:bludgeoning|piercing|slashing)\s+damage\b/i.test(t)) el = /\b(?:earth|stone|rock|ground|rubble)\b/i.test(t) ? 'earth' : 'weapon';
+  // (a creature bursting when it dies, of no element (shards, bone): an explosion, not a volley of arrows)
+  if ((!el || el === 'weapon') && /\bdeath burst\b|\bexplodes?\b|\bdeath throes\b/.test(n)) { const f = own('Generic/Explosion/'); if (f) return f; }
   if (el) {
     const p = BY_ELEMENT[el]?.[kind] ?? BY_ELEMENT[el]?.burst;
     const f = p ? own(p) : null; if (f) return f;
   }
+  // a creature bursting when it dies, made of nothing above: an explosion
+  if (/\bdeath burst\b|\bexplodes?\b|\bdeath throes\b/.test(n)) { const f = own('Generic/Explosion/'); if (f) return f; }
   // no damage: a boon or a curse on a creature, or its school's sign
   if (kind === 'on' || kind === 'bolt') {
     const harm = /\bsaving throw\b|\bdisadvantage\b|\bcurse/i.test(t) && !/\badvantage on\b(?![^.]*\bagainst you\b)/i.test(t.slice(0, 300));

@@ -124,6 +124,20 @@ export function cellsAcross(size: unknown): number {
   return Math.max(0.5, 2 * s - 1);
 }
 
+/** A press on a Multiattack's attack buttons (not on the map under them). */
+const onAlts = (e: Event): boolean => !!(e.target as Element | null)?.closest?.('.sfx-alts');
+
+/** The parts of Atlas's store the add-on draws from (and anything about levels: what's shown changes with them). */
+const STORE_KEYS = ['objects', 'selectedIds', 'grid', 'isDMScreenOpen', 'isPlayerView', 'measureTool', 'measurePopover', 'lightPopover', 'activeTool', 'selectionMode', 'mapPath', 'currentCollectionId', 'initiative'];
+/** Whether a change to Atlas's store touches what the add-on draws from (no earlier state to compare: it may). */
+export function storeMatters(now: unknown, before: unknown): boolean {
+  if (!now || !before || typeof now !== 'object' || typeof before !== 'object') return true;
+  const a = now as Record<string, unknown>, b = before as Record<string, unknown>;
+  for (const k of STORE_KEYS) if (a[k] !== b[k]) return true;
+  for (const k in a) if (/level/i.test(k) && typeof a[k] !== 'function' && a[k] !== b[k]) return true;
+  return false;
+}
+
 /** A canvas, whichever window it's in (a popped-out one's too). */
 const isCanvas = (c: unknown): c is HTMLCanvasElement => !!c && typeof (c as Node).instanceOf === 'function' && (c as Node).instanceOf(HTMLCanvasElement);
 
@@ -292,7 +306,7 @@ export default class AtlasSpellEffects extends Plugin {
     this.registerEvent(this.app.workspace.on('layout-change', () => this.wake()));
     // another tab brought to the front (the map's hidden): its cards go with it, and come back with it
     this.registerEvent(this.app.workspace.on('active-leaf-change', () => { this.wake(); window.setTimeout(() => this.wake(), 120); }));
-    this.registerInterval(window.setInterval(() => { this.wake(); this.bars(); this.linkStatblocks(); }, 2000));
+    this.registerInterval(window.setInterval(() => { this.rects = new WeakMap(); this.wake(); this.bars(); this.linkStatblocks(); }, 2000));
     this.app.workspace.onLayoutReady(() => this.bars());
     this.registerEvent(this.app.workspace.on('layout-change', () => window.setTimeout(() => this.bars(), 300)));
   }
@@ -342,8 +356,8 @@ export default class AtlasSpellEffects extends Plugin {
     this.dragDocs.add(doc);
     const tabAt = (ev: MouseEvent): { t: Tab; p: Point } | null => {
       for (const t of this.atlasTabs()) {
-        if (t.canvas.ownerDocument !== doc || t.canvas.offsetParent === null) continue;
-        const r = t.canvas.getBoundingClientRect();
+        if (t.canvas.ownerDocument !== doc || !t.canvas.isConnected || !this.sizeOf(t.canvas).w) continue;
+        const r = this.rectOf(t.canvas);
         if (ev.clientX < r.left || ev.clientY < r.top || ev.clientX > r.right || ev.clientY > r.bottom) continue;
         // only presses on the map itself (or the effects layer over it), not on Atlas's toolbars and panels
         const under = doc.elementFromPoint(ev.clientX, ev.clientY);
@@ -383,6 +397,7 @@ export default class AtlasSpellEffects extends Plugin {
       const group = this.isPicked(fx.id) && this.selected!.ids.length > 1 ? this.effects.filter((e) => this.isPicked(e.id) && e.id !== fx.id).map((e): Effect => structuredClone(e)) : undefined;
       this.dragging = { tab: at.t, id: fx.id, start: at.p, startX: ev.clientX, startY: ev.clientY, orig: JSON.parse(JSON.stringify(fx)) as Effect, moved: false, before: this.snapshot(), ...(group ? { group } : {}) };
     };
+    let hoverAt: MouseEvent | null = null, hoverFrame = 0;
     const move = (ev: PointerEvent) => {
       const d = this.dragging;
       if (!d && this.marquee) {
@@ -393,12 +408,17 @@ export default class AtlasSpellEffects extends Plugin {
       if (!d) {
         // Ctrl / ⌘ over a token: Atlas opens its statblock, which then knows its creature
         if (ev.ctrlKey || ev.metaKey) { const at = tabAt(ev); if (at) this.trackHover(at.t, at.p); }
-        // the pointer over an effect (not a token): a move cursor, as over a token
+        // the pointer over an effect (not a token): a move cursor, as over a token (looked at once a frame, not on
+        // every move of the mouse: finding what's under it makes the browser lay the page out)
         if (this.placing || !this.effects.length) return;
-        const at = tabAt(ev);
-        const over = !!at && !this.tokenAt(at.t, at.p) && !!this.effectAt(at.t, at.p);
-        if (over && at) { if (!at.t.canvas.hasClass('sfx-cursor-move')) { at.t.canvas.addClass('sfx-cursor-move'); this.cursorSet = at.t.canvas; } }
-        else if (this.cursorSet) { this.cursorSet.removeClass('sfx-cursor-move'); this.cursorSet = null; }
+        hoverAt = { clientX: ev.clientX, clientY: ev.clientY } as MouseEvent;
+        if (!hoverFrame) hoverFrame = (doc.defaultView ?? window).requestAnimationFrame(() => {
+          hoverFrame = 0; const e2 = hoverAt; if (!e2 || this.dragging) return;
+          const at = tabAt(e2);
+          const over = !!at && !this.tokenAt(at.t, at.p) && !!this.effectAt(at.t, at.p);
+          if (over && at) { if (!at.t.canvas.hasClass('sfx-cursor-move')) { at.t.canvas.addClass('sfx-cursor-move'); this.cursorSet = at.t.canvas; } }
+          else if (this.cursorSet) { this.cursorSet.removeClass('sfx-cursor-move'); this.cursorSet = null; }
+        });
         return;
       }
       stopAll(ev);
@@ -1543,6 +1563,14 @@ export default class AtlasSpellEffects extends Plugin {
    * slows Atlas down. Read straight off the element where the browser has no ResizeObserver.
    */
   private sizes = new WeakMap<Element, { w: number; h: number; left: number; top: number; ro: ResizeObserver | null }>();
+  /** Where an element is on the page, as last read (again after it's resized, and every couple of seconds). */
+  private rects = new WeakMap<Element, DOMRect>();
+  rectOf(el: HTMLElement): DOMRect {
+    this.sizeOf(el);
+    let r = this.rects.get(el);
+    if (!r) { r = el.getBoundingClientRect(); this.rects.set(el, r); }
+    return r;
+  }
   private sizeOf(el: HTMLElement, where = false): { w: number; h: number; left: number; top: number } {
     let z = this.sizes.get(el);
     const RO = el.ownerDocument.defaultView?.ResizeObserver;
@@ -1550,7 +1578,7 @@ export default class AtlasSpellEffects extends Plugin {
       z = { w: el.offsetWidth, h: el.offsetHeight, left: where ? el.offsetLeft : 0, top: where ? el.offsetTop : 0, ro: null };
       if (RO) {
         const zz = z;
-        zz.ro = new RO(() => { zz.w = el.offsetWidth; zz.h = el.offsetHeight; if (where) { zz.left = el.offsetLeft; zz.top = el.offsetTop; } this.wake(); });
+        zz.ro = new RO(() => { this.rects.delete(el); zz.w = el.offsetWidth; zz.h = el.offsetHeight; if (where) { zz.left = el.offsetLeft; zz.top = el.offsetTop; } this.wake(); });
         zz.ro.observe(el); const ro = zz.ro; this.register(() => ro.disconnect());
         this.sizes.set(el, zz);
       }
@@ -1657,7 +1685,9 @@ export default class AtlasSpellEffects extends Plugin {
     const wake = () => this.wake();
     for (const t of this.atlasTabs()) {
       this.watchAtlasHistory(t);
-      if (t.store && !this.hooked.has(t.store) && typeof t.store.subscribe === 'function') { this.hooked.add(t.store); this.register(t.store.subscribe(wake)); }
+      // (only for what the add-on draws from: Atlas changes its store all the time for things it doesn't (fog, what
+      // the player window shows, dice, its own windows), and waking for each of those kept the add-on drawing)
+      if (t.store && !this.hooked.has(t.store) && typeof t.store.subscribe === 'function') { this.hooked.add(t.store); this.register(t.store.subscribe((now: unknown, before: unknown) => { if (storeMatters(now, before)) wake(); })); }
       const vp = t.viewport;
       if (vp && !this.hooked.has(vp) && typeof vp.on === 'function') {
         this.hooked.add(vp);
@@ -1669,9 +1699,13 @@ export default class AtlasSpellEffects extends Plugin {
       if (this.hooked.has(d)) continue;
       this.hooked.add(d);
       const o = { capture: true, passive: true } as AddEventListenerOptions;
-      for (const ev of ['pointermove', 'pointerdown', 'pointerup', 'wheel', 'keydown']) d.addEventListener(ev, wake, o);
+      // (the pointer moving only while a button's held: something being dragged, which Atlas may show before it says
+      // so; a plain move of the mouse woke the loop every time, anywhere in Obsidian)
+      const moved = (e: Event) => { if ((e as PointerEvent).buttons) wake(); };
+      d.addEventListener('pointermove', moved, o);
+      for (const ev of ['pointerdown', 'pointerup', 'wheel', 'keydown']) d.addEventListener(ev, wake, o);
       d.defaultView?.addEventListener('resize', wake);
-      this.register(() => { for (const ev of ['pointermove', 'pointerdown', 'pointerup', 'wheel', 'keydown']) d.removeEventListener(ev, wake, o); d.defaultView?.removeEventListener('resize', wake); });
+      this.register(() => { d.removeEventListener('pointermove', moved, o); for (const ev of ['pointerdown', 'pointerup', 'wheel', 'keydown']) d.removeEventListener(ev, wake, o); d.defaultView?.removeEventListener('resize', wake); });
     }
   }
   /** Everything a frame draws from: when it is the same as last frame's, the loop can go to sleep. */
@@ -2648,7 +2682,7 @@ export default class AtlasSpellEffects extends Plugin {
       doc.body.querySelectorAll<HTMLElement>(':scope > .sfx-caught').forEach((el) => { if (el.dataset.owner !== this.instanceKey) el.remove(); });
       let box = doc.body.querySelector<HTMLElement>(`:scope > .sfx-caught[data-view="${this.viewKey(t)}"]`);
       if (!list.length || !this.shown(t)) { box?.remove(); continue; }
-      const r = t.canvas.getBoundingClientRect();
+      const r = this.rectOf(t.canvas);
       if (!box) { box = doc.body.createDiv({ cls: 'sfx-caught' }); box.dataset.view = this.viewKey(t); box.dataset.owner = this.instanceKey; }
       this.hookCaughtClicks(doc);
       box.setCssStyles({ top: `${Math.round(r.top + 56)}px`, left: `${Math.round(r.right - 272)}px` });
@@ -3432,10 +3466,25 @@ export default class AtlasSpellEffects extends Plugin {
       const p = call<Point>(tab.viewport, 'toWorld', e.clientX - r.left, e.clientY - r.top);
       return p && Number.isFinite(p.x) ? { x: p.x, y: p.y } : null;
     };
+    // a Multiattack's choice of attack, as buttons under the hint (also Tab, or 1, 2… and 0 for by distance)
+    const alts = (tab.canvas.parentElement ?? doc.body).createDiv({ cls: 'sfx-alts' });
+    let hovered = '';
+    const showAlts = () => {
+      const al = altsNow();
+      alts.empty();
+      alts.toggleClass('sfx-hidden', !al);
+      if (!al) return;
+      const opts: [number | null, string][] = [[null, hovered ? `By distance (${hovered})` : 'By distance'], ...al.map((o, i): [number, string] => [i, o.name])];
+      opts.forEach(([v, label], i) => {
+        const b = alts.createEl('button', { cls: 'sfx-alt' + (choice === v || (v !== null && choice !== null && choice % al.length === v) ? ' is-on' : ''), text: `${i}  ${label}` });
+        b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); choice = v; say(); });
+      });
+    };
     const say = () => {
+      showAlts();
       hint.textContent = `${pending.name}: ` + (bolt && !caster ? 'click the caster (a token, or a spot)   ·   Esc to stop'
         : a.self ? 'click the caster’s token   ·   Esc to stop'
-        : pending.sequence?.length && total > 1 ? `attack ${Math.min(total, count + 1)} of ${total}: ${(() => { const al = altsNow(); return al ? (choice === null ? `${al.map((o) => o.name).join(' or ')} (by distance)` : al[choice % al.length].name) + '   ·   Tab to switch' : pending.sequence[Math.min(count, pending.sequence.length - 1)].name; })()}   ·   click a target   ·   Esc when done`
+        : pending.sequence?.length && total > 1 ? `attack ${Math.min(total, count + 1)} of ${total}: ${(() => { const al = altsNow(); return al ? (choice === null ? `${al.map((o) => o.name).join(' or ')} (by distance)` : al[choice % al.length].name) + '   ·   Tab, a number key or the buttons below to switch' : pending.sequence[Math.min(count, pending.sequence.length - 1)].name; })()}   ·   click a target   ·   Esc when done`
         : total > 1 ? `click target ${Math.min(total, count + 1)} of ${total} (the same one again for more than one on it)   ·   Esc when done`
         : count ? 'click another target, or Esc / right-click when done' : 'click a target (a creature, or a spot)   ·   Esc to stop');
     };
@@ -3449,8 +3498,17 @@ export default class AtlasSpellEffects extends Plugin {
     };
     const altsNow = () => pending.sequence?.[Math.min(count, pending.sequence.length - 1)]?.alts;
     const effect = (id: string, p: Point): Effect | null => this.targetEffect(tab, step(p), caster, id, p);
-    const move = (e: PointerEvent) => { const p = toWorld(e); if (!p || !this.placing) return; this.placing.preview = effect('preview', p); this.wake(); };
+    const move = (e: PointerEvent) => {
+      const p = toWorld(e); if (!p || !this.placing) return;
+      this.placing.preview = effect('preview', p); this.wake();
+      if (altsNow() && choice === null) {
+        const tok = this.tokenAt(tab, p);
+        const name = tok ? (pickOpt(pending.sequence![Math.min(count, pending.sequence!.length - 1)], this.feetBetween(tab, by, tok.id), null).name) : '';
+        if (name !== hovered) { hovered = name; showAlts(); }
+      }
+    };
     const down = (e: PointerEvent) => {
+      if (onAlts(e)) return;
       const p = toWorld(e); if (!p || !this.placing) return;
       e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
       if (e.button === 2) { this.placing.stop(); return; }
@@ -3468,12 +3526,13 @@ export default class AtlasSpellEffects extends Plugin {
       if (fx && total > 1 && count >= total) { this.placing.stop(); return; }          // its last dart, ray or beam: done
       say();
     };
-    const swallow = (e: Event) => { if (toWorld(e as PointerEvent)) { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); } };
+    const swallow = (e: Event) => { if (!onAlts(e) && toWorld(e as PointerEvent)) { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); } };
     const key = (e: KeyboardEvent) => {
       if (e.key === 'Escape' || e.key === 'Enter') { e.preventDefault(); this.placing?.stop(); return; }
       // a Multiattack's next attack: the next of those it may be
       const al = altsNow();
       if (e.key === 'Tab' && al) { e.preventDefault(); e.stopPropagation(); choice = choice === null ? 0 : choice + 1; if (choice >= al.length) choice = null; say(); }
+      if (al && /^[0-9]$/.test(e.key) && Number(e.key) <= al.length) { e.preventDefault(); e.stopPropagation(); choice = e.key === '0' ? null : Number(e.key) - 1; say(); }
     };
     const opts = { capture: true } as AddEventListenerOptions;
     const evs: [string, EventListener][] = [['pointermove', move as EventListener], ['pointerdown', down as EventListener], ['pointerup', swallow], ['click', swallow], ['contextmenu', swallow], ['keydown', key as EventListener]];
@@ -3481,6 +3540,7 @@ export default class AtlasSpellEffects extends Plugin {
     const stop = () => {
       for (const [k, f] of evs) doc.removeEventListener(k, f, opts);
       hint.remove();
+      alts.remove();
       if (this.placing?.tab === tab) this.placing = null;
     };
     this.placing = { tab, pending, caster: null, preview: null, stop: () => { stop(); this.bars(); this.wake(); }, hint };

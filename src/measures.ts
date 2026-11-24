@@ -136,7 +136,11 @@ export function lookOf(spell: { name?: string; descFull?: string; damageInflict?
   const given = (Array.isArray(spell.damageInflict) ? spell.damageInflict.map((d) => String(d ?? '')) : String(spell.damageInflict ?? '').split(/[^\p{L}]+/u)).filter(Boolean).map((d) => `${d} damage`).join(', ');
   if (/darkness/i.test(name) || /magical darkness/i.test(text)) return 'shadow';
   if (/\b(fog|mist|cloud|smoke|steam)\b/i.test(name)) return 'mist';
-  for (const e of [...(given ? elementsOf('', given) : []), ...elementsOf(name, text)]) { const l = LOOKS[e]; if (l) return l; }
+  // a creature's gas or spores (a poison or sleep breath, a stench): a mist; its light (Illumination): radiance
+  if (/\b(?:poison|noxious|toxic|sleep|slowing|weakening|paraly[sz]ing|repulsion|euphoria|stench|fetid|spores?|miasma|vapou?rs?|gas|dust)\b/i.test(name)) return 'mist';
+  if (/\billuminat|\bradiance\b|\bluminous\b/i.test(name)) return 'radiance';
+  // (its text's elements only where it does damage: a Harpy's song, luring creatures into fire, is no fire)
+  for (const e of [...(given ? elementsOf('', given) : []), ...(/\bdamage\b/i.test(text) ? elementsOf(name, text) : elementsOf(name, ''))]) { const l = LOOKS[e]; if (l) return l; }
   return null;
 }
 

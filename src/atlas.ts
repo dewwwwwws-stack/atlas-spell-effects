@@ -90,7 +90,7 @@ export interface AtlasStore {
   getState(): AtlasState;
   /** Atlas's store edits a draft: what the function changes is the change. */
   setState?(change: (draft: AtlasState) => void): void;
-  subscribe?(listener: () => void): () => void;
+  subscribe?(listener: (state: unknown, before: unknown) => void): () => void;
   temporal?: AtlasHistory;
 }
 

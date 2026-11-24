@@ -415,7 +415,12 @@ export class PixiPainter {
         const t = Math.min(1, (now - e.started) / DRAWN_MS);
         a *= t < 0.18 ? t / 0.18 : t < 0.55 ? 1 : Math.max(0, 1 - (t - 0.55) / 0.45);
         const grow = t < 0.55 ? 0.15 + 0.85 * (t / 0.55) : 1;
-        for (const sp of it.sprites) sp.scale.set(e.shape === 'cone' || e.shape === 'line' ? grow : grow, e.shape === 'cone' || e.shape === 'line' ? 1 : grow);
+        // (on top of the scale that fits its picture to the area: a picture capped at 1024 pixels is scaled up a
+        // lot on a big area or a map with big squares, and setting the scale outright shrank it to a patch)
+        for (const sp of it.sprites as (PSprite & { sfxBase?: { x: number; y: number } })[]) {
+          const k0 = sp.sfxBase ?? { x: 1, y: 1 };
+          sp.scale.set(k0.x * grow, k0.y * (e.shape === 'cone' || e.shape === 'line' ? 1 : grow));
+        }
         animating = true;
       }
       // a lasting drawn area's own motion (breathing, pulsing…), as chosen for it
@@ -487,6 +492,7 @@ export class PixiPainter {
         // the picture has room round it for the glow: the shape itself is the box
         const padK = Math.max(b.w, b.h) * 0.08;
         sp.width = b.w + padK * 2; sp.height = b.h + padK * 2;
+        (sp as PSprite & { sfxBase?: { x: number; y: number } }).sfxBase = { x: sp.scale.x, y: sp.scale.y };
         it.node.addChild(sp); it.sprites = [sp];
       }
       return;

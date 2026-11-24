@@ -282,7 +282,10 @@ export function abilityEntry(name: string, text: string): SpellEntry | null {
     ?? new RegExp(String.raw`\brange (\d+)(?:\/\d+)?\s*` + UNIT, 'i').exec(t);
   const last = /\blasts? (?:for|until)\b|\b(?:until|during)\b[^.]*\b(?:that|the|this) (?:area|movement|emanation|cone|sphere|cube|cylinder|line|cloud|zone|aura)\b/i.test(t);
   const e: SpellEntry = { key: '', name: nm, range: '', duration: last ? 'Lasting' : 'Instantaneous', descFull: t, ability: true };
-  const a = areaOf(e);
+  // (an attack first of all: its reach, or what happens to a creature it swallows "within 10 feet", is no area: a
+  // Purple Worm's Bite is an attack)
+  const attackFirst = /^(?:melee|ranged)(?: or ranged)?(?: weapon| spell)? attack(?: roll)?\s*:|^(?:melee|ranged)(?:, [^:]{0,40})?:\s*[+-]\d+ to hit/i.test(t);
+  const a = attackFirst ? null : areaOf(e);
   if (!a || !(a.size > 0)) {
     // a plain attack ("Melee Attack Roll: +7… Hit: 10 (2d6 + 3) Slashing damage", "Melee: +2 to hit. Hit: 1d6-1
     // Bludgeoning"): rolled at the creature clicked

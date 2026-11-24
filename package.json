@@ -1,6 +1,6 @@
 {
   "name": "atlas-spell-effects",
-  "version": "1.13.6",
+  "version": "1.13.7",
   "description": "Spell effects, JB2A animations, areas and light on Atlas VTT maps, plus optional D&D 5e attack, save and damage rolls. Cast and attack from statblocks.",
   "private": true,
   "license": "MIT",

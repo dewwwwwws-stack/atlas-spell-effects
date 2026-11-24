@@ -78,6 +78,12 @@ const ABILITY_PALETTES: readonly [RegExp, { colour: string; colour2: string; mot
   [/\bgibber|\btelepath|\bsong\b|\bcharm|\bauthority|\blur/, { colour: '#e055c8', colour2: '#ffc4f2', motion: 'pulse' }],
   [/\bdust|\bblind|\bshaking|\bsand\b|\bwhirlwind|\bground\b|\bstomp|\bquake/, { colour: '#c2a26b', colour2: '#efe2c4', motion: 'shimmer' }],
   [/\bmetal|\brust\b/, { colour: '#b5652b', colour2: '#e8b48a', motion: '' }],
+  [/\bantimagic|\bnullif|\bdispel|\bsuppress/, { colour: '#8fa3b8', colour2: '#e4ecf4', motion: 'shimmer' }],
+  [/\btime\b|\btemporal|\bchrono|\bstasis/, { colour: '#3fc1c9', colour2: '#f3e3a1', motion: 'pulse' }],
+  [/\bwing\b|\bgust\b|\bwind\b|\bbuffet/, { colour: '#cfe3ee', colour2: '#ffffff', motion: 'shimmer' }],
+  [/\bentangl|\bvines?\b|\bplants?\b|\broots?\b|\bthorns?\b/, { colour: '#4f8a2b', colour2: '#bfe08a', motion: 'breathe' }],
+  [/\bblood\b/, { colour: '#a3151b', colour2: '#ff6b6b', motion: 'pulse' }],
+  [/\bbravery|\bprotect|\binvulnerab|\bbolster|\brally|\binspir|\bmarshal|\bbattle cry\b/, { colour: '#ffd54a', colour2: '#fff6c8', motion: 'breathe' }],
 ];
 
 export function paletteOf(name: string, text: string | undefined, school?: string): { colour: string; colour2: string; motion: string } | null {
@@ -87,6 +93,8 @@ export function paletteOf(name: string, text: string | undefined, school?: strin
   // what a creature's ability does, where it deals no damage (a sleeping breath, a petrifying gaze, a stench…)
   // (a spell by its name alone: its text says "dim light" or "darkness" in passing; a creature's ability by both)
   const n = (school ? name : `${name} ${String(text ?? '').slice(0, 400)}`).toLowerCase();
+  // (its name first: a Darkness Aura's text speaks of light it puts out)
+  for (const [re, pal] of ABILITY_PALETTES) if (re.test(name.toLowerCase())) return pal;
   for (const [re, pal] of ABILITY_PALETTES) if (re.test(n)) return pal;
   const sc = SCHOOLS[String(school ?? '').trim().toLowerCase()];
   if (sc) return sc;
