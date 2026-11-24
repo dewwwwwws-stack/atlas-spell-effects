@@ -288,3 +288,4 @@ canvas.sfx-cursor-move{cursor:move}
 .sfx-caught-all-btn{width:100%}
 .sfx-caught-all-sum{color:var(--text-muted,#999);font-size:12px}
 .sfx-sb-menu .menu-item.is-disabled:first-child{opacity:1;font-weight:600;color:var(--text-normal)}
+.sfx-explain{white-space:pre-wrap;user-select:text;max-height:60vh;overflow:auto;font-size:12px}

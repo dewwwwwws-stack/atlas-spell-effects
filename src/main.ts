@@ -212,6 +212,7 @@ export default class AtlasSpellEffects extends Plugin {
     this.addCommand({ id: 'end', name: 'End a lasting effect…', callback: () => new EndModal(this.app, this).open() });
     this.addCommand({ id: 'end-all', name: 'End every lasting effect on this map', callback: () => this.endAllHere() });
     this.addCommand({ id: 'snap', name: 'Snap effects to the grid on or off', callback: () => { void this.toggleSnap(); } });
+    this.addCommand({ id: 'explain-statblocks', name: 'Explain the buttons on open statblocks (what was found, and why not)', callback: () => this.explainStatblocks() });
     this.addCommand({ id: 'forget-choices', name: 'Forget chosen damage types (Elemental Affinity…)', callback: () => {
       const n = Object.keys(this.settings.chosen ?? {}).length;
       this.settings.chosen = {}; this.saveSoon();
@@ -730,11 +731,14 @@ export default class AtlasSpellEffects extends Plugin {
         ?? (() => { let found: WorkspaceLeaf | undefined; this.app.workspace.iterateAllLeaves((l) => { if (!found && l.view.containerEl.contains(sb)) found = l; }); return found; })();
       const v = leaf?.view;
       const fp = v instanceof MarkdownView ? v.file?.path : (() => { const f = field(v, 'file'); return f instanceof TFile ? f.path : field(v, 'path'); })();
-      const path = typeof fp === 'string' ? fp : this.dmScreenPath(sb);
+      // (a statblock on Atlas's DM screen is in the map's own view: its note, not the map's file)
+      const path = this.dmScreenPath(sb) ?? (typeof fp === 'string' && /\.md$/i.test(fp) ? fp : undefined);
       if (t && path) {
         const linked = Object.entries(tokens).filter(([, tok]) => tok.statblockPath === path && !tok.offMap).map(([id]) => id);
         const picked = linked.length === 1 ? linked[0] : linked.find((id) => sel.length === 1 && sel[0] === id);
         if (picked) return { tab: t, id: picked };
+        // its note known, but no token of it is picked: not whichever token happens to be selected (a player's)
+        return null;
       }
       // elsewhere (Atlas's side panel…): the one token selected on the map, if there is one
       if (t && sel.length === 1) return { tab: t, id: sel[0] };
@@ -804,6 +808,32 @@ export default class AtlasSpellEffects extends Plugin {
     if (!this.atlasTab()) { new Notice('Combat+: open an Atlas map first.'); return; }
     this.leaveDmScreen(how.statblock);
     this.place(p, tok && this.mapOf(tok.tab) === this.mapOf(this.atlasTab()!) ? tok.id : undefined);
+  }
+
+  /**
+   * Why a statblock's entries have (or don't have) their buttons: every open statblock, each entry, with the
+   * settings and the token that decide it. Shown in a window, to copy and send.
+   */
+  explainStatblocks(): void {
+    this.linkStatblocks();
+    for (const l of this.linkers.values()) l.scan();
+    const out: string[] = [
+      `Combat+ ${this.manifest.version}: rolling ${this.settings.rolling ? 'on' : 'off'} (for ${this.settings.rollWho === 'npcs' ? 'NPCs only' : 'everyone'}); animations for attacks ${this.settings.attackAnims ? 'on' : 'off'}.`,
+    ];
+    let n = 0;
+    for (const l of this.linkers.values()) for (const e of l.explain()) {
+      n++;
+      const k = this.tokenOfStatblock(e.statblock);
+      const who = k ? `${String((k.tab.store.getState()?.objects?.tokens?.[k.id] as { name?: string } | undefined)?.name ?? k.id)}${this.isPC(k.tab, k.id) ? ' (a player character)' : ''}` : 'no token found for it';
+      out.push('', `${e.name}: its token ${who}`, ...e.lines.map((x) => `  - ${x}`));
+    }
+    if (!n) out.push('', 'No statblock is open. Open one (hover a token with Ctrl, or open its note), then run this again.');
+    const text = out.join('\n');
+    const m = new Modal(this.app);
+    m.titleEl.setText('Combat+: the buttons on open statblocks');
+    m.contentEl.createEl('pre', { text, cls: 'sfx-explain' });
+    new Setting(m.contentEl).addButton((b) => b.setButtonText('Copy').setCta().onClick(() => { void navigator.clipboard.writeText(text).then(() => new Notice('Combat+: copied.')); }));
+    m.open();
   }
 
   // ── Atlas's DM screen: a cast from one of its statblocks shows the map, and the screen comes back once done ──
@@ -3411,7 +3441,12 @@ export default class AtlasSpellEffects extends Plugin {
     if (pending.plain && !(this.settings.attackAnims && pending.area.target === 'bolt')) return;
     if (fx.bolt && pending.file) {
       const want = nearestLength(pending.file, this.files, fx.size / Math.max(1e-6, fromFeet(1)));
-      void (async () => { if (want !== fx.file && await this.ensureFile(want)) { fx.file = want; this.indexVault(); } this.cast(fx); })();
+      // (fetched from JB2A first if it isn't in the vault yet: a melee swing has one length, so it's the same file)
+      void (async () => {
+        if (await this.ensureFile(want)) { if (want !== fx.file) fx.file = want; this.indexVault(); }
+        else if (want !== fx.file && await this.ensureFile(fx.file)) this.indexVault();
+        this.cast(fx);
+      })();
     } else this.cast(fx);
   }
 

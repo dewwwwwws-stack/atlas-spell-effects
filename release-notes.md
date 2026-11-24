@@ -1,5 +1,9 @@
 ## New
 
-- **Elemental Affinity asks for its damage type.** When a Draconic Sorcerer's statblock only says "Elemental Affinity", you're asked which type (Acid, Cold, Fire, Lightning or Poison) the first time they cast a spell it could apply to, and it's remembered for that character. If they resist exactly one of those types, that's used without asking. The command *Forget chosen damage types* clears the answers.
-- **Spell notes stay with their spell.** In a statblock's spell list, a note in brackets after a spell, like *(ritual)* or *(1/day, Magic Initiate)*, now stays on that spell's line instead of getting a line of its own.
-- **A friendlier README**, with paragraphs that no longer break oddly in Obsidian's plugin browser.
+- **Explain the buttons on open statblocks** (a command). Lists every open statblock's entries, whether each got a Cast, Attack or Use button, and if not, why: rolling off, attack animations off, no attack found in its text, and so on. Copy it to send with a bug report.
+
+## Fixes
+
+- **Attack animations now download before they play.** A melee attack's JB2A animation (a spear's thrust, a greatsword's swing) that wasn't in the vault yet played as a plain coloured square. It's now fetched from JB2A first.
+- **Statblocks on Atlas's DM screen** find their own creature by their note. Before, with rolling set to NPCs only, a statblock there could be taken for whichever token was selected (a player's), and its attacks got no buttons.
+- **One awkward entry no longer stops a statblock's other buttons.** If something goes wrong reading one entry, the rest still get their buttons, and the problem is shown in the console and in the Explain command.

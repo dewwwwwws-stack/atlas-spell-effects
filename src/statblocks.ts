@@ -158,6 +158,23 @@ export class StatblockLinker {
 
   /** Whether plain attacks (a sword, a bite) get a button: only while rolling is on (they'd do nothing else). */
   attacks: (statblock: HTMLElement) => boolean = () => false;
+  /** What each statblock's entries got, and why not (Explain statblock buttons), by statblock, from the last look. */
+  private why = new WeakMap<HTMLElement, string[]>();
+  /** Something that went wrong on a look, once each (the rest of the statblock is still done). */
+  private told = new Set<string>();
+  private problem(what: string, e: unknown): string {
+    const msg = `${what}: ${e instanceof Error ? e.message : String(e)}`;
+    if (!this.told.has(msg)) { this.told.add(msg); console.error('Combat+: ' + msg, e); }
+    return msg;
+  }
+  /** The statblocks open now, and what their entries got (and why not), for the Explain command. */
+  explain(): { statblock: HTMLElement; name: string; lines: string[] }[] {
+    return this.roots().filter((sb) => !sb.closest(OWN)).map((sb) => ({
+      statblock: sb,
+      name: (sb.querySelector('.atlas-sb-title, .atlas-sb-name, h1, h2, h3, .statblock-name')?.textContent ?? '').trim() || '(a statblock)',
+      lines: this.why.get(sb) ?? ['(not looked at yet)'],
+    }));
+  }
 
   start(): void {
     const d = this.doc;
@@ -272,11 +289,14 @@ export class StatblockLinker {
     try {
       this.tidy();
       const lists = new Set<HTMLElement>();
+      // (each on its own: one that goes wrong leaves the rest done)
       for (const h of [...hits].sort((a, b) => a.node === b.node ? b.start - a.start : 0)) {
-        const list = this.button(h);
-        if (!list) left.push(h); else if (list !== true) lists.add(list);
+        try {
+          const list = this.button(h);
+          if (!list) left.push(h); else if (list !== true) lists.add(list);
+        } catch (e) { this.problem(`a Cast button for ${h.link.name}`, e); }
       }
-      for (const l of lists) this.columns(l);
+      for (const l of lists) { try { this.columns(l); } catch (e) { this.problem('a spell list laid out', e); } }
       this.abilities(this.roots());
     } finally { this.obs?.takeRecords(); this.watch(); }
     this.hits = left;
@@ -369,6 +389,16 @@ export class StatblockLinker {
     const clean = (t: string): string => t.replace(/\([^)]*\)/g, '').replace(/^[\s\d:.)]+(?=\p{L})/u, '').replace(/[\s.:;,*]+$/g, '').trim();
     for (const sb of roots) {
       if (sb.closest(OWN) || sb.closest('.sfx-modal, .modal')) continue;
+      const why: string[] = [];
+      this.why.set(sb, why);
+      try { this.abilitiesOf(sb, keep, why, lead, clean); } catch (e) { why.push(this.problem('this statblock', e)); }
+    }
+    for (const b of Array.from(this.doc.querySelectorAll('.' + CAST_BTN + '.is-ability'))) if (!keep.has(b)) b.remove();
+  }
+
+  private abilitiesOf(sb: HTMLElement, keep: Set<Element>, why: string[], lead: (t: string) => string | null, clean: (t: string) => string): void {
+    {
+      const attacksOn = this.attacks(sb);
       const units: { anchor: Node; name: string; text: string }[] = [];
       for (const tr of Array.from(sb.querySelectorAll<HTMLElement>('.atlas-sb-trait'))) {
         if (tr.matches('.atlas-sb-pane-entry-editor') || tr.closest(LIST)) continue;
@@ -395,10 +425,13 @@ export class StatblockLinker {
       // its attacks, for a Multiattack to make
       const attacksHere = units.map((u) => ({ name: u.name, text: u.text, e: abilityEntry(u.name, u.text) })).filter((u) => u.e?.plain).map((u) => ({ name: u.name, text: u.text }));
       for (const u of units) {
+       try {
         if (/^multiattack$/i.test(u.name.trim())) {
-          const seq = this.attacks(sb) ? multiOf(u.text, attacksHere) : [];
+          const seq = attacksOn ? multiOf(u.text, attacksHere) : [];
           const prev = u.anchor.previousSibling;
-          if (!seq.length) continue;
+          if (!attacksOn) { why.push(`${u.name}: no button (attack buttons are off for this creature: rolling is off, or it's a player's and rolling is for NPCs only; and animations for attacks are off)`); continue; }
+          if (!seq.length) { why.push(`${u.name}: no button (none of the attacks it names was found here; its attacks: ${attacksHere.map((a) => a.name).join(', ') || 'none'})`); continue; }
+          why.push(`${u.name}: Use button (${seq.map((x) => (x.alts ?? [x]).map((o) => o.name).join(' or ')).join(', then ')})`);
           const link: SpellLink = { key: 'ability:multiattack', name: u.name, ability: u.text, multi: seq };
           if (prev?.instanceOf(Element) && prev.classList.contains(CAST_BTN)) { if (prev.classList.contains('is-ability')) { this.buttons.set(prev, link); keep.add(prev); } continue; }
           const parent = u.anchor.parentElement; if (!parent) continue;
@@ -406,19 +439,22 @@ export class StatblockLinker {
           continue;
         }
         const ae = abilityEntry(u.name, u.text);
-        if (!ae || (ae.plain && !this.attacks(sb))) continue;
+        if (!ae) { why.push(`${u.name}: no button (no attack, save, damage or area found in its text)`); continue; }
+        if (ae.plain && !attacksOn) { why.push(`${u.name}: no button (an attack, and attack buttons are off for this creature: rolling is off, or it's a player's and rolling is for NPCs only; and animations for attacks are off)`); continue; }
         const link: SpellLink = { key: 'ability:' + norm(u.name), name: u.name, ability: u.text, ...(ae.plain === 'attack' ? { attack: true } : {}) };
         const prev = u.anchor.previousSibling;
         if (prev?.instanceOf(Element) && prev.classList.contains(CAST_BTN)) {
           // there already (its text kept up to date); a spell of that name keeps its own button
-          if (prev.classList.contains('is-ability')) { this.buttons.set(prev, link); prev.classList.toggle('is-attack', !!link.attack); keep.add(prev); }
+          if (prev.classList.contains('is-ability')) { this.buttons.set(prev, link); prev.classList.toggle('is-attack', !!link.attack); keep.add(prev); why.push(`${u.name}: ${link.attack ? 'Attack' : 'Use'} button`); }
+          else why.push(`${u.name}: Cast button (a spell in your library has this name: ${(prev as HTMLElement).dataset.spell ?? ''})`);
           continue;
         }
-        const parent = u.anchor.parentElement; if (!parent) continue;
+        const parent = u.anchor.parentElement; if (!parent) { why.push(`${u.name}: no button (nowhere to put it)`); continue; }
         keep.add(this.put(parent, u.anchor, link, u.anchor.textContent ?? u.name));
+        why.push(`${u.name}: ${link.attack ? 'Attack' : 'Use'} button`);
+       } catch (e) { why.push(`${u.name}: ` + this.problem(u.name, e)); }
       }
     }
-    for (const b of Array.from(this.doc.querySelectorAll('.' + CAST_BTN + '.is-ability'))) if (!keep.has(b)) b.remove();
   }
 
   /**
