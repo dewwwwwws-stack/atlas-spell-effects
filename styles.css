@@ -104,6 +104,33 @@ body.theme-light .sfx-ctl:not(.sfx-dot),body.theme-light .sfx-size,body.theme-li
 .sfx-body{flex:1;min-height:0;overflow:auto;padding:16px 20px 20px;display:flex;flex-direction:column;gap:16px;scrollbar-width:thin}
 /* sections, as Atlas groups its settings: a divider between each */
 .sfx-body>div+div{border-top:1px solid var(--divider-color);padding-top:16px}
+/* the cast window: sections, each a card; the area and the look open, the rest folded, saying what they're set to */
+.sfx-body:has(>.sfx-sec){gap:10px;padding:14px 18px 18px;background:var(--background-secondary-alt,var(--background-secondary))}
+.sfx-sec{border:1px solid var(--background-modifier-border);border-radius:var(--radius-l);background:var(--background-primary);flex:none}
+.sfx-sec>summary{list-style:none;display:flex;align-items:baseline;gap:12px;padding:11px 14px;cursor:pointer;user-select:none;border-radius:var(--radius-l)}
+.sfx-sec>summary::-webkit-details-marker{display:none}
+.sfx-sec>summary::before{content:"";flex:none;width:7px;height:7px;border-right:2px solid var(--text-faint);border-bottom:2px solid var(--text-faint);transform:translateY(-2px) rotate(-45deg);transition:transform 120ms ease;align-self:center}
+.sfx-sec[open]>summary::before{transform:translateY(-3px) rotate(45deg)}
+.sfx-sec.is-main>summary{cursor:default}
+.sfx-sec.is-main>summary::before{display:none}
+.sfx-sec:not(.is-main)>summary:hover{background:var(--background-modifier-hover)}
+.sfx-sec-title{font-weight:var(--font-semibold);color:var(--text-normal)}
+.sfx-sec-val{margin-left:auto;color:var(--text-faint);font-size:var(--font-ui-smaller);text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.sfx-sec.is-set>summary .sfx-sec-val{color:var(--text-accent)}
+.sfx-sec-body{padding:2px 14px 14px;display:flex;flex-direction:column;gap:10px}
+.sfx-sec[open]:not(.is-main)>.sfx-sec-body{border-top:1px solid var(--background-modifier-border);padding-top:12px}
+/* (each picker's own heading is the section's now) */
+.sfx-sec-body>div>.sfx-label:first-child{display:none}
+.sfx-sec-body .setting-item{padding:8px 0;border-top:0}
+.sfx-sec-body .setting-item+.setting-item{border-top:1px solid var(--background-modifier-border-hover,var(--background-modifier-border))}
+.sfx-sec-body .sfx-fields{margin-top:0}
+.sfx-sec-body .sfx-more,.sfx-sec-body .sfx-light{margin-top:0}
+.sfx-seg-wide{display:flex;width:100%}
+.sfx-seg-wide button{flex:1 1 auto}
+.sfx-opts{gap:18px;padding-top:10px;border-top:1px dashed var(--background-modifier-border)}
+.sfx-look-colours{display:flex;flex-direction:column;gap:10px;padding-top:12px;border-top:1px solid var(--background-modifier-border)}
+.sfx-head-sum{flex-basis:100%;color:var(--text-muted);font-size:var(--font-ui-small)}
+.sfx-sec-body .sfx-grid{max-height:272px;overflow:auto;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));scrollbar-width:thin;padding-right:2px}
 .sfx-bottom{flex:none;border-top:1px solid var(--divider-color);padding:14px 20px 16px;display:flex;flex-direction:column;gap:12px;background:var(--background-primary)}
 .sfx-chip{font-size:var(--font-ui-smaller);padding:2px 8px;border-radius:999px;background:var(--background-secondary);color:var(--text-muted);white-space:nowrap}
 .sfx-label{font-weight:var(--font-semibold);color:var(--text-normal);margin-bottom:10px}

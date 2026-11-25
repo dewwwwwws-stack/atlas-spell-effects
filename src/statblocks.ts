@@ -255,6 +255,27 @@ export class StatblockLinker {
   own: (name: string) => boolean = () => false;
   /** Each ability name in a statblock with no button, by its name's element: to give it one by hand (right-click). */
   private bare = new WeakMap<Element, { name: string; text: string }>();
+  /** A statblock's button by its name ("Rend", "Bite"): its link, or null (no button by that name there). */
+  linkNamed(statblock: HTMLElement, name: string): SpellLink | null {
+    const want = name.toLowerCase().trim();
+    const bare = (s: string) => s.toLowerCase().replace(/\s*\(.*?\)\s*/g, ' ').replace(/[.:]+\s*$/, '').trim();
+    const like = (n: string) => n === want ? 2 : n.startsWith(want + ' ') || n.split(/\s+/).includes(want) ? 1 : 0;
+    let best: SpellLink | null = null;
+    for (const b of Array.from(statblock.querySelectorAll<HTMLElement>('.' + CAST_BTN))) {
+      const l = this.buttons.get(b); if (!l) continue;
+      const k = like(bare(l.name));
+      if (k === 2) return l;
+      if (k && !best) best = l;
+    }
+    if (best) return best;
+    // (an attack with no button, rolling being off: made from its own text, as its button would be)
+    for (const el of Array.from(statblock.querySelectorAll('[data-sfx-ability]'))) {
+      const u = this.bare.get(el); if (!u || !like(bare(u.name))) continue;
+      const e = abilityEntry(u.name, u.text);
+      if (e) return { key: 'ability:' + norm(u.name), name: u.name, ability: u.text, ...(e.plain === 'attack' ? { attack: true } : {}) };
+    }
+    return null;
+  }
   /** The ability whose name is at `el` (or round it) in a statblock, with or without a button, or null. */
   abilityAt(el: Element): { name: string; text: string; statblock: HTMLElement; button: boolean } | null {
     const at = el.closest('[data-sfx-ability]');

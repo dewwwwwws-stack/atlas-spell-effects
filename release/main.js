@@ -1477,12 +1477,49 @@ function rangeOf(spell) {
 }
 function teleportOf(spell) {
   const d = String(spell.descFull ?? "");
-  const m = /\byou\s+teleport(?!\s+(?:each|any|a|an|one|the|that|those|them|it|up to (?:\w+ )?(?:willing|creatures?|targets?))\b)|\bteleport\s+yourself\b/i.exec(d);
+  const m = /\byou\s+teleport(?!\s+(?:each|any|a|an|one|the|that|those|them|it|up to (?:\w+ )?(?:willing|creatures?|targets?))\b)|\bteleport\s+yourself\b/i.exec(d) ?? (spell.ability && !areaOf(spell) ? /\b(?:it|he|she|they|the (?!target\b)[\w'’-]+(?: [\w'’-]+){0,2})\s+(?:can\s+|magically\s+)*teleports?(?!\s+(?:each|any|a|an|one|the|that|those|them|up to (?:\w+ )?(?:willing|creatures?|targets?))\b)/i.exec(d) : null);
   if (!m) return null;
   const after = d.slice(m.index, m.index + 160);
   const up = new RegExp(String.raw`up to (\d+(?:\.\d+)?)\s*-?\s*` + UNIT, "i").exec(after);
   if (up) return toGame(num2(up[1]), up[2] ?? "");
   return rangeOf(spell);
+}
+function thenOf(text) {
+  const N2 = String.raw`(one|a|an|1|two|2|three|3)`;
+  const NAME = String.raw`([A-Z][\w'’-]*(?: (?:or )?[A-Z][\w'’-]*){0,5}?)`;
+  const m = new RegExp(String.raw`\b(?:makes?|make|can make|uses?)\s+` + N2 + String.raw`\s+` + NAME + String.raw`\s+attacks?\b`).exec(text) ?? new RegExp(String.raw`\b(?:makes?|make|can make|uses?)\s+` + N2 + String.raw`\s+` + NAME + String.raw`\s+(?:Strike|strikes?)\b`).exec(text);
+  if (!m) return null;
+  const count2 = /two|2/i.test(m[1]) ? 2 : /three|3/i.test(m[1]) ? 3 : 1;
+  return { then: m[2], count: count2 };
+}
+function walkOf(text) {
+  const t = untag(text).replace(/\s+/g, " ");
+  const WHO = String.raw`(?:(?:^|[.;:]\s*|,\s*|\b(?:and|then|can|which|it|he|she|they)\s+)(?:it|he|she|they|the (?!target|creature it|other|ally|enemy|victim)[\w'’-]+(?: [\w'’-]+){0,2})\s+(?:can |may |magically |immediately |then )*|\b(?:and|then|can|may)\s+|^)`;
+  const VERB = String.raw`(?:move|moves|fly|flies|swim|swims|climb|climbs|burrow|burrows|run|runs|dash(?:es)?|leaps?|jumps?|charges?|shifts?|strides?|slithers?|scuttles?|lopes?|bounds?|hops?|walks?|glides?|dives?)`;
+  const PART = { "half": 0.5, "twice": 2, "double": 2, "three times": 3, "a quarter of": 0.25 };
+  let m = new RegExp(WHO + VERB + String.raw`\s+(?:up to |a distance (?:of |up to )?)?(half|twice|double|three times|a quarter of)?\s*(?:its|his|her|their)\s+(?:full\s+)?(?:walking\s+|flying\s+|swimming\s+|climbing\s+|burrowing\s+|fly\s+|swim\s+|climb\s+|burrow\s+)?speed\b`, "i").exec(t);
+  let w = m ? { of: m[1] ? PART[m[1].toLowerCase()] ?? 1 : 1 } : null;
+  if (!w && (m = new RegExp(WHO + VERB + String.raw`\s+(?:up to |a distance (?:of |up to )?)?(\d+(?:\.\d+)?)\s*-?\s*` + UNIT, "i").exec(t))) w = { size: toGame(num2(m[1]), m[2]) };
+  if (!w && (m = /\b(?:It |The [\w'’-]+(?: [\w'’-]+){0,2} |[.;]\s*|^)(Strides)\b(?!\s+(?:up to|a distance))(\s+(?:twice|two times|three times))?/.exec(t))) w = { of: m[2] ? /three/i.test(m[2]) ? 3 : 2 : 1 };
+  const bands = bandsRe();
+  if (!w && bands && (m = new RegExp(WHO + VERB + String.raw`\s+(?:anywhere\s+|up\s+to\s+|to\s+(?:a\s+(?:point|spot|place)\s+)?)?(?:within\s+)?(` + bands + String.raw`)(?:\s+range)?\b`, "i").exec(t))) w = { size: bandSize(m[1]) };
+  if (!w || w.size !== void 0 && !(w.size > 0)) return null;
+  const verbAt = m.index + Math.max(0, m[0].search(new RegExp(String.raw`\b` + VERB + String.raw`\b`, "i")));
+  const pre = t.slice(Math.max(0, t.lastIndexOf(".", verbAt - 1) + 1), verbAt);
+  const SUBJ = String.raw`\b(?:it|he|she|they|the [\w'’-]+(?: [\w'’-]+)?)\s+(?:can |may |magically |immediately |then |also )*$`;
+  if (/\b(?:ooze|cloud|fog|mist|sphere|wall|storm|wave|object|orb|blade|weapon|zone|vortex|whirlwind|illusion|duplicate|servant|swarm|mount|steed)\s+(?:can |may |then |immediately |also )*$/i.test(pre)) return null;
+  if (/\b(?:ally|allies|allied|another|other creatures?|each creature)\b/i.test(pre) && !new RegExp(SUBJ, "i").test(pre)) return null;
+  const said = t.slice(Math.max(0, t.lastIndexOf(".", m.index) + 1), m.index + m[0].length);
+  if (/\b(?:allied|ally|allies|another|other|its mount|each|any)\b[^.]*?\b(?:can|may|to)\s+\w+$/i.test(said.replace(/\s+(?:up to|a distance).*$/i, "").replace(/\s+\S+$/, "")) && !/\b(?:it|he|she|they|the [\w'’-]+)\s+(?:can |may |magically |immediately |then )*\w+\s+(?:up to|a distance)/i.test(m[0])) return null;
+  if (/\bonly\s+\w+\s+(?:up to\s+)?$/i.test(t.slice(0, m.index + m[0].length).replace(/\s*(?:up to |a distance )?\S+\s*\S*$/, " ")) || /^\s*(?:off the ground|high|above)/i.test(t.slice(m.index + m[0].length))) return null;
+  if (/^\s*(?:horizontally\s+|vertically\s+)?(?:for every|per)\b/i.test(t.slice(m.index + m[0].length))) return null;
+  if (/\bteleport/i.test(t.slice(Math.max(0, m.index - 40), m.index + m[0].length))) return null;
+  const after = thenOf(t.slice(m.index));
+  const eff = /\b(?:each|every|all|any)\s+(?:other\s+)?(?:creatures?|targets?)\b|\bsaving throw\b|\bEmanation\b|\bradius\b|\bcone\b|\bcube\b|\bsphere\b|\bcylinder\b|\bline\b(?! that)|\b(?:Weapon|Spell)? ?Attack(?: Roll)?:|\bto hit\b|\bmakes? (?:one|a|an|two|three) [\w ]*?attacks?\b/i.exec(t);
+  const first = !eff || m.index < eff.index;
+  const how = /\b(fl(?:y|ies|ying)|swim|swims|swimming|climb|climbs|climbing|burrow|burrows|burrowing)\b/i.exec(m[0]);
+  const mode = how ? /^fl/i.test(how[1]) ? "fly" : /^sw/i.test(how[1]) ? "swim" : /^cl/i.test(how[1]) ? "climb" : "burrow" : void 0;
+  return { ...w, ...mode ? { mode } : {}, ...after ? { then: after.then, ...after.count > 1 ? { count: after.count } : {} } : {}, first };
 }
 function lasting(spell) {
   const d = String(spell.duration ?? "").trim().toLowerCase();
@@ -1643,6 +1680,10 @@ function abilityEntry(name, text) {
     if (one && !save && !(attack && (r?.bonus !== void 0 || lead))) {
       e.key = `ability:${nm.toLowerCase()}:one`;
       e.range = one[1] ?? one[2] ?? one[3];
+      return e;
+    }
+    if (!attack && !save && !dealt && !/spellcasting/i.test(nm) && (walkOf(t) || teleportOf({ ...e, ability: true, descFull: t }))) {
+      e.key = `ability:${nm.toLowerCase()}:move`;
       return e;
     }
     if (!attack && !save && !dealt) return null;
@@ -3749,6 +3790,28 @@ var StatblockLinker = class {
   own = () => false;
   /** Each ability name in a statblock with no button, by its name's element: to give it one by hand (right-click). */
   bare = /* @__PURE__ */ new WeakMap();
+  /** A statblock's button by its name ("Rend", "Bite"): its link, or null (no button by that name there). */
+  linkNamed(statblock, name) {
+    const want = name.toLowerCase().trim();
+    const bare2 = (s) => s.toLowerCase().replace(/\s*\(.*?\)\s*/g, " ").replace(/[.:]+\s*$/, "").trim();
+    const like = (n) => n === want ? 2 : n.startsWith(want + " ") || n.split(/\s+/).includes(want) ? 1 : 0;
+    let best = null;
+    for (const b of Array.from(statblock.querySelectorAll("." + CAST_BTN))) {
+      const l = this.buttons.get(b);
+      if (!l) continue;
+      const k = like(bare2(l.name));
+      if (k === 2) return l;
+      if (k && !best) best = l;
+    }
+    if (best) return best;
+    for (const el of Array.from(statblock.querySelectorAll("[data-sfx-ability]"))) {
+      const u = this.bare.get(el);
+      if (!u || !like(bare2(u.name))) continue;
+      const e = abilityEntry(u.name, u.text);
+      if (e) return { key: "ability:" + norm(u.name), name: u.name, ability: u.text, ...e.plain === "attack" ? { attack: true } : {} };
+    }
+    return null;
+  }
   /** The ability whose name is at `el` (or round it) in a statblock, with or without a button, or null. */
   abilityAt(el) {
     const at = el.closest("[data-sfx-ability]");
@@ -5703,7 +5766,50 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
       return;
     }
     this.leaveDmScreen(how.statblock);
+    this.walkFrom = p.walk ? how.statblock : null;
     this.place(p, tok && this.mapOf(tok.tab) === this.mapOf(this.atlasTab()) ? tok.id : void 0);
+  }
+  /** The statblock a moving ability was used from: its attack after the move is that statblock's. */
+  walkFrom = null;
+  /** A move to make once the rest of its ability has been placed (Wing Attack's fly after its buffet). */
+  walkNext = null;
+  /** The move after its ability, once nothing's being placed (it was placed, or stopped: the move can be stopped too). */
+  walkWhenFree() {
+    const w = this.walkNext;
+    if (!w || this.placing) return;
+    this.walkNext = null;
+    this.walkFrom = w.statblock;
+    this.teleportCast(w.tab, w.pending, w.token, true);
+  }
+  /**
+   * How fast a token's creature moves (game units): its statblock's Speed ("30 ft., fly 60 ft."), its flying, swimming,
+   * climbing or burrowing one for `mode` when it has one; or six squares when it says none.
+   */
+  speedOf(tab, tokenId, mode) {
+    const fallback = squares(6);
+    const tok = tokenId ? tab.store.getState()?.objects?.tokens?.[tokenId] : void 0;
+    const texts = [];
+    const path = typeof tok?.["statblockPath"] === "string" ? tok["statblockPath"] : "";
+    const f = path ? this.app.vault.getAbstractFileByPath(path) : null;
+    if (f instanceof import_obsidian4.TFile) {
+      const fm = this.app.metadataCache.getFileCache(f)?.frontmatter;
+      for (const k of ["speed", "speeds", "movement"]) if (fm?.[k] !== void 0) texts.push(typeof fm[k] === "string" || typeof fm[k] === "number" ? String(fm[k]) : JSON.stringify(fm[k]));
+    }
+    const sb = this.walkFrom?.textContent ?? "";
+    const said = /\bSpeed\b[\s:]*([^\n]{0,80})/i.exec(sb);
+    if (said) texts.push(said[1]);
+    for (const t of texts) {
+      const one = (re) => {
+        const m = re.exec(t);
+        return m ? toGame(Number(m[1]), m[2] ?? "") : 0;
+      };
+      const N2 = String.raw`(\d+(?:\.\d+)?)\s*-?\s*(ft\.?|feet|foot|'|m\b|meters?|metres?|yards?|yds?|squares?)?`;
+      const wanted = mode ? one(new RegExp(String.raw`\b` + mode + String.raw`(?:ing)?\b["':\s]*` + N2, "i")) : 0;
+      const walk = one(new RegExp(String.raw`^\s*["']?(?:walk(?:ing)?["':\s]*)?` + N2, "i")) || one(new RegExp(String.raw`\bwalk(?:ing)?\b["':\s]*` + N2, "i"));
+      if (wanted > 0) return wanted;
+      if (walk > 0) return walk;
+    }
+    return fallback;
   }
   /**
    * For 15 seconds, while the DM drags tokens or plays as usual: how smooth Atlas is (frames, long stalls), how
@@ -7071,6 +7177,7 @@ ${text}`);
    * spell is on the map (a card closed, an area clicked).
    */
   chores() {
+    if (this.walkNext) this.safely("moving after", () => this.walkWhenFree());
     this.safely("selection", () => this.paintSelection());
     this.safely("placing with Atlas\u2019s tool", () => this.watchAtlasPlacing());
     this.safely("areas", () => this.syncAreas());
@@ -8886,13 +8993,16 @@ ${text}`);
    * how far they can go shown round them, then a click where they go. Its animation plays where they leave and where
    * they arrive, and the token moves there (Atlas's own move: Ctrl+Z puts it back), its space on the grid.
    */
-  teleportCast(tab, pending, casterToken) {
+  teleportCast(tab, pending, casterToken, walk = false, after) {
+    const sbFrom = this.walkFrom;
+    this.walkFrom = null;
     const doc = tab.canvas.ownerDocument;
     const hint = (tab.canvas.parentElement ?? doc.body).createDiv({ cls: "sfx-hint" });
     const reach = pending.teleport ?? 0;
     let caster = null;
+    const goes = walk ? `${pending.walk?.mode === "fly" ? "flies" : pending.walk?.mode === "swim" ? "swims" : pending.walk?.mode === "climb" ? "climbs" : pending.walk?.mode === "burrow" ? "burrows" : "moves"}` : "teleports";
     const say = () => {
-      hint.textContent = `${pending.name}: ` + (caster ? `click where ${this.tokenName(tab, caster.id)} teleports to (up to ${reach} ${unitLabel()})` : "click the token that teleports") + "   \xB7   Esc to stop";
+      hint.textContent = `${pending.name}: ` + (caster ? `click where ${this.tokenName(tab, caster.id)} ${goes} to (up to ${Math.round(reach * 10) / 10} ${unitLabel()})${pending.walk?.then ? `, then its ${pending.walk.count && pending.walk.count > 1 ? `${pending.walk.count} ` : ""}${pending.walk.then} attack${pending.walk.count && pending.walk.count > 1 ? "s" : ""}` : ""}` : `click the token that ${goes}`) + "   \xB7   Esc to stop";
     };
     const toWorld = (e) => {
       const r = tab.canvas.getBoundingClientRect();
@@ -8964,7 +9074,25 @@ ${text}`);
       const id = caster.id;
       this.placing.stop();
       if (!q) return;
-      this.teleportTo(tab, pending, id, from, q);
+      if (!walk) this.teleportTo(tab, pending, id, from, q);
+      else {
+        const st = tab.store.getState();
+        if (Math.hypot(q.x - from.x, q.y - from.y) >= 1 && typeof st.moveToken === "function") st.moveToken(id, q.x, q.y);
+      }
+      if (after) {
+        window.setTimeout(() => after(id), 60);
+        return;
+      }
+      const then = pending.walk?.then;
+      if (!then) return;
+      const linker = sbFrom ? this.linkers.get(sbFrom.ownerDocument) : void 0;
+      const link = sbFrom && linker ? then.split(/\s+or\s+/i).map((n2) => linker.linkNamed(sbFrom, n2)).find(Boolean) ?? null : null;
+      const n = pending.walk?.count ?? 1;
+      const go = link && n > 1 ? { ...link, multi: Array.from({ length: n }, () => ({ name: link.name, text: link.ability ?? "" })) } : link;
+      if (go && sbFrom) window.setTimeout(() => {
+        void this.castFromStatblock(go, { shift: false, statblock: sbFrom });
+      }, 60);
+      else new import_obsidian4.Notice(`Combat+: now its ${then} attack.`);
     };
     const swallow = (e) => {
       const pe = e;
@@ -9030,6 +9158,21 @@ ${text}`);
     this.saveSoon();
     if (pending.teleport && pending.teleport > 0) {
       this.teleportCast(tab, pending, casterToken);
+      return;
+    }
+    if (pending.walk) {
+      const reach2 = pending.walk.size ?? (pending.walk.of ?? 1) * this.speedOf(tab, casterToken, pending.walk.mode);
+      const move2 = { ...pending, teleport: reach2 };
+      const rest = pending.key.endsWith(":move") ? null : { ...pending, walk: void 0 };
+      if (!rest || pending.walk.first) {
+        this.teleportCast(tab, move2, casterToken, true, rest ? (id) => this.place(rest, id) : void 0);
+        return;
+      }
+      const from = this.walkFrom;
+      this.walkNext = { tab, pending: move2, token: casterToken, statblock: from };
+      this.walkFrom = null;
+      this.place(rest, casterToken);
+      this.wake();
       return;
     }
     if (pending.atlas?.tool && pending.atlas.draw !== "animation" && this.areasOn(tab) && toolShapeOf(pending.area)) {
@@ -10428,6 +10571,13 @@ var CastModal = class extends import_obsidian4.Modal {
   range;
   /** How far it teleports its caster (game units); 0: it doesn't. */
   teleport = 0;
+  /** How a creature's ability moves it (no area of its own): how far, and what it does after. */
+  walk = null;
+  /** Whether the move was changed here (kept when saved; else read from its text each time). */
+  walkSet = false;
+  /** The sections opened or closed by hand, kept while the window is open. */
+  opened = /* @__PURE__ */ new Set();
+  closed = /* @__PURE__ */ new Set();
   /** Atlas's look for its area (fire, frost…); '': none. */
   look = "";
   /** Its Atlas area's other choices: how it's drawn, its light, walls, players, how it's placed. */
@@ -10530,7 +10680,7 @@ var CastModal = class extends import_obsidian4.Modal {
         const ranged = !!spec && (!!spec.ranged || spec.short !== void 0 && spec.reach === void 0);
         this.area = { shape: "line", size: squares(6), width: square(), from: "caster", lasting: false, target: "bolt" };
         const bolt = this.area;
-        this.file = r?.file ?? attackFile(c.name, text, P.files, { melee: MELEE_DEFAULTS[P.settings.attackMelee] ?? "", ranged: RANGED_DEFAULTS[P.settings.attackRanged] ?? "" }, (said) => fiveEFile(c.name, said, void 0, bolt, P.files), ranged)?.path;
+        this.file = r?.file ?? attackFile(c.name, text, P.files, { melee: MELEE_DEFAULTS[P.settings.attackMelee] ?? "", ranged: RANGED_DEFAULTS[P.settings.attackRanged] ?? "" }, (said2) => fiveEFile(c.name, said2, void 0, bolt, P.files), ranged)?.path;
       }
       if (r?.colour) this.colour = r.colour;
       this.colour2 = r?.colour2;
@@ -10549,6 +10699,11 @@ var CastModal = class extends import_obsidian4.Modal {
       this.conditions = r?.conditions ?? spellConditions(entry, P.conditionNames());
       this.range = entry ? rangeOf(entry) ?? void 0 : void 0;
       this.teleport = r?.teleport ?? (entry ? teleportOf(entry) ?? 0 : 0);
+      const said = String(entry?.descFull ?? "");
+      const then = entry?.ability && this.teleport > 0 ? thenOf(said) : null;
+      this.walk = entry?.ability && !this.teleport ? walkOf(said) : then ? { then: then.then, ...then.count > 1 ? { count: then.count } : {}, first: true } : null;
+      this.walkSet = r?.walk !== void 0;
+      if (r?.walk !== void 0) this.walk = r.walk;
       {
         const read = entry ? moreOf(entry, this.area) : {};
         this.more = r?.more ? { ...r.more, ...read.steps ? { steps: read.steps } : {} } : read;
@@ -10681,11 +10836,43 @@ var CastModal = class extends import_obsidian4.Modal {
     }
     const acts = head.createDiv({ cls: "sfx-head-actions" });
     ht.createSpan({ cls: "sfx-chip", text: this.choice?.ability ? P.settings.abilities[P.abilityKey(this.name)] ? "Saved ability" : "Ability" : this.choice?.source === "stored" ? "Saved" : this.choice?.source === "note" ? "Spell note" : "Your own effect" });
+    ht.createDiv({ cls: "sfx-head-sum", text: this.summary() });
     const body = pane.createDiv({ cls: "sfx-body" });
     const bottom = pane.createDiv({ cls: "sfx-bottom" });
-    const area = body.createDiv();
-    area.createDiv({ cls: "sfx-label", text: "Area" });
-    const seg = area.createDiv({ cls: "sfx-seg" });
+    const sec = (id, title, val, set, always = false) => {
+      const d = body.createEl("details", { cls: "sfx-sec" + (set ? " is-set" : "") + (always ? " is-main" : "") });
+      d.open = always || this.opened.has(id) || set && !this.closed.has(id);
+      d.ontoggle = () => {
+        if (always) {
+          d.open = true;
+          return;
+        }
+        if (d.open) {
+          this.opened.add(id);
+          this.closed.delete(id);
+        } else {
+          this.opened.delete(id);
+          this.closed.add(id);
+        }
+      };
+      const sm = d.createEl("summary");
+      sm.createSpan({ cls: "sfx-sec-title", text: title });
+      if (val) sm.createSpan({ cls: "sfx-sec-val", text: val });
+      return d.createDiv({ cls: "sfx-sec-body" });
+    };
+    const drop = (el) => {
+      if (!el.querySelector("button, input, select, .setting-item")) el.closest("details")?.remove();
+    };
+    const onlyMoves = !!this.walk && !!this.choice?.entry?.key.endsWith(":move") && !(this.teleport > 0);
+    const moveSec = () => {
+      const moves = this.teleport > 0 ? `Teleports up to ${this.teleport} ${unitLabel()}` : this.walk ? this.walkText() : "";
+      const mv = sec("move", "Movement", moves || "None", !!moves, onlyMoves);
+      this.teleportPicker(mv);
+      this.walkPicker(mv);
+    };
+    if (onlyMoves) moveSec();
+    const area = onlyMoves ? sec("area", "Area", "None: it only moves", false) : sec("area", "Area", "", true, true);
+    const seg = area.createDiv({ cls: "sfx-seg sfx-seg-wide" });
     const chosen = this.area.target === "on" ? "on" : this.area.shape;
     for (const [c, label] of AREA_CHOICES) {
       const b = seg.createEl("button", { text: label, cls: chosen === c ? "is-on" : "" });
@@ -10713,6 +10900,7 @@ var CastModal = class extends import_obsidian4.Modal {
       };
     }
     const f = area.createDiv({ cls: "sfx-fields" });
+    const fo = area.createDiv({ cls: "sfx-fields sfx-opts" });
     const lab = (t) => f.createSpan({ text: t });
     if (this.area.shape === "wall") {
       const ws = f.createDiv({ cls: "sfx-seg" });
@@ -10805,7 +10993,7 @@ var CastModal = class extends import_obsidian4.Modal {
       }
     }
     const toggle = (text, on, set, title = "") => {
-      const l = f.createEl("label", { cls: "sfx-toggle" });
+      const l = fo.createEl("label", { cls: "sfx-toggle" });
       if (title) l.title = title;
       const c = l.createEl("input", { type: "checkbox" });
       c.checked = on;
@@ -10831,19 +11019,33 @@ var CastModal = class extends import_obsidian4.Modal {
         this.attach = v;
       }, "It moves with the caster\u2019s token (a beholder\u2019s eye, a breath that stays)");
     }
-    if (this.area.shape === "wall") wallsPicker(body, this.area.blocks, this.area.lasting, (b) => {
+    if (this.area.shape === "wall") wallsPicker(area, this.area.blocks, this.area.lasting, (b) => {
       this.area.blocks = b;
       this.render();
     });
-    lightPicker(body, this.light, this.area.lasting, (l) => {
+    const lookBox = sec("look", "Look", "", true, true);
+    const m = this.more;
+    if (!onlyMoves) moveSec();
+    const li = sec("light", "Light", this.light?.mode === "light" ? `Bright ${this.light.bright}, dim ${this.light.dim} ${unitLabel()}` : this.light?.mode === "darkness" ? "Magical darkness" : "None", !!this.light);
+    lightPicker(li, this.light, this.area.lasting, (l) => {
       this.light = l;
       this.render();
     });
-    if (this.area.target !== "bolt" && this.area.lasting) this.conditionsPicker(body);
-    this.teleportPicker(body);
-    this.morePicker(body);
-    if (this.area.target !== "bolt" && this.area.target !== "on" && this.area.shape !== "wall") this.atlasPicker(body);
-    lookPicker(body.createDiv(), bottom, {
+    if (this.area.target !== "bolt" && this.area.lasting) {
+      const co = sec("conds", "Conditions", this.conditions.length ? this.conditions.join(", ") : "None", this.conditions.length > 0);
+      this.conditionsPicker(co);
+    }
+    const also = [m.push ? `${m.push > 0 ? "Pushes" : "Pulls"} ${Math.abs(m.push)} ${unitLabel()}` : "", (m.count ?? 1) > 1 ? `${m.count} of them` : "", m.chain ? `Leaps to ${m.chain} more` : "", m.summon ? "A thing to move" : "", m.terrain ? "Difficult terrain" : ""].filter(Boolean).join(" \xB7 ");
+    const al = sec("also", "Also", also || "Nothing else", !!also);
+    this.morePicker(al);
+    drop(al);
+    if (this.area.target !== "bolt" && this.area.target !== "on" && this.area.shape !== "wall") {
+      const draw = this.atlas.draw === "area" ? "Atlas\u2019s area only" : this.atlas.draw === "animation" ? "Animation only" : "Animation over Atlas\u2019s area";
+      const at = sec("atlas", "Atlas area", draw, !!this.atlas.draw || !!this.atlas.hidden || !!this.atlas.tool);
+      this.atlasPicker(at);
+      drop(at);
+    }
+    lookPicker(lookBox.createDiv(), lookBox.createDiv({ cls: "sfx-look-colours" }), {
       app: this.app,
       plugin: P,
       name: this.name === "Effect" ? "" : this.name,
@@ -10960,7 +11162,7 @@ var CastModal = class extends import_obsidian4.Modal {
   }
   /** The choices made here, to be remembered. */
   memo() {
-    return { unit: unitNow(), more: this.kept(), ...this.motion ? { motion: this.motion } : {}, ...this.file ? { file: this.file } : {}, colour: this.colour, ...this.colour2 ? { colour2: this.colour2 } : {}, ...this.alpha ? { alpha: this.alpha } : {}, shape: this.area.shape, size: this.area.size, ...this.area.width ? { width: this.area.width } : {}, ...this.area.angle ? { angle: this.area.angle } : {}, from: this.area.from, lasting: this.area.lasting, light: this.light, ...this.area.ring ? { ring: this.area.ring } : {}, ...this.area.round ? { round: true } : {}, ...this.area.blocks ? { blocks: this.area.blocks } : {}, ...this.area.target ? { target: this.area.target } : {}, ...this.area.self ? { self: true } : {}, conditions: [...this.conditions], teleport: this.teleport, look: this.look, atlas: { ...this.atlas } };
+    return { unit: unitNow(), more: this.kept(), ...this.motion ? { motion: this.motion } : {}, ...this.file ? { file: this.file } : {}, colour: this.colour, ...this.colour2 ? { colour2: this.colour2 } : {}, ...this.alpha ? { alpha: this.alpha } : {}, shape: this.area.shape, size: this.area.size, ...this.area.width ? { width: this.area.width } : {}, ...this.area.angle ? { angle: this.area.angle } : {}, from: this.area.from, lasting: this.area.lasting, light: this.light, ...this.area.ring ? { ring: this.area.ring } : {}, ...this.area.round ? { round: true } : {}, ...this.area.blocks ? { blocks: this.area.blocks } : {}, ...this.area.target ? { target: this.area.target } : {}, ...this.area.self ? { self: true } : {}, conditions: [...this.conditions], teleport: this.teleport, ...this.walkSet ? { walk: this.walk } : {}, look: this.look, atlas: { ...this.atlas } };
   }
   /** What is set up now, ready to place (its animation fetched first; a spell's choices remembered). */
   async pending() {
@@ -10987,7 +11189,7 @@ var CastModal = class extends import_obsidian4.Modal {
       if (this.choice?.entry?.plain === "attack" && /(?:^|\s)\+\d\b|\((?:uncommon|rare|very rare|legendary|artifact|artefact)\)|\bmagic(?:al)? (?:weapon|attack)/i.test(`${this.choice.name} ${this.choice.entry.descFull ?? ""}`)) spec.magic = true;
       if (this.conditions.length && spec.kind !== "damage" && !this.area.lasting) spec.conds = [...this.conditions];
     }
-    return { name: this.name, key, ...this.choice?.entry?.plain ? { plain: true } : {}, ...spec ? { roll: spec } : {}, ...hasMore(this.more) ? { more: { ...this.more } } : {}, ...this.motion ? { motion: this.motion } : {}, ...range ? { range } : {}, ...this.conditions.length && this.area.target !== "bolt" ? { conditions: [...this.conditions] } : {}, area: { ...this.area }, ...this.file ? { file: this.file } : {}, colour: this.colour, ...this.colour2 ? { colour2: this.colour2 } : {}, ...this.alpha ? { alpha: this.alpha } : {}, ...this.attach ? { attach: true } : {}, ...this.light ? { light: { ...this.light } } : {}, ...this.teleport > 0 ? { teleport: this.teleport } : {}, ...this.look ? { look: this.look } : {}, ...Object.keys(this.atlas).length ? { atlas: { ...this.atlas } } : {} };
+    return { name: this.name, key, ...this.choice?.entry?.plain ? { plain: true } : {}, ...spec ? { roll: spec } : {}, ...hasMore(this.more) ? { more: { ...this.more } } : {}, ...this.motion ? { motion: this.motion } : {}, ...range ? { range } : {}, ...this.conditions.length && this.area.target !== "bolt" ? { conditions: [...this.conditions] } : {}, area: { ...this.area }, ...this.file ? { file: this.file } : {}, colour: this.colour, ...this.colour2 ? { colour2: this.colour2 } : {}, ...this.alpha ? { alpha: this.alpha } : {}, ...this.attach ? { attach: true } : {}, ...this.light ? { light: { ...this.light } } : {}, ...this.teleport > 0 ? { teleport: this.teleport } : {}, ...this.walk ? { walk: { ...this.walk } } : {}, ...this.look ? { look: this.look } : {}, ...Object.keys(this.atlas).length ? { atlas: { ...this.atlas } } : {} };
   }
   /**
    * Its Atlas area (Atlas 0.15 on, where the add-on uses Atlas's areas): Atlas's own choices for it (its look, its
@@ -11104,8 +11306,65 @@ var CastModal = class extends import_obsidian4.Modal {
       }));
     }
   }
+  /** What it does, in a few words: "60 ft cone · lasts until ended · then it moves". */
+  summary() {
+    const a = this.area;
+    const moves = this.teleport > 0 ? `Teleports up to ${this.teleport} ${unitLabel()}${this.walk?.then ? `, then its ${this.walk.then} attack` : ""}` : this.walk ? this.walkText() : "";
+    if (moves && this.choice?.entry?.key.endsWith(":move")) return moves;
+    const what = describe(a);
+    const parts = [what.charAt(0).toUpperCase() + what.slice(1), a.lasting ? "lasts until ended" : "", moves ? moves.charAt(0).toLowerCase() + moves.slice(1) : ""];
+    return parts.filter(Boolean).join(" \xB7 ");
+  }
+  /** How it moves its creature, in a few words: "Moves half its Speed, then its Rend attack". */
+  walkText() {
+    const w = this.walk;
+    if (!w) return "";
+    const verb = w.mode === "fly" ? "Flies" : w.mode === "swim" ? "Swims" : w.mode === "climb" ? "Climbs" : w.mode === "burrow" ? "Burrows" : "Moves";
+    const far = w.size !== void 0 ? `up to ${w.size} ${unitLabel()}` : w.of === 0.5 ? "half its Speed" : w.of === 2 ? "twice its Speed" : w.of && w.of !== 1 ? `${w.of}\xD7 its Speed` : "its Speed";
+    const when = this.choice?.entry?.key.endsWith(":move") ? "" : w.first ? " first" : " after";
+    return `${verb} ${far}${when}${w.then ? `, then its ${w.count && w.count > 1 ? `${w.count} ` : ""}${w.then} attack${w.count && w.count > 1 ? "s" : ""}` : ""}`;
+  }
+  /** Whether it moves its creature (a creature's ability: "moves up to half its Speed"), how far, and when. */
+  walkPicker(body) {
+    if (this.teleport > 0) return;
+    const w = this.walk;
+    const own = this.choice?.entry?.key.endsWith(":move");
+    const row = new import_obsidian4.Setting(body.createDiv({ cls: "sfx-walk" })).setName("Moves the creature").setDesc(w ? `${this.walkText()}. Click where it goes: its token moves there (Ctrl+Z puts it back, Esc skips).` : "Off: it stays where it is.");
+    row.addToggle((t) => t.setValue(!!w).onChange((v) => {
+      this.walkSet = true;
+      this.walk = v ? walkOf(String(this.choice?.entry?.descFull ?? "")) ?? { of: 1, first: true } : null;
+      this.render();
+    }));
+    if (!w) return;
+    row.addDropdown((d) => d.addOptions({ "0.5": "Half its Speed", "1": "Its Speed", "2": "Twice its Speed", set: "A set distance" }).setValue(w.size !== void 0 ? "set" : String(w.of ?? 1)).onChange((v) => {
+      this.walkSet = true;
+      const { size, of, ...rest } = w;
+      void size;
+      void of;
+      this.walk = v === "set" ? { ...rest, size: w.size ?? squares(6) } : { ...rest, of: Number(v) };
+      this.render();
+    }));
+    if (w.size !== void 0) row.addText((t) => {
+      t.inputEl.type = "number";
+      t.inputEl.addClass("sfx-num");
+      t.setValue(String(w.size));
+      t.onChange((v) => {
+        const n = Number(v);
+        if (n > 0) {
+          this.walkSet = true;
+          this.walk = { ...w, size: n };
+        }
+      });
+    });
+    if (!own) new import_obsidian4.Setting(body.createDiv({ cls: "sfx-walk" })).setName("When").setDesc("Before the rest of it (placed from where it lands), or after.").addDropdown((d) => d.addOptions({ first: "Moves first", after: "Moves after" }).setValue(w.first ? "first" : "after").onChange((v) => {
+      this.walkSet = true;
+      this.walk = { ...w, first: v === "first" };
+      this.render();
+    }));
+  }
   /** Whether it teleports its caster, and how far (from its text: "you teleport up to 30 feet"). */
   teleportPicker(body) {
+    if (this.walk && !(this.teleport > 0)) return;
     const row = new import_obsidian4.Setting(body.createDiv({ cls: "sfx-teleport" })).setName("Teleports the caster").setDesc(this.teleport > 0 ? `Up to ${this.teleport} ${unitLabel()}: click the caster, then where they go. The token moves (Ctrl+Z puts it back).` : "Off: the caster stays where they are.");
     row.addToggle((t) => t.setValue(this.teleport > 0).onChange((v) => {
       this.teleport = v ? this.choice?.entry ? teleportOf(this.choice.entry) ?? this.range ?? 30 : this.range ?? 30 : 0;

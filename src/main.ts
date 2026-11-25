@@ -17,7 +17,7 @@ import { IN_SPELL_ID, IN_SPELL, ROUND_SECS, idsOf, upFor, timeOf, secondsOf, spe
 import { call, field, type AtlasAssets, type Tab, type AtlasView, type AtlasViewport, type AtlasState, type CanvasNode, type PlayersView, type Measurement } from './atlas';
 import { FolderSuggest, BaseSuggest } from './suggest';
 import { SpellNames, StatblockLinker, abilityLinksOf, type SpellLink } from './statblocks';
-import { areaOf, abilityEntry, targetOf, fallbackArea, describe, rangeOf, teleportOf, setRules, unitLabel, square, squares, fromFeet, type GameUnitType, type Area, type Shape, type SpellEntry, type WallBlocks } from './areas';
+import { areaOf, abilityEntry, targetOf, fallbackArea, describe, rangeOf, teleportOf, walkOf, thenOf, toGame, type Walk, setRules, unitLabel, square, squares, fromFeet, type GameUnitType, type Area, type Shape, type SpellEntry, type WallBlocks } from './areas';
 import { indexFiles, indexFile, matchesFor, defaultFor, hintsOf, coloursOf, search, nearestLength, type EffectFile } from './library';
 import { isStored, storedFrom, writeDefaults, clearDefaults, baseFile, noteName, unitFactor, unitNow, type StoredSpell } from './storage';
 import { looksLikeItem, looksLikeSpell, looksLikeStatblock, spellFromNote } from './notes';
@@ -39,7 +39,7 @@ const uid = () => 'fx' + Date.now().toString(36) + Math.random().toString(36).sl
 
 /** A preset, from versions before 1.4: made into a saved spell (a note of its own) when the add-on loads. */
 export interface Preset { id: string; name: string; of: string; area: Area; file?: string; colour: string; colour2?: string; alpha?: number; attach?: boolean; light?: EffectLight | null }
-interface Remembered { /** An ability given its button by hand (its text names nothing the add-on reads): its shape and size are these. */ own?: boolean; more?: More; motion?: string; atlas?: AtlasChoices; look?: string; teleport?: number; conditions?: string[]; range?: number; unit?: string; angle?: number; target?: 'on' | 'bolt'; self?: boolean; colour2?: string; alpha?: number; file?: string; colour?: string; shape?: Shape; size?: number; width?: number; from?: 'caster' | 'point'; lasting?: boolean; light?: EffectLight | null; ring?: number; round?: boolean; blocks?: WallBlocks }
+interface Remembered { /** An ability given its button by hand (its text names nothing the add-on reads): its shape and size are these. */ own?: boolean; /** How it moves its creature (null: it doesn't), when changed from its text's. */ walk?: Walk | null; more?: More; motion?: string; atlas?: AtlasChoices; look?: string; teleport?: number; conditions?: string[]; range?: number; unit?: string; angle?: number; target?: 'on' | 'bolt'; self?: boolean; colour2?: string; alpha?: number; file?: string; colour?: string; shape?: Shape; size?: number; width?: number; from?: 'caster' | 'point'; lasting?: boolean; light?: EffectLight | null; ring?: number; round?: boolean; blocks?: WallBlocks }
 interface Settings {
   folders: string;                 // vault folders with effect files, comma-separated; '' = any folder named like JB2A or "Spell Effects"
   remember: Record<string, Remembered>;
@@ -169,7 +169,7 @@ function pickOpt(s: Step, feet: number | undefined, choice: number | null): Step
 /** One attack of a Multiattack: its name, roll and animation; `alts`, the attacks it may be instead (itself first). */
 interface StepOpt { name: string; roll: RollSpec; file?: string }
 interface Step extends StepOpt { alts?: StepOpt[] }
-interface Pending { name: string; key: string; area: Area; file?: string; colour: string; colour2?: string; /** How its drawn shape moves while it lasts. */ motion?: string; /** What it rolls, from its text. */ roll?: RollSpec; /** A plain attack: rolled at each creature clicked, with nothing drawn. */ plain?: boolean; /** A Multiattack: the attacks it makes, one for each creature clicked, in turn. */ sequence?: Step[]; /** What else it does (pushes, how many, a chain, a thing it makes, difficult terrain). */ more?: More; alpha?: number; attach?: boolean; light?: EffectLight; /** How far from its caster it can be cast (feet, from the edge of their space). */ range?: number; /** The conditions it gives the creatures inside it (names). */ conditions?: string[]; /** It teleports its caster up to this far (game units). */ teleport?: number; /** Atlas's look for its area (fire, frost…); '' or missing: none. */ look?: string; /** Its Atlas area's choices (Atlas 0.15 on). */ atlas?: AtlasChoices }
+interface Pending { name: string; key: string; area: Area; /** A creature's ability that moves it ("moves up to half its Speed, and it makes one Rend attack"): how far, and what it does after. */ walk?: Walk; file?: string; colour: string; colour2?: string; /** How its drawn shape moves while it lasts. */ motion?: string; /** What it rolls, from its text. */ roll?: RollSpec; /** A plain attack: rolled at each creature clicked, with nothing drawn. */ plain?: boolean; /** A Multiattack: the attacks it makes, one for each creature clicked, in turn. */ sequence?: Step[]; /** What else it does (pushes, how many, a chain, a thing it makes, difficult terrain). */ more?: More; alpha?: number; attach?: boolean; light?: EffectLight; /** How far from its caster it can be cast (feet, from the edge of their space). */ range?: number; /** The conditions it gives the creatures inside it (names). */ conditions?: string[]; /** It teleports its caster up to this far (game units). */ teleport?: number; /** Atlas's look for its area (fire, frost…); '' or missing: none. */ look?: string; /** Its Atlas area's choices (Atlas 0.15 on). */ atlas?: AtlasChoices }
 /** A spell's Atlas area, as chosen in the cast window: how it's drawn, its light, walls, players, how it's placed. */
 interface AtlasChoices { draw?: 'area' | 'animation'; areaLight?: 'atlas' | 'none'; throughWalls?: boolean; hidden?: boolean; tool?: boolean }
 /** A spell's remembered choices in the game's units now (remembered in another game system's: the same squares). */
@@ -906,7 +906,48 @@ export default class AtlasSpellEffects extends Plugin {
     const p = this.withSequence(await m.pending(), link);
     if (!this.atlasTab()) { new Notice('Combat+: open an Atlas map first.'); return; }
     this.leaveDmScreen(how.statblock);
+    this.walkFrom = p.walk ? how.statblock : null;
     this.place(p, tok && this.mapOf(tok.tab) === this.mapOf(this.atlasTab()!) ? tok.id : undefined);
+  }
+  /** The statblock a moving ability was used from: its attack after the move is that statblock's. */
+  private walkFrom: HTMLElement | null = null;
+  /** A move to make once the rest of its ability has been placed (Wing Attack's fly after its buffet). */
+  private walkNext: { tab: Tab; pending: Pending; token: string | undefined; statblock: HTMLElement | null } | null = null;
+  /** The move after its ability, once nothing's being placed (it was placed, or stopped: the move can be stopped too). */
+  private walkWhenFree(): void {
+    const w = this.walkNext;
+    if (!w || this.placing) return;
+    this.walkNext = null;
+    this.walkFrom = w.statblock;
+    this.teleportCast(w.tab, w.pending, w.token, true);
+  }
+
+  /**
+   * How fast a token's creature moves (game units): its statblock's Speed ("30 ft., fly 60 ft."), its flying, swimming,
+   * climbing or burrowing one for `mode` when it has one; or six squares when it says none.
+   */
+  speedOf(tab: Tab, tokenId: string | undefined, mode?: Walk['mode']): number {
+    const fallback = squares(6);
+    const tok = tokenId ? tab.store.getState()?.objects?.tokens?.[tokenId] as Record<string, unknown> | undefined : undefined;
+    const texts: string[] = [];
+    const path = typeof tok?.['statblockPath'] === 'string' ? tok['statblockPath'] : '';
+    const f = path ? this.app.vault.getAbstractFileByPath(path) : null;
+    if (f instanceof TFile) {
+      const fm = this.app.metadataCache.getFileCache(f)?.frontmatter as Record<string, unknown> | undefined;
+      for (const k of ['speed', 'speeds', 'movement']) if (fm?.[k] !== undefined) texts.push(typeof fm[k] === 'string' || typeof fm[k] === 'number' ? String(fm[k]) : JSON.stringify(fm[k]));
+    }
+    // (or the open statblock it was used from)
+    const sb = this.walkFrom?.textContent ?? '';
+    const said = /\bSpeed\b[\s:]*([^\n]{0,80})/i.exec(sb); if (said) texts.push(said[1]);
+    for (const t of texts) {
+      const one = (re: RegExp) => { const m = re.exec(t); return m ? toGame(Number(m[1]), m[2] ?? '') : 0; };
+      const N = String.raw`(\d+(?:\.\d+)?)\s*-?\s*(ft\.?|feet|foot|'|m\b|meters?|metres?|yards?|yds?|squares?)?`;
+      const wanted = mode ? one(new RegExp(String.raw`\b` + mode + String.raw`(?:ing)?\b["':\s]*` + N, 'i')) : 0;
+      const walk = one(new RegExp(String.raw`^\s*["']?(?:walk(?:ing)?["':\s]*)?` + N, 'i')) || one(new RegExp(String.raw`\bwalk(?:ing)?\b["':\s]*` + N, 'i'));
+      if (wanted > 0) return wanted;
+      if (walk > 0) return walk;
+    }
+    return fallback;
   }
 
   /**
@@ -1973,6 +2014,8 @@ export default class AtlasSpellEffects extends Plugin {
    * spell is on the map (a card closed, an area clicked).
    */
   private chores(): void {
+    // a move waiting for its ability to be placed
+    if (this.walkNext) this.safely('moving after', () => this.walkWhenFree());
     // each on its own: one going wrong never stops the others (lights and walls are kept in step whatever happens)
     this.safely('selection', () => this.paintSelection());
     this.safely('placing with Atlas’s tool', () => this.watchAtlasPlacing());
@@ -3425,12 +3468,15 @@ export default class AtlasSpellEffects extends Plugin {
    * how far they can go shown round them, then a click where they go. Its animation plays where they leave and where
    * they arrive, and the token moves there (Atlas's own move: Ctrl+Z puts it back), its space on the grid.
    */
-  teleportCast(tab: Tab, pending: Pending, casterToken?: string): void {
+  teleportCast(tab: Tab, pending: Pending, casterToken?: string, walk = false, after?: (token: string) => void): void {
+    const sbFrom = this.walkFrom;
+    this.walkFrom = null;
     const doc = tab.canvas.ownerDocument;
     const hint = (tab.canvas.parentElement ?? doc.body).createDiv({ cls: 'sfx-hint' });
     const reach = pending.teleport ?? 0;
     let caster: { id: string; x: number; y: number; r: number } | null = null;
-    const say = () => { hint.textContent = `${pending.name}: ` + (caster ? `click where ${this.tokenName(tab, caster.id)} teleports to (up to ${reach} ${unitLabel()})` : 'click the token that teleports') + '   ·   Esc to stop'; };
+    const goes = walk ? `${pending.walk?.mode === 'fly' ? 'flies' : pending.walk?.mode === 'swim' ? 'swims' : pending.walk?.mode === 'climb' ? 'climbs' : pending.walk?.mode === 'burrow' ? 'burrows' : 'moves'}` : 'teleports';
+    const say = () => { hint.textContent = `${pending.name}: ` + (caster ? `click where ${this.tokenName(tab, caster.id)} ${goes} to (up to ${Math.round(reach * 10) / 10} ${unitLabel()})${pending.walk?.then ? `, then its ${pending.walk.count && pending.walk.count > 1 ? `${pending.walk.count} ` : ''}${pending.walk.then} attack${pending.walk.count && pending.walk.count > 1 ? 's' : ''}` : ''}` : `click the token that ${goes}`) + '   ·   Esc to stop'; };
     const toWorld = (e: PointerEvent | MouseEvent): Point | null => {
       const r = tab.canvas.getBoundingClientRect();
       if (e.clientX < r.left || e.clientY < r.top || e.clientX > r.right || e.clientY > r.bottom) return null;
@@ -3486,7 +3532,24 @@ export default class AtlasSpellEffects extends Plugin {
       const q = landing(p, e); const from = { x: caster.x, y: caster.y }; const id = caster.id;
       this.placing.stop();
       if (!q) return;
-      this.teleportTo(tab, pending, id, from, q);
+      if (!walk) this.teleportTo(tab, pending, id, from, q);
+      else {
+        // moved (Atlas's own move: Ctrl+Z puts it back)
+        const st = tab.store.getState();
+        if (Math.hypot(q.x - from.x, q.y - from.y) >= 1 && typeof st.moveToken === 'function') st.moveToken(id, q.x, q.y);
+      }
+      // then the rest of the ability from where it is now, or its attack from its statblock, at whoever's clicked
+      if (after) { window.setTimeout(() => after(id), 60); return; }
+      const then = pending.walk?.then;
+      if (!then) return;
+      // ("its Drill or Wrecking Ball attack": the first of them it has a button for)
+      const linker = sbFrom ? this.linkers.get(sbFrom.ownerDocument) : undefined;
+      const link = sbFrom && linker ? then.split(/\s+or\s+/i).map((n) => linker.linkNamed(sbFrom, n)).find(Boolean) ?? null : null;
+      // ("makes two Tusk attacks": each in turn, as a Multiattack's are)
+      const n = pending.walk?.count ?? 1;
+      const go = link && n > 1 ? { ...link, multi: Array.from({ length: n }, () => ({ name: link.name, text: link.ability ?? '' })) } : link;
+      if (go && sbFrom) window.setTimeout(() => { void this.castFromStatblock(go, { shift: false, statblock: sbFrom }); }, 60);
+      else new Notice(`Combat+: now its ${then} attack.`);
     };
     const swallow = (e: Event) => { const pe = e as PointerEvent; if (toWorld(pe)) { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); } };
     const key = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); this.placing?.stop(); } };
@@ -3532,6 +3595,20 @@ export default class AtlasSpellEffects extends Plugin {
     if (!pending.plain) this.settings.recent = [pending, ...this.settings.recent.filter((r) => r.name !== pending.name || r.key !== pending.key)].slice(0, RECENT);
     this.saveSoon();
     if (pending.teleport && pending.teleport > 0) { this.teleportCast(tab, pending, casterToken); return; }
+    // a creature's ability that moves it: how far (its Speed's part, or so many feet), then where to; then its attack,
+    // or the rest of the ability (its area, its save) from where it lands; or the rest first, then the move
+    if (pending.walk) {
+      const reach = pending.walk.size ?? (pending.walk.of ?? 1) * this.speedOf(tab, casterToken, pending.walk.mode);
+      const move: Pending = { ...pending, teleport: reach };
+      const rest: Pending | null = pending.key.endsWith(':move') ? null : { ...pending, walk: undefined };
+      if (!rest || pending.walk.first) { this.teleportCast(tab, move, casterToken, true, rest ? (id) => this.place(rest, id) : undefined); return; }
+      const from = this.walkFrom;
+      this.walkNext = { tab, pending: move, token: casterToken, statblock: from };
+      this.walkFrom = null;
+      this.place(rest, casterToken);
+      this.wake();
+      return;
+    }
     if (pending.atlas?.tool && pending.atlas.draw !== 'animation' && this.areasOn(tab) && toolShapeOf(pending.area)) { this.placeWithAtlas(tab, pending); return; }
     if (pending.area.shape === 'wall') { this.drawWall(tab, pending); return; }
     const summon = !!pending.more?.summon && !pending.area.self && pending.area.target !== 'bolt';
@@ -4500,6 +4577,13 @@ class CastModal extends Modal {
   private range: number | undefined;
   /** How far it teleports its caster (game units); 0: it doesn't. */
   private teleport = 0;
+  /** How a creature's ability moves it (no area of its own): how far, and what it does after. */
+  private walk: Walk | null = null;
+  /** Whether the move was changed here (kept when saved; else read from its text each time). */
+  private walkSet = false;
+  /** The sections opened or closed by hand, kept while the window is open. */
+  private opened = new Set<string>();
+  private closed = new Set<string>();
   /** Atlas's look for its area (fire, frost…); '': none. */
   private look: AreaLook | '' = '';
   /** Its Atlas area's other choices: how it's drawn, its light, walls, players, how it's placed. */
@@ -4586,6 +4670,14 @@ class CastModal extends Modal {
       this.conditions = r?.conditions ?? spellConditions(entry, P.conditionNames());
       this.range = entry ? rangeOf(entry) ?? undefined : undefined;
       this.teleport = r?.teleport ?? (entry ? teleportOf(entry) ?? 0 : 0);
+      // a creature's ability that moves it: on its own ("moves up to half its Speed, and it makes one Rend attack"),
+      // or with its area or save before or after ("Each creature within 10 feet… then fly up to half its flying
+      // speed"); one that teleports it, with the attack it makes after ("…and it makes one Lashing Maw attack")
+      const said = String(entry?.descFull ?? '');
+      const then = entry?.ability && this.teleport > 0 ? thenOf(said) : null;
+      this.walk = entry?.ability && !this.teleport ? walkOf(said) : then ? { then: then.then, ...(then.count > 1 ? { count: then.count } : {}), first: true } : null;
+      this.walkSet = r?.walk !== undefined;
+      if (r?.walk !== undefined) this.walk = r.walk;
       { const read = entry ? moreOf(entry, this.area) : {}; this.more = r?.more ? { ...r.more, ...(read.steps ? { steps: read.steps } : {}) } : read; }
       this.atlas = { ...(r?.atlas ?? {}) };
       this.look = r?.look !== undefined ? ((AREA_LOOKS as readonly string[]).includes(r.look) ? r.look as AreaLook : '') : lookOf(entry) ?? '';
@@ -4680,13 +4772,35 @@ class CastModal extends Modal {
     const acts = head.createDiv({ cls: 'sfx-head-actions' });
     ht.createSpan({ cls: 'sfx-chip', text: this.choice?.ability ? (P.settings.abilities[P.abilityKey(this.name)] ? 'Saved ability' : 'Ability') : this.choice?.source === 'stored' ? 'Saved' : this.choice?.source === 'note' ? 'Spell note' : 'Your own effect' });
 
-    // the settings scroll; the colour and the buttons stay in view below them
+    // what it does, in a line under its name
+    ht.createDiv({ cls: 'sfx-head-sum', text: this.summary() });
+
+    // the settings scroll, in sections; the buttons stay in view below them
     const body = pane.createDiv({ cls: 'sfx-body' });
     const bottom = pane.createDiv({ cls: 'sfx-bottom' });
+    // a section: its title and what it's set to; the area and the look always open, the rest folded unless set
+    const sec = (id: string, title: string, val: string, set: boolean, always = false): HTMLElement => {
+      const d = body.createEl('details', { cls: 'sfx-sec' + (set ? ' is-set' : '') + (always ? ' is-main' : '') });
+      d.open = always || this.opened.has(id) || (set && !this.closed.has(id));
+      d.ontoggle = () => { if (always) { d.open = true; return; } if (d.open) { this.opened.add(id); this.closed.delete(id); } else { this.opened.delete(id); this.closed.add(id); } };
+      const sm = d.createEl('summary');
+      sm.createSpan({ cls: 'sfx-sec-title', text: title });
+      if (val) sm.createSpan({ cls: 'sfx-sec-val', text: val });
+      return d.createDiv({ cls: 'sfx-sec-body' });
+    };
+    const drop = (el: HTMLElement) => { if (!el.querySelector('button, input, select, .setting-item')) el.closest('details')?.remove(); };
+    // (an ability that only moves its creature: its move first, its area folded away)
+    const onlyMoves = !!this.walk && !!this.choice?.entry?.key.endsWith(':move') && !(this.teleport > 0);
+    const moveSec = (): void => {
+      const moves = this.teleport > 0 ? `Teleports up to ${this.teleport} ${unitLabel()}` : this.walk ? this.walkText() : '';
+      const mv = sec('move', 'Movement', moves || 'None', !!moves, onlyMoves);
+      this.teleportPicker(mv);
+      this.walkPicker(mv);
+    };
+    if (onlyMoves) moveSec();
     // area
-    const area = body.createDiv();
-    area.createDiv({ cls: 'sfx-label', text: 'Area' });
-    const seg = area.createDiv({ cls: 'sfx-seg' });
+    const area = onlyMoves ? sec('area', 'Area', 'None: it only moves', false) : sec('area', 'Area', '', true, true);
+    const seg = area.createDiv({ cls: 'sfx-seg sfx-seg-wide' });
     const chosen: AreaChoice = this.area.target === 'on' ? 'on' : this.area.shape;
     for (const [c, label] of AREA_CHOICES) {
       const b = seg.createEl('button', { text: label, cls: chosen === c ? 'is-on' : '' });
@@ -4699,6 +4813,7 @@ class CastModal extends Modal {
       b.onclick = () => { if (this.area.target === 'on') { delete this.area.target; delete this.area.self; if (!this.area.size) this.area.size = squares(2); } this.area = { ...this.area, shape: k, from: k === 'radius' || k === 'cube' ? this.area.from : k === 'wall' ? 'point' : 'caster' }; if (k === 'line' && !this.area.width) this.area.width = square(); if (k === 'wall' && !this.area.width) this.area.width = fromFeet(1); if (k === 'wall' && this.area.lasting === false) this.area.lasting = true; if (this.area.target && !((k === 'line' && this.area.target === 'bolt') || (k === 'emanation' && this.area.target === 'on'))) delete this.area.target; this.render(); };
     }
     const f = area.createDiv({ cls: 'sfx-fields' });
+    const fo = area.createDiv({ cls: 'sfx-fields sfx-opts' });
     const lab = (t: string) => f.createSpan({ text: t });
     if (this.area.shape === 'wall') {
       const ws = f.createDiv({ cls: 'sfx-seg' });
@@ -4750,7 +4865,7 @@ class CastModal extends Modal {
       }
     }
     const toggle = (text: string, on: boolean, set: (v: boolean) => void, title = '') => {
-      const l = f.createEl('label', { cls: 'sfx-toggle' }); if (title) l.title = title;
+      const l = fo.createEl('label', { cls: 'sfx-toggle' }); if (title) l.title = title;
       const c = l.createEl('input', { type: 'checkbox' }); c.checked = on; c.onchange = () => set(c.checked); l.appendText(text);
     };
     if (this.area.shape === 'line') {
@@ -4765,14 +4880,30 @@ class CastModal extends Modal {
       toggle('Follows the caster', this.attach, (v) => { this.attach = v; }, 'It moves with the caster’s token (a beholder’s eye, a breath that stays)');
     }
 
-    if (this.area.shape === 'wall') wallsPicker(body, this.area.blocks, this.area.lasting, (b) => { this.area.blocks = b; this.render(); });
-    lightPicker(body, this.light, this.area.lasting, (l) => { this.light = l; this.render(); });
-    if (this.area.target !== 'bolt' && this.area.lasting) this.conditionsPicker(body);
-    this.teleportPicker(body);
-    this.morePicker(body);
-    if (this.area.target !== 'bolt' && this.area.target !== 'on' && this.area.shape !== 'wall') this.atlasPicker(body);
+    if (this.area.shape === 'wall') wallsPicker(area, this.area.blocks, this.area.lasting, (b) => { this.area.blocks = b; this.render(); });
 
-    lookPicker(body.createDiv(), bottom, { app: this.app, plugin: P, name: this.name === 'Effect' ? '' : this.name, shape: this.area.shape, angle: this.area.angle ?? P.coneAngle(), size: this.area.size, file: this.file, colour: this.colour, colour2: this.colour2, alpha: this.alpha, fileQuery: this.fileQuery,
+    // how it looks: its animation, its colours
+    const lookBox = sec('look', 'Look', '', true, true);
+
+    // the rest, folded: each says what it's set to
+    const m = this.more;
+    if (!onlyMoves) moveSec();
+    const li = sec('light', 'Light', this.light?.mode === 'light' ? `Bright ${this.light.bright}, dim ${this.light.dim} ${unitLabel()}` : this.light?.mode === 'darkness' ? 'Magical darkness' : 'None', !!this.light);
+    lightPicker(li, this.light, this.area.lasting, (l) => { this.light = l; this.render(); });
+    if (this.area.target !== 'bolt' && this.area.lasting) {
+      const co = sec('conds', 'Conditions', this.conditions.length ? this.conditions.join(', ') : 'None', this.conditions.length > 0);
+      this.conditionsPicker(co);
+    }
+    const also = [m.push ? `${m.push > 0 ? 'Pushes' : 'Pulls'} ${Math.abs(m.push)} ${unitLabel()}` : '', (m.count ?? 1) > 1 ? `${m.count} of them` : '', m.chain ? `Leaps to ${m.chain} more` : '', m.summon ? 'A thing to move' : '', m.terrain ? 'Difficult terrain' : ''].filter(Boolean).join(' · ');
+    const al = sec('also', 'Also', also || 'Nothing else', !!also);
+    this.morePicker(al); drop(al);
+    if (this.area.target !== 'bolt' && this.area.target !== 'on' && this.area.shape !== 'wall') {
+      const draw = this.atlas.draw === 'area' ? 'Atlas’s area only' : this.atlas.draw === 'animation' ? 'Animation only' : 'Animation over Atlas’s area';
+      const at = sec('atlas', 'Atlas area', draw, !!this.atlas.draw || !!this.atlas.hidden || !!this.atlas.tool);
+      this.atlasPicker(at); drop(at);
+    }
+
+    lookPicker(lookBox.createDiv(), lookBox.createDiv({ cls: 'sfx-look-colours' }), { app: this.app, plugin: P, name: this.name === 'Effect' ? '' : this.name, shape: this.area.shape, angle: this.area.angle ?? P.coneAngle(), size: this.area.size, file: this.file, colour: this.colour, colour2: this.colour2, alpha: this.alpha, fileQuery: this.fileQuery,
       set: (c, re) => {
         if ('file' in c) this.file = c.file;
         if (c.colour !== undefined) this.colour = c.colour;
@@ -4857,7 +4988,7 @@ class CastModal extends Modal {
 
   /** The choices made here, to be remembered. */
   memo(): Remembered {
-    return { unit: unitNow(), more: this.kept(), ...(this.motion ? { motion: this.motion } : {}), ...(this.file ? { file: this.file } : {}), colour: this.colour, ...(this.colour2 ? { colour2: this.colour2 } : {}), ...(this.alpha ? { alpha: this.alpha } : {}), shape: this.area.shape, size: this.area.size, ...(this.area.width ? { width: this.area.width } : {}), ...(this.area.angle ? { angle: this.area.angle } : {}), from: this.area.from, lasting: this.area.lasting, light: this.light, ...(this.area.ring ? { ring: this.area.ring } : {}), ...(this.area.round ? { round: true } : {}), ...(this.area.blocks ? { blocks: this.area.blocks } : {}), ...(this.area.target ? { target: this.area.target } : {}), ...(this.area.self ? { self: true } : {}), conditions: [...this.conditions], teleport: this.teleport, look: this.look, atlas: { ...this.atlas } };
+    return { unit: unitNow(), more: this.kept(), ...(this.motion ? { motion: this.motion } : {}), ...(this.file ? { file: this.file } : {}), colour: this.colour, ...(this.colour2 ? { colour2: this.colour2 } : {}), ...(this.alpha ? { alpha: this.alpha } : {}), shape: this.area.shape, size: this.area.size, ...(this.area.width ? { width: this.area.width } : {}), ...(this.area.angle ? { angle: this.area.angle } : {}), from: this.area.from, lasting: this.area.lasting, light: this.light, ...(this.area.ring ? { ring: this.area.ring } : {}), ...(this.area.round ? { round: true } : {}), ...(this.area.blocks ? { blocks: this.area.blocks } : {}), ...(this.area.target ? { target: this.area.target } : {}), ...(this.area.self ? { self: true } : {}), conditions: [...this.conditions], teleport: this.teleport, ...(this.walkSet ? { walk: this.walk } : {}), look: this.look, atlas: { ...this.atlas } };
   }
 
   /** What is set up now, ready to place (its animation fetched first; a spell's choices remembered). */
@@ -4881,7 +5012,7 @@ class CastModal extends Modal {
         // (a lasting one's conditions follow its area instead)
         if (this.conditions.length && spec.kind !== 'damage' && !this.area.lasting) spec.conds = [...this.conditions];
       }
-      return { name: this.name, key, ...(this.choice?.entry?.plain ? { plain: true } : {}), ...(spec ? { roll: spec } : {}), ...(hasMore(this.more) ? { more: { ...this.more } } : {}), ...(this.motion ? { motion: this.motion } : {}), ...(range ? { range } : {}), ...(this.conditions.length && this.area.target !== 'bolt' ? { conditions: [...this.conditions] } : {}), area: { ...this.area }, ...(this.file ? { file: this.file } : {}), colour: this.colour, ...(this.colour2 ? { colour2: this.colour2 } : {}), ...(this.alpha ? { alpha: this.alpha } : {}), ...(this.attach ? { attach: true } : {}), ...(this.light ? { light: { ...this.light } } : {}), ...(this.teleport > 0 ? { teleport: this.teleport } : {}), ...(this.look ? { look: this.look } : {}), ...(Object.keys(this.atlas).length ? { atlas: { ...this.atlas } } : {}) };
+      return { name: this.name, key, ...(this.choice?.entry?.plain ? { plain: true } : {}), ...(spec ? { roll: spec } : {}), ...(hasMore(this.more) ? { more: { ...this.more } } : {}), ...(this.motion ? { motion: this.motion } : {}), ...(range ? { range } : {}), ...(this.conditions.length && this.area.target !== 'bolt' ? { conditions: [...this.conditions] } : {}), area: { ...this.area }, ...(this.file ? { file: this.file } : {}), colour: this.colour, ...(this.colour2 ? { colour2: this.colour2 } : {}), ...(this.alpha ? { alpha: this.alpha } : {}), ...(this.attach ? { attach: true } : {}), ...(this.light ? { light: { ...this.light } } : {}), ...(this.teleport > 0 ? { teleport: this.teleport } : {}), ...(this.walk ? { walk: { ...this.walk } } : {}), ...(this.look ? { look: this.look } : {}), ...(Object.keys(this.atlas).length ? { atlas: { ...this.atlas } } : {}) };
   }
   /**
    * Its Atlas area (Atlas 0.15 on, where the add-on uses Atlas's areas): Atlas's own choices for it (its look, its
@@ -4956,8 +5087,47 @@ class CastModal extends Modal {
     }
   }
 
+  /** What it does, in a few words: "60 ft cone · lasts until ended · then it moves". */
+  private summary(): string {
+    const a = this.area;
+    const moves = this.teleport > 0 ? `Teleports up to ${this.teleport} ${unitLabel()}${this.walk?.then ? `, then its ${this.walk.then} attack` : ''}` : this.walk ? this.walkText() : '';
+    if (moves && this.choice?.entry?.key.endsWith(':move')) return moves;
+    const what = describe(a);
+    const parts = [what.charAt(0).toUpperCase() + what.slice(1), a.lasting ? 'lasts until ended' : '', moves ? moves.charAt(0).toLowerCase() + moves.slice(1) : ''];
+    return parts.filter(Boolean).join(' · ');
+  }
+  /** How it moves its creature, in a few words: "Moves half its Speed, then its Rend attack". */
+  private walkText(): string {
+    const w = this.walk; if (!w) return '';
+    const verb = w.mode === 'fly' ? 'Flies' : w.mode === 'swim' ? 'Swims' : w.mode === 'climb' ? 'Climbs' : w.mode === 'burrow' ? 'Burrows' : 'Moves';
+    const far = w.size !== undefined ? `up to ${w.size} ${unitLabel()}` : w.of === 0.5 ? 'half its Speed' : w.of === 2 ? 'twice its Speed' : w.of && w.of !== 1 ? `${w.of}× its Speed` : 'its Speed';
+    const when = this.choice?.entry?.key.endsWith(':move') ? '' : w.first ? ' first' : ' after';
+    return `${verb} ${far}${when}${w.then ? `, then its ${w.count && w.count > 1 ? `${w.count} ` : ''}${w.then} attack${w.count && w.count > 1 ? 's' : ''}` : ''}`;
+  }
+  /** Whether it moves its creature (a creature's ability: "moves up to half its Speed"), how far, and when. */
+  private walkPicker(body: HTMLElement): void {
+    if (this.teleport > 0) return;
+    const w = this.walk;
+    const own = this.choice?.entry?.key.endsWith(':move');
+    const row = new Setting(body.createDiv({ cls: 'sfx-walk' })).setName('Moves the creature')
+      .setDesc(w ? `${this.walkText()}. Click where it goes: its token moves there (Ctrl+Z puts it back, Esc skips).` : 'Off: it stays where it is.');
+    row.addToggle((t) => t.setValue(!!w).onChange((v) => { this.walkSet = true; this.walk = v ? (walkOf(String(this.choice?.entry?.descFull ?? '')) ?? { of: 1, first: true }) : null; this.render(); }));
+    if (!w) return;
+    row.addDropdown((d) => d.addOptions({ '0.5': 'Half its Speed', '1': 'Its Speed', '2': 'Twice its Speed', set: 'A set distance' }).setValue(w.size !== undefined ? 'set' : String(w.of ?? 1)).onChange((v) => {
+      this.walkSet = true;
+      const { size, of, ...rest } = w; void size; void of;
+      this.walk = v === 'set' ? { ...rest, size: w.size ?? squares(6) } : { ...rest, of: Number(v) };
+      this.render();
+    }));
+    if (w.size !== undefined) row.addText((t) => { t.inputEl.type = 'number'; t.inputEl.addClass('sfx-num'); t.setValue(String(w.size)); t.onChange((v) => { const n = Number(v); if (n > 0) { this.walkSet = true; this.walk = { ...w, size: n }; } }); });
+    if (!own) new Setting(body.createDiv({ cls: 'sfx-walk' })).setName('When').setDesc('Before the rest of it (placed from where it lands), or after.')
+      .addDropdown((d) => d.addOptions({ first: 'Moves first', after: 'Moves after' }).setValue(w.first ? 'first' : 'after').onChange((v) => { this.walkSet = true; this.walk = { ...w, first: v === 'first' }; this.render(); }));
+  }
+
   /** Whether it teleports its caster, and how far (from its text: "you teleport up to 30 feet"). */
   private teleportPicker(body: HTMLElement): void {
+    // (an ability that moves its creature on foot has its move instead)
+    if (this.walk && !(this.teleport > 0)) return;
     const row = new Setting(body.createDiv({ cls: 'sfx-teleport' })).setName('Teleports the caster')
       .setDesc(this.teleport > 0 ? `Up to ${this.teleport} ${unitLabel()}: click the caster, then where they go. The token moves (Ctrl+Z puts it back).` : 'Off: the caster stays where they are.');
     row.addToggle((t) => t.setValue(this.teleport > 0).onChange((v) => { this.teleport = v ? (this.choice?.entry ? teleportOf(this.choice.entry) ?? this.range ?? 30 : this.range ?? 30) : 0; this.render(); }));

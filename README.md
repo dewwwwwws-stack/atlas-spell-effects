@@ -230,6 +230,12 @@ Only spells the add-on knows (your spell notes, see *Spells: your Bases*) are cl
 
 **Saving an ability:** open it in the cast window, pick its animation, colours and so on, and press **Save**. It's kept as an *ability*, by its name, with the add-on's settings: not as a spell, so it makes no spell note and isn't in your spell lists. From then on every statblock with an ability of that name uses what you saved (an adult dragon's Fire Breath and a young one's alike), each with its own shape and size from its own text. The bin in the cast window deletes what's saved.
 
+**Abilities that move the creature:** an ability that moves its creature gets a **Use** button too: *the gnoll moves up to half its Speed* (its Speed from its statblock: its flying speed for *fly up to half its flying speed*), *the wolf moves up to 30 feet*, *the spirit magically teleports up to 30 feet*, Pathfinder's *Strides twice*, Draw Steel's *shifts up to 2 squares*, Daggerheart's *moves anywhere within Far range*. Press it: how far it can go shows round the creature; click where it goes, and its token moves there (Ctrl+Z puts it back; Esc skips the move). What else the ability does follows in its order:
+- an attack after (*…and it makes one Rend attack*, *then makes two Tusk attacks*): the attack starts as soon as it lands, from the same statblock: click who it hits;
+- an area or a save after the move (*At the end of this movement, … a 60-foot Emanation*; *Each creature whose space it enters…*): placed from where it lands;
+- an area or a save before the move (a dragon's Wing Attack, *…The dragon can then fly up to half its flying speed*): placed first, then the move.
+A target being pushed (*pushes the target up to 10 feet*), an ally moving, or something the creature makes (*the ooze moves 10 feet*) isn't read as the creature's own move.
+
 **Giving an ability a button by hand:** an ability with nothing in its text the add-on can read (no area, no target) has no button. Right-click its name in the statblock and pick **Give … a Use button**: the cast window opens for it. Choose its shape, size and range (and its animation and colours, if you like), then press **Save its button**. From then on it has a **Use** button in every statblock with an ability of that name. Right-click its name again to **Change** it or **Take its button away**. **Explain statblock buttons** (Ctrl+P) lists every ability in an open statblock and why each has or hasn't a button.
 
 Nothing else about the ability is worked out: saves and damage are yours to run.

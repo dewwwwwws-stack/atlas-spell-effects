@@ -130,12 +130,77 @@ export function rangeOf(spell: SpellEntry): number | null {
  */
 export function teleportOf(spell: SpellEntry): number | null {
   const d = String(spell.descFull ?? '');
-  const m = /\byou\s+teleport(?!\s+(?:each|any|a|an|one|the|that|those|them|it|up to (?:\w+ )?(?:willing|creatures?|targets?))\b)|\bteleport\s+yourself\b/i.exec(d);
+  const m = /\byou\s+teleport(?!\s+(?:each|any|a|an|one|the|that|those|them|it|up to (?:\w+ )?(?:willing|creatures?|targets?))\b)|\bteleport\s+yourself\b/i.exec(d)
+    // (a creature's: "The spirit magically teleports up to 30 feet", "it teleports, along with any equipment…, up to 60 feet")
+    // (only one with no area of its own: Fey Step's Darkness cube after its teleport is the ability's)
+    ?? (spell.ability && !areaOf(spell) ? /\b(?:it|he|she|they|the (?!target\b)[\w'’-]+(?: [\w'’-]+){0,2})\s+(?:can\s+|magically\s+)*teleports?(?!\s+(?:each|any|a|an|one|the|that|those|them|up to (?:\w+ )?(?:willing|creatures?|targets?))\b)/i.exec(d) : null);
   if (!m) return null;
   const after = d.slice(m.index, m.index + 160);
   const up = new RegExp(String.raw`up to (\d+(?:\.\d+)?)\s*-?\s*` + UNIT, 'i').exec(after);
   if (up) return toGame(num(up[1]), up[2] ?? '');
   return rangeOf(spell);
+}
+
+/**
+ * How a creature's ability moves the creature itself, or null: "the gnoll moves up to half its Speed", "it flies up
+ * to 60 feet", "the dragon can fly up to half its flying speed", Pathfinder's "Strides twice", Draw Steel's "shifts
+ * up to 2 squares", Daggerheart's "moves anywhere within Far range", Shadowdark's "moves near". `of`: a part of its
+ * Speed (its statblock's, when cast); `size`: a set distance (game units); `then`: an attack it makes after
+ * ("…and it makes one Rend attack"). Not one that moves others ("pushes the target up to 10 feet", "the target
+ * moves"), nor a teleport (teleportOf).
+ */
+export interface Walk { size?: number; of?: number; then?: string; mode?: 'fly' | 'swim' | 'climb' | 'burrow'; /** It moves before the rest of the ability (its area, its save) happens; else after ("…can then fly up to half its flying speed"). */ first?: boolean; /** How many of its `then` attacks ("then makes two Tusk attacks"). */ count?: number }
+
+/** An attack a creature makes after it moves or teleports: "…and it makes one Rend attack", "It can then make a Spike attack", "makes two Tusk attacks", "one Grave Strike or Shadow Lance attack". */
+export function thenOf(text: string): { then: string; count: number } | null {
+  const N = String.raw`(one|a|an|1|two|2|three|3)`;
+  const NAME = String.raw`([A-Z][\w'’-]*(?: (?:or )?[A-Z][\w'’-]*){0,5}?)`;
+  const m = new RegExp(String.raw`\b(?:makes?|make|can make|uses?)\s+` + N + String.raw`\s+` + NAME + String.raw`\s+attacks?\b`).exec(text)
+    ?? new RegExp(String.raw`\b(?:makes?|make|can make|uses?)\s+` + N + String.raw`\s+` + NAME + String.raw`\s+(?:Strike|strikes?)\b`).exec(text);
+  if (!m) return null;
+  const count = /two|2/i.test(m[1]) ? 2 : /three|3/i.test(m[1]) ? 3 : 1;
+  return { then: m[2], count };
+}
+export function walkOf(text: string): Walk | null {
+  const t = untag(text).replace(/\s+/g, ' ');
+  // who moves: the creature ("the gnoll", "it", "the adult red dragon"), never its target or another
+  const WHO = String.raw`(?:(?:^|[.;:]\s*|,\s*|\b(?:and|then|can|which|it|he|she|they)\s+)(?:it|he|she|they|the (?!target|creature it|other|ally|enemy|victim)[\w'’-]+(?: [\w'’-]+){0,2})\s+(?:can |may |magically |immediately |then )*|\b(?:and|then|can|may)\s+|^)`;
+  const VERB = String.raw`(?:move|moves|fly|flies|swim|swims|climb|climbs|burrow|burrows|run|runs|dash(?:es)?|leaps?|jumps?|charges?|shifts?|strides?|slithers?|scuttles?|lopes?|bounds?|hops?|walks?|glides?|dives?)`;
+  const PART: Record<string, number> = { 'half': 0.5, 'twice': 2, 'double': 2, 'three times': 3, 'a quarter of': 0.25 };
+  let m = new RegExp(WHO + VERB + String.raw`\s+(?:up to |a distance (?:of |up to )?)?(half|twice|double|three times|a quarter of)?\s*(?:its|his|her|their)\s+(?:full\s+)?(?:walking\s+|flying\s+|swimming\s+|climbing\s+|burrowing\s+|fly\s+|swim\s+|climb\s+|burrow\s+)?speed\b`, 'i').exec(t);
+  let w: Walk | null = m ? { of: m[1] ? PART[m[1].toLowerCase()] ?? 1 : 1 } : null;
+  if (!w && (m = new RegExp(WHO + VERB + String.raw`\s+(?:up to |a distance (?:of |up to )?)?(\d+(?:\.\d+)?)\s*-?\s*` + UNIT, 'i').exec(t))) w = { size: toGame(num(m[1]), m[2]) };
+  // Pathfinder: "Strides", "Strides twice", "Strides up to 40 feet" (above): its own verb, capitalised as an action
+  if (!w && (m = /\b(?:It |The [\w'’-]+(?: [\w'’-]+){0,2} |[.;]\s*|^)(Strides)\b(?!\s+(?:up to|a distance))(\s+(?:twice|two times|three times))?/.exec(t))) w = { of: m[2] ? (/three/i.test(m[2]) ? 3 : 2) : 1 };
+  // in range bands: "moves anywhere within Far range", "moves near", "moves up to Close range"
+  const bands = bandsRe();
+  if (!w && bands && (m = new RegExp(WHO + VERB + String.raw`\s+(?:anywhere\s+|up\s+to\s+|to\s+(?:a\s+(?:point|spot|place)\s+)?)?(?:within\s+)?(` + bands + String.raw`)(?:\s+range)?\b`, 'i').exec(t))) w = { size: bandSize(m[1]) };
+  if (!w || (w.size !== undefined && !(w.size > 0))) return null;
+  // who moves, from the words before the verb in its sentence: not a thing it makes ("the ooze moves 10 feet
+  // straight toward it", "The fog moves 10 feet"), nor its allies ("Each ally within 30 feet … can take a Reaction to
+  // move up to half the ally's Speed")
+  const verbAt = m!.index + Math.max(0, m![0].search(new RegExp(String.raw`\b` + VERB + String.raw`\b`, 'i')));
+  const pre = t.slice(Math.max(0, t.lastIndexOf('.', verbAt - 1) + 1), verbAt);
+  const SUBJ = String.raw`\b(?:it|he|she|they|the [\w'’-]+(?: [\w'’-]+)?)\s+(?:can |may |magically |immediately |then |also )*$`;
+  if (/\b(?:ooze|cloud|fog|mist|sphere|wall|storm|wave|object|orb|blade|weapon|zone|vortex|whirlwind|illusion|duplicate|servant|swarm|mount|steed)\s+(?:can |may |then |immediately |also )*$/i.test(pre)) return null;
+  if (/\b(?:ally|allies|allied|another|other creatures?|each creature)\b/i.test(pre) && !new RegExp(SUBJ, 'i').test(pre)) return null;
+  // (another's move: "An allied Undead within 60 feet … can move", "commands its mount to move"; a limit: "can only fly up to 15 feet off the ground")
+  const said = t.slice(Math.max(0, t.lastIndexOf('.', m!.index) + 1), m!.index + m![0].length);
+  if (/\b(?:allied|ally|allies|another|other|its mount|each|any)\b[^.]*?\b(?:can|may|to)\s+\w+$/i.test(said.replace(/\s+(?:up to|a distance).*$/i, '').replace(/\s+\S+$/, '')) && !/\b(?:it|he|she|they|the [\w'’-]+)\s+(?:can |may |magically |immediately |then )*\w+\s+(?:up to|a distance)/i.test(m![0])) return null;
+  if (/\bonly\s+\w+\s+(?:up to\s+)?$/i.test(t.slice(0, m!.index + m![0].length).replace(/\s*(?:up to |a distance )?\S+\s*\S*$/, ' ')) || /^\s*(?:off the ground|high|above)/i.test(t.slice(m!.index + m![0].length))) return null;
+  // (a rate, not a move: "it can move up to 2 feet horizontally for every 1 foot it descends")
+  if (/^\s*(?:horizontally\s+|vertically\s+)?(?:for every|per)\b/i.test(t.slice(m!.index + m![0].length))) return null;
+  if (/\bteleport/i.test(t.slice(Math.max(0, m!.index - 40), m!.index + m![0].length))) return null;
+  // what it does after: "…and it makes one Rend attack", "then makes a Bite attack", "and can make one Claw attack"
+  const after = thenOf(t.slice(m!.index));
+  // whether it moves before the rest (its area, its save: "moves up to its Speed… Each creature whose space it
+  // enters…") or after ("Each creature within 10 feet… The dragon can then fly up to half its flying speed")
+  const eff = /\b(?:each|every|all|any)\s+(?:other\s+)?(?:creatures?|targets?)\b|\bsaving throw\b|\bEmanation\b|\bradius\b|\bcone\b|\bcube\b|\bsphere\b|\bcylinder\b|\bline\b(?! that)|\b(?:Weapon|Spell)? ?Attack(?: Roll)?:|\bto hit\b|\bmakes? (?:one|a|an|two|three) [\w ]*?attacks?\b/i.exec(t);
+  const first = !eff || m!.index < eff.index;
+  // how it moves (its flying speed for "fly up to half its flying speed")
+  const how = /\b(fl(?:y|ies|ying)|swim|swims|swimming|climb|climbs|climbing|burrow|burrows|burrowing)\b/i.exec(m![0]);
+  const mode = how ? (/^fl/i.test(how[1]) ? 'fly' : /^sw/i.test(how[1]) ? 'swim' : /^cl/i.test(how[1]) ? 'climb' : 'burrow') : undefined;
+  return { ...w, ...(mode ? { mode } : {}), ...(after ? { then: after.then, ...(after.count > 1 ? { count: after.count } : {}) } : {}), first };
 }
 
 /** Whether a spell's effect lasts (anything but Instantaneous). */
@@ -362,6 +427,8 @@ export function abilityEntry(name: string, text: string): SpellEntry | null {
       e.key = `ability:${nm.toLowerCase()}:one`; e.range = one[1] ?? one[2] ?? one[3];
       return e;
     }
+    // or it moves (or teleports) itself: "the gnoll moves up to half its Speed, and it makes one Rend attack"
+    if (!attack && !save && !dealt && !/spellcasting/i.test(nm) && (walkOf(t) || teleportOf({ ...e, ability: true, descFull: t }))) { e.key = `ability:${nm.toLowerCase()}:move`; return e; }
     if (!attack && !save && !dealt) return null;
     e.plain = attack ? 'attack' : save ? 'save' : 'damage'; e.key = `ability:${nm.toLowerCase()}:${e.plain}`;
     // how far it can go: the farthest of its reach and its ranges ("reach 5 ft. or range 150 ft.": 150;
