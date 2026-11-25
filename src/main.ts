@@ -152,6 +152,8 @@ export interface Choice { key: string; name: string; source: 'stored' | 'note'; 
  * Which of a Multiattack's attacks this one is: the one chosen (Tab), else by distance: in reach of a melee one,
  * that; beyond it, a ranged one that reaches (else any ranged one); else the first.
  */
+/** Names in order, as localeCompare puts them but faster (thousands of creatures' abilities are sorted). */
+const byName = new Intl.Collator();
 /** When a note last changed (unknown: read it again). */
 function changedAt(f: TFile): number | undefined { const st = (f as { stat?: { mtime?: number } }).stat; return typeof st?.mtime === 'number' ? st.mtime : undefined; }
 function pickOpt(s: Step, feet: number | undefined, choice: number | null): StepOpt {
@@ -362,8 +364,10 @@ export default class AtlasSpellEffects extends Plugin {
         if (t.canvas.ownerDocument !== doc || !t.canvas.isConnected || !this.sizeOf(t.canvas).w) continue;
         const r = this.rectOf(t.canvas);
         if (ev.clientX < r.left || ev.clientY < r.top || ev.clientX > r.right || ev.clientY > r.bottom) continue;
-        // only presses on the map itself (or the effects layer over it), not on Atlas's toolbars and panels
-        const under = doc.elementFromPoint(ev.clientX, ev.clientY);
+        // only presses on the map itself (or the effects layer over it), not on Atlas's toolbars and panels: what the
+        // event is on (the browser knows it already; asking where the pointer is makes it lay the page out again)
+        const tgt = ev.target as Node | null;
+        const under = tgt && tgt.nodeType === 1 ? tgt as Element : doc.elementFromPoint(ev.clientX, ev.clientY);
         if (under !== t.canvas && !(under as HTMLElement | null)?.closest?.('.sfx-layer')) continue;
         const p = call<Point>(t.viewport, 'toWorld', ev.clientX - r.left, ev.clientY - r.top);
         if (p && Number.isFinite(p.x)) return { t, p: { x: p.x, y: p.y } };
@@ -413,8 +417,9 @@ export default class AtlasSpellEffects extends Plugin {
         if (ev.ctrlKey || ev.metaKey) { const at = tabAt(ev); if (at) this.trackHover(at.t, at.p); }
         // the pointer over an effect (not a token): a move cursor, as over a token (looked at once a frame, not on
         // every move of the mouse: finding what's under it makes the browser lay the page out)
-        if (this.placing || !this.effects.length) return;
-        hoverAt = { clientX: ev.clientX, clientY: ev.clientY } as MouseEvent;
+        // (nor while a button is held: a token or the map being dragged, Atlas's own cursor)
+        if (this.placing || !this.effects.length || ev.buttons) return;
+        hoverAt = { clientX: ev.clientX, clientY: ev.clientY, target: ev.target } as MouseEvent;
         if (!hoverFrame) hoverFrame = (doc.defaultView ?? window).requestAnimationFrame(() => {
           hoverFrame = 0; const e2 = hoverAt; if (!e2 || this.dragging) return;
           const at = tabAt(e2);
@@ -1182,7 +1187,7 @@ export default class AtlasSpellEffects extends Plugin {
   /** The spells: notes with saved effect defaults (anywhere), the chosen Bases' notes, and (if wanted) other spell notes. */
   indexSpells(keep = false): void {
     // (`keep`: a note changed in the vault, so what's unchanged is kept as read; else, all read afresh)
-    if (!keep) { this.noteRead.clear(); this.abilitiesRead.clear(); }
+    if (!keep) { this.noteRead.clear(); this.abilitiesRead.clear(); this.abilityPaths = ''; }
     const mc = this.app.metadataCache;
     const inBases = new Set([...this.baseNotes.values()].flat());
     const stored: StoredSpell[] = [];
@@ -1207,7 +1212,7 @@ export default class AtlasSpellEffects extends Plugin {
         notes.push(c);
       }
     }
-    stored.sort((a, b) => a.name.localeCompare(b.name));
+    stored.sort((a, b) => byName.compare(a.name, b.name));
     this.stored = stored;
     this.noteChoices = notes;
     this.creatureNotes = creatures;
@@ -1227,12 +1232,15 @@ export default class AtlasSpellEffects extends Plugin {
     for (const c of found) if (c.notePath && !paths.includes(c.notePath)) paths.push(c.notePath);
     if (found.length) this.noteChoices = this.noteChoices.filter((c) => !found.includes(c));
     const out: Choice[] = [];
+    // (nothing read again and the same creatures: the list as it was, not sorted again)
+    let fresh = false;
     const LISTS = ['traits', 'actions', 'bonus_actions', 'reactions', 'legendary_actions', 'lair_actions', 'mythic_actions', 'regional_effects', 'spells_and_actions'];
     for (const path of paths) {
       if (run !== this.abilityRun) return;
       const f = this.app.vault.getAbstractFileByPath(path); if (!(f instanceof TFile)) continue;
       const was = this.abilitiesRead.get(path);
       if (was && was.mtime !== undefined && was.mtime === changedAt(f)) { out.push(...was.out); continue; }
+      fresh = true;
       const mine: Choice[] = [];
       const fm = (this.app.metadataCache.getFileCache(f)?.frontmatter ?? {}) as Record<string, unknown>;
       let text = ''; try { text = await this.app.vault.cachedRead(f); } catch { continue; }
@@ -1258,7 +1266,10 @@ export default class AtlasSpellEffects extends Plugin {
       this.abilitiesRead.set(path, { mtime: changedAt(f), out: mine });
       out.push(...mine);
     }
-    out.sort((a, b) => a.name.localeCompare(b.name) || (a.owner ?? '').localeCompare(b.owner ?? ''));
+    const sig = paths.join('\n');
+    if (!fresh && sig === this.abilityPaths) return;
+    this.abilityPaths = sig;
+    out.sort((a, b) => byName.compare(a.name, b.name) || byName.compare(a.owner ?? '', b.owner ?? ''));
     this.ownAbilities = out;
     this.joinAbilities();
   }
@@ -1268,7 +1279,7 @@ export default class AtlasSpellEffects extends Plugin {
   private joinAbilities(): void {
     const mine = new Set(this.ownAbilities.map((c) => (c.owner ?? '').toLowerCase()));
     const srd = this.settings.srdSpells ? this.srdAbilities.filter((c) => !mine.has((c.owner ?? '').toLowerCase())) : [];
-    this.abilityChoices = [...this.ownAbilities, ...srd].sort((a, b) => a.name.localeCompare(b.name) || (a.owner ?? '').localeCompare(b.owner ?? ''));
+    this.abilityChoices = [...this.ownAbilities, ...srd].sort((a, b) => byName.compare(a.name, b.name) || byName.compare(a.owner ?? '', b.owner ?? ''));
     this.namesChanged();
   }
   /**
@@ -1279,6 +1290,7 @@ export default class AtlasSpellEffects extends Plugin {
    */
   private noteRead = new Map<string, { mtime: number | undefined; entry: SpellEntry }>();
   private abilitiesRead = new Map<string, { mtime: number | undefined; out: Choice[] }>();
+  private abilityPaths = '';
   /** Notes found to hold a statblock block when their text was read. */
   private statblockBodies = new Set<string>();
   private abilityRun = 0;

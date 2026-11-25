@@ -3492,7 +3492,7 @@ function multiOf(text, attacks) {
     }
   }
   for (const [k, v] of [...alias]) if (!v) alias.delete(k);
-  const byName = (n) => alias.get(n.toLowerCase().trim());
+  const byName2 = (n) => alias.get(n.toLowerCase().trim());
   const out = [];
   const either = (list) => list.length > 1 ? { ...list[0], alts: list } : list[0];
   const names = [...alias.keys()].map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).sort((a, b) => b.length - a.length);
@@ -3501,25 +3501,25 @@ function multiOf(text, attacks) {
   const re = new RegExp(String.raw`\b` + num3 + String.raw`\s+(` + names.join("|") + String.raw`)\s+attacks?\b|\b` + num3 + String.raw`\s+(?:attacks?\s+)?with (?:its|their|his|her) (` + names.join("|") + String.raw`)s?\b|\battacks? (` + "once|twice|" + String.raw`\d+ times) with (?:its|their) (` + names.join("|") + String.raw`)s?\b`, "gi");
   for (const m of t.matchAll(re)) {
     const n = WORDS3[(m[1] ?? m[3] ?? m[5] ?? "").toLowerCase()] ?? (parseInt(m[1] ?? m[3] ?? m[5] ?? "", 10) || 1);
-    const a = byName(m[2] ?? m[4] ?? m[6] ?? "");
+    const a = byName2(m[2] ?? m[4] ?? m[6] ?? "");
     if (!a) continue;
     for (let i = 0; i < Math.min(n, 8); i++) out.push(a);
   }
   if (!out.length) for (const m of t.matchAll(new RegExp(String.raw`\b` + num3 + String.raw`\s+(` + names.join("|") + String.raw`)\s+or\s+(` + names.join("|") + String.raw`)\s+attacks?\b|\bas many (` + names.join("|") + String.raw`) attacks\b`, "gi"))) {
     const n = m[1] ? WORDS3[m[1].toLowerCase()] ?? (parseInt(m[1], 10) || 1) : 1;
-    const list = [m[2], m[3], m[4]].map((x) => x ? byName(x) : void 0).filter((x) => !!x);
+    const list = [m[2], m[3], m[4]].map((x) => x ? byName2(x) : void 0).filter((x) => !!x);
     if (!list.length) continue;
     for (let i = 0; i < Math.min(n, 8); i++) out.push(either(list));
   }
   if (out.length) for (const m of t.matchAll(new RegExp(String.raw`\buses (` + names.join("|") + String.raw`)\b`, "gi"))) {
-    const a = byName(m[1]);
+    const a = byName2(m[1]);
     if (a) out.push(a);
   }
   if (out.length) return out;
   const any = new RegExp(String.raw`\bmakes ` + num3 + String.raw`\s+(?:\w+\s+)?attacks?\b([^.]*)`, "i").exec(t);
   if (any) {
     const n = WORDS3[any[1].toLowerCase()] ?? (parseInt(any[1], 10) || 1);
-    const said = [...any[2].matchAll(new RegExp(String.raw`\b(` + names.join("|") + String.raw`)\b`, "gi"))].map((m) => byName(m[1])).filter((x) => !!x);
+    const said = [...any[2].matchAll(new RegExp(String.raw`\b(` + names.join("|") + String.raw`)\b`, "gi"))].map((m) => byName2(m[1])).filter((x) => !!x);
     const list = said.filter((a, i) => said.indexOf(a) === i);
     if (list.length) for (let i = 0; i < Math.min(n, 8); i++) out.push(either(list));
   }
@@ -3532,7 +3532,7 @@ function multiOf(text, attacks) {
   const nameList = String.raw`((?:` + names.join("|") + String.raw`)s?(?:\s*,\s*(?:(?:or|and)\s+)?(?:` + names.join("|") + String.raw`)s?)*(?:,?\s+(?:or|and)\s+(?:` + names.join("|") + String.raw`)s?)?)`;
   const listed = new RegExp(String.raw`\b(?:up to\s+)?` + numD + String.raw`\s+(?:total\s+)?` + nameList + String.raw`(?:\s+attacks?\b|(?=[\s.,;]|$))`, "i").exec(t);
   if (listed) {
-    const said = [...listed[2].matchAll(new RegExp(String.raw`(` + names.join("|") + String.raw`)`, "gi"))].map((m) => byName(m[1])).filter((x) => !!x);
+    const said = [...listed[2].matchAll(new RegExp(String.raw`(` + names.join("|") + String.raw`)`, "gi"))].map((m) => byName2(m[1])).filter((x) => !!x);
     const list = said.filter((a, i) => said.indexOf(a) === i);
     if (list.length) {
       for (let i = 0; i < Math.min(count2(listed[1]), 8); i++) out.push(either(list));
@@ -3541,7 +3541,7 @@ function multiOf(text, attacks) {
   }
   const uses = new RegExp(String.raw`\buses (` + names.join("|") + String.raw`) (twice|three times|four times|(\d+) times)\b`, "i").exec(t);
   if (uses) {
-    const a = byName(uses[1]);
+    const a = byName2(uses[1]);
     const n = uses[3] ? Number(uses[3]) : { twice: 2, "three times": 3, "four times": 4 }[uses[2].toLowerCase()] ?? 1;
     if (a) {
       for (let i = 0; i < n; i++) out.push(a);
@@ -3550,14 +3550,14 @@ function multiOf(text, attacks) {
   }
   const some = new RegExp(String.raw`\bmakes a number of (?:(` + names.join("|") + String.raw`)\s+)?attacks\b`, "i").exec(t);
   if (some) {
-    const one = some[1] ? byName(some[1]) : void 0;
+    const one = some[1] ? byName2(some[1]) : void 0;
     const list = one ? [one] : attacks;
     for (let i = 0; i < 4; i++) out.push(either(list));
     return out;
   }
   const named = /\battacks (twice|three times|four times)\b([^.]*)/i.exec(t);
   if (named) {
-    const said = [...named[2].matchAll(new RegExp(String.raw`\b(` + names.join("|") + String.raw`)\b`, "gi"))].map((m) => byName(m[1])).filter((x) => !!x);
+    const said = [...named[2].matchAll(new RegExp(String.raw`\b(` + names.join("|") + String.raw`)\b`, "gi"))].map((m) => byName2(m[1])).filter((x) => !!x);
     const list = said.filter((a, i) => said.indexOf(a) === i);
     if (list.length || !/\bweapons?\b/i.test(named[2])) {
       const n = { twice: 2, "three times": 3, "four times": 4 }[named[1].toLowerCase()] ?? 2;
@@ -4674,6 +4674,7 @@ function storeMatters(now, before) {
 }
 var isCanvas = (c) => !!c && typeof c.instanceOf === "function" && c.instanceOf(HTMLCanvasElement);
 var DEFAULTS = { folders: "", online: false, attackAnims: false, attackMelee: "slash", attackRanged: "arrow", autoClose: true, srdSpells: false, srdEdition: "2024", srdFolder: "Combat+ SRD", rolling: false, rollWho: "all", rollPost: false, above: "none", legendary: {}, tempResource: "Temp HP", animations: true, made: [], remember: {}, abilities: {}, lasting: [], snap: true, storage: "Spell Storage", bases: [], presets: [], jb2aFolder: "JB2A_DnD5e", jb2aOffer: true, noJb2a: false, noteSpells: true, orphanLights: [], coneAngle: 0, artTrim: {}, showAim: false, aimLook: "outline", markCreatures: true, showRounds: true, atlasAreas: true, throughWalls: false, areas: {}, roundSecs: {}, marks: [], caught: [], recent: [] };
+var byName = new Intl.Collator();
 function changedAt(f) {
   const st = f.stat;
   return typeof st?.mtime === "number" ? st.mtime : void 0;
@@ -4992,7 +4993,8 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
         if (t.canvas.ownerDocument !== doc || !t.canvas.isConnected || !this.sizeOf(t.canvas).w) continue;
         const r = this.rectOf(t.canvas);
         if (ev.clientX < r.left || ev.clientY < r.top || ev.clientX > r.right || ev.clientY > r.bottom) continue;
-        const under = doc.elementFromPoint(ev.clientX, ev.clientY);
+        const tgt = ev.target;
+        const under = tgt && tgt.nodeType === 1 ? tgt : doc.elementFromPoint(ev.clientX, ev.clientY);
         if (under !== t.canvas && !under?.closest?.(".sfx-layer")) continue;
         const p = call(t.viewport, "toWorld", ev.clientX - r.left, ev.clientY - r.top);
         if (p && Number.isFinite(p.x)) return { t, p: { x: p.x, y: p.y } };
@@ -5054,8 +5056,8 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
           const at = tabAt(ev);
           if (at) this.trackHover(at.t, at.p);
         }
-        if (this.placing || !this.effects.length) return;
-        hoverAt = { clientX: ev.clientX, clientY: ev.clientY };
+        if (this.placing || !this.effects.length || ev.buttons) return;
+        hoverAt = { clientX: ev.clientX, clientY: ev.clientY, target: ev.target };
         if (!hoverFrame) hoverFrame = (doc.defaultView ?? window).requestAnimationFrame(() => {
           hoverFrame = 0;
           const e2 = hoverAt;
@@ -6021,6 +6023,7 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
     if (!keep) {
       this.noteRead.clear();
       this.abilitiesRead.clear();
+      this.abilityPaths = "";
     }
     const mc = this.app.metadataCache;
     const inBases = new Set([...this.baseNotes.values()].flat());
@@ -6046,7 +6049,7 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
         notes.push(c);
       }
     }
-    stored.sort((a, b) => a.name.localeCompare(b.name));
+    stored.sort((a, b) => byName.compare(a.name, b.name));
     this.stored = stored;
     this.noteChoices = notes;
     this.creatureNotes = creatures;
@@ -6065,6 +6068,7 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
     for (const c of found) if (c.notePath && !paths.includes(c.notePath)) paths.push(c.notePath);
     if (found.length) this.noteChoices = this.noteChoices.filter((c) => !found.includes(c));
     const out = [];
+    let fresh = false;
     const LISTS = ["traits", "actions", "bonus_actions", "reactions", "legendary_actions", "lair_actions", "mythic_actions", "regional_effects", "spells_and_actions"];
     for (const path of paths) {
       if (run !== this.abilityRun) return;
@@ -6075,6 +6079,7 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
         out.push(...was.out);
         continue;
       }
+      fresh = true;
       const mine = [];
       const fm = this.app.metadataCache.getFileCache(f)?.frontmatter ?? {};
       let text = "";
@@ -6114,7 +6119,10 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
       this.abilitiesRead.set(path, { mtime: changedAt(f), out: mine });
       out.push(...mine);
     }
-    out.sort((a, b) => a.name.localeCompare(b.name) || (a.owner ?? "").localeCompare(b.owner ?? ""));
+    const sig = paths.join("\n");
+    if (!fresh && sig === this.abilityPaths) return;
+    this.abilityPaths = sig;
+    out.sort((a, b) => byName.compare(a.name, b.name) || byName.compare(a.owner ?? "", b.owner ?? ""));
     this.ownAbilities = out;
     this.joinAbilities();
   }
@@ -6124,7 +6132,7 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
   joinAbilities() {
     const mine = new Set(this.ownAbilities.map((c) => (c.owner ?? "").toLowerCase()));
     const srd = this.settings.srdSpells ? this.srdAbilities.filter((c) => !mine.has((c.owner ?? "").toLowerCase())) : [];
-    this.abilityChoices = [...this.ownAbilities, ...srd].sort((a, b) => a.name.localeCompare(b.name) || (a.owner ?? "").localeCompare(b.owner ?? ""));
+    this.abilityChoices = [...this.ownAbilities, ...srd].sort((a, b) => byName.compare(a.name, b.name) || byName.compare(a.owner ?? "", b.owner ?? ""));
     this.namesChanged();
   }
   /**
@@ -6135,6 +6143,7 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
    */
   noteRead = /* @__PURE__ */ new Map();
   abilitiesRead = /* @__PURE__ */ new Map();
+  abilityPaths = "";
   /** Notes found to hold a statblock block when their text was read. */
   statblockBodies = /* @__PURE__ */ new Set();
   abilityRun = 0;
@@ -6157,10 +6166,10 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
       seen.add(k);
       out.push(c);
     };
-    const byName = new Map(this.noteChoices.filter((n) => n.entry).map((n) => [n.name.trim().toLowerCase(), n.entry]));
+    const byName2 = new Map(this.noteChoices.filter((n) => n.entry).map((n) => [n.name.trim().toLowerCase(), n.entry]));
     for (const st of this.stored) {
       const c = (this.storedChoices.get(st.path)?.stored === st ? this.storedChoices.get(st.path) : null) ?? { key: "stored:" + st.path, name: st.name, source: "stored", stored: st, notePath: st.path };
-      const entry = c.entry ?? byName.get(st.name.trim().toLowerCase());
+      const entry = c.entry ?? byName2.get(st.name.trim().toLowerCase());
       if (entry) c.entry = entry;
       this.storedChoices.set(st.path, c);
       add(c);
