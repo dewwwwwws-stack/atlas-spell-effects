@@ -251,6 +251,19 @@ export class StatblockLinker {
 
   /** Whether plain attacks (a sword, a bite) get a button: only while rolling is on (they'd do nothing else). */
   attacks: (statblock: HTMLElement) => boolean = () => false;
+  /** Whether an ability has a button given it by hand (its name: one whose text names nothing the add-on reads). */
+  own: (name: string) => boolean = () => false;
+  /** Each ability name in a statblock with no button, by its name's element: to give it one by hand (right-click). */
+  private bare = new WeakMap<Element, { name: string; text: string }>();
+  /** The ability whose name is at `el` (or round it) in a statblock, with or without a button, or null. */
+  abilityAt(el: Element): { name: string; text: string; statblock: HTMLElement; button: boolean } | null {
+    const at = el.closest('[data-sfx-ability]');
+    const sb = at?.closest<HTMLElement>(STATBLOCK);
+    const u = at ? this.bare.get(at) : undefined;
+    if (!at || !sb || !u) return null;
+    const prev = at.previousSibling;
+    return { ...u, statblock: sb, button: !!(prev?.instanceOf(Element) && prev.classList.contains(CAST_BTN)) };
+  }
   /** What each statblock's entries got, and why not (Explain statblock buttons), by statblock, from the last look. */
   private why = new WeakMap<HTMLElement, string[]>();
   /** Something that went wrong on a look, once each (the rest of the statblock is still done). */
@@ -559,8 +572,10 @@ export class StatblockLinker {
           keep.add(this.put(parent, u.anchor, link, shownText(u.anchor) || u.name));
           continue;
         }
-        const ae = abilityEntry(u.name, u.text);
-        if (!ae) { why.push(`${u.name}: no button (no attack, save, damage or area found in its text)`); continue; }
+        // (each one's name can be right-clicked to give it a button by hand, or change the one it has)
+        if (u.anchor.instanceOf(Element)) { u.anchor.setAttribute('data-sfx-ability', u.name); this.bare.set(u.anchor, { name: u.name, text: u.text }); }
+        const ae = abilityEntry(u.name, u.text) ?? (this.own(u.name) ? { plain: undefined } : null);
+        if (!ae) { why.push(`${u.name}: no button (no attack, save, damage or area found in its text: right-click its name to give it one)`); continue; }
         if (ae.plain && !attacksOn) { why.push(`${u.name}: no button (an attack, and attack buttons are off for this creature: rolling is off, or it's a player's and rolling is for NPCs only; and animations for attacks are off)`); continue; }
         const link: SpellLink = { key: 'ability:' + norm(u.name), name: u.name, ability: u.text, ...(ae.plain === 'attack' ? { attack: true } : {}) };
         const prev = u.anchor.previousSibling;

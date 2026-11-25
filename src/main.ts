@@ -39,7 +39,7 @@ const uid = () => 'fx' + Date.now().toString(36) + Math.random().toString(36).sl
 
 /** A preset, from versions before 1.4: made into a saved spell (a note of its own) when the add-on loads. */
 export interface Preset { id: string; name: string; of: string; area: Area; file?: string; colour: string; colour2?: string; alpha?: number; attach?: boolean; light?: EffectLight | null }
-interface Remembered { more?: More; motion?: string; atlas?: AtlasChoices; look?: string; teleport?: number; conditions?: string[]; range?: number; unit?: string; angle?: number; target?: 'on' | 'bolt'; self?: boolean; colour2?: string; alpha?: number; file?: string; colour?: string; shape?: Shape; size?: number; width?: number; from?: 'caster' | 'point'; lasting?: boolean; light?: EffectLight | null; ring?: number; round?: boolean; blocks?: WallBlocks }
+interface Remembered { /** An ability given its button by hand (its text names nothing the add-on reads): its shape and size are these. */ own?: boolean; more?: More; motion?: string; atlas?: AtlasChoices; look?: string; teleport?: number; conditions?: string[]; range?: number; unit?: string; angle?: number; target?: 'on' | 'bolt'; self?: boolean; colour2?: string; alpha?: number; file?: string; colour?: string; shape?: Shape; size?: number; width?: number; from?: 'caster' | 'point'; lasting?: boolean; light?: EffectLight | null; ring?: number; round?: boolean; blocks?: WallBlocks }
 interface Settings {
   folders: string;                 // vault folders with effect files, comma-separated; '' = any folder named like JB2A or "Spell Effects"
   remember: Record<string, Remembered>;
@@ -758,6 +758,9 @@ export default class AtlasSpellEffects extends Plugin {
       const l = new StatblockLinker(d, () => this.spellNames(), (link, how) => void this.castFromStatblock(link, how), (link, how) => void this.statblockMenu(link, how), (sb) => { if (sb.closest('.atlas-statblock-preview-window')) this.tokenOfStatblock(sb); }, (link, how) => this.peekButton(link, how));
       // (an attack does something when it's rolled, or animated)
       l.attacks = (sb) => { if (!this.settings.rolling) return this.settings.attackAnims; const k = this.settings.rollWho === 'npcs' ? this.tokenOfStatblock(sb) : null; return !(k && this.isPC(k.tab, k.id)) || this.settings.attackAnims; };
+      l.own = (name) => !!this.settings.abilities[this.abilityKey(name)]?.own;
+      // an ability's name right-clicked: give it a button by hand, or change or take away the one given
+      this.registerDomEvent(d, 'contextmenu', (ev: MouseEvent) => this.abilityMenu(ev, l), { capture: true });
       l.start(); this.linkers.set(d, l);
     }
     for (const [d, l] of this.linkers) if (!docs.has(d) || !d.defaultView) { l.stop(); this.linkers.delete(d); }
@@ -823,8 +826,47 @@ export default class AtlasSpellEffects extends Plugin {
       const entry: SpellEntry = { ...entries[0], key: `ability:${link.name.toLowerCase()}:multi`, name: link.name, ...(far ? { range: `${far} ft.` } : {}) };
       return { key: entry.key, name: link.name, source: 'note', entry, ability: true };
     }
-    const entry = abilityEntry(link.name, link.ability);
+    const entry = abilityEntry(link.name, link.ability) ?? (this.settings.abilities[this.abilityKey(link.name)]?.own ? this.ownEntry(link.name, link.ability) : null);
     return entry ? { key: entry.key, name: link.name, source: 'note', entry, ability: true } : null;
+  }
+  /** An ability given its button by hand: its text, and what was saved for it (its shape and size, its look). */
+  private ownEntry(name: string, text: string): SpellEntry {
+    return { key: `ability:${name.replace(/\s+/g, ' ').trim().toLowerCase()}:own`, name, range: '', duration: 'Instantaneous', descFull: text.replace(/\s+/g, ' ').trim(), ability: true };
+  }
+  /** Each statblock looked at again: its buttons as they are now (an ability given or taken its button by hand). */
+  relink(): void { for (const l of this.linkers.values()) l.soon(); }
+
+  /**
+   * An ability's name right-clicked in a statblock: one with no button can be given one by hand (its shape, size,
+   * range and look chosen in the cast window, then saved: every statblock with an ability of that name has it);
+   * one given its button so can be changed, or have it taken away. One with a button of its own (read from its
+   * text) has its button's menu instead, and the right-click is left to Atlas.
+   */
+  private abilityMenu(ev: MouseEvent, l: StatblockLinker): void {
+    const t = ev.target as Node | null;
+    const el = t ? (t.nodeType === 1 ? t as Element : t.parentElement) : null;
+    const u = el ? l.abilityAt(el) : null;
+    if (!u) return;
+    const k = this.abilityKey(u.name), mine = this.settings.abilities[k];
+    if (u.button && !mine?.own) return;
+    ev.preventDefault(); ev.stopPropagation();
+    const menu = new Menu();
+    menu.addItem((i) => i.setTitle(mine?.own ? `Change ${u.name}'s button…` : `Give ${u.name} a Use button…`).setIcon('zap').onClick(() => { void this.ownAbility(u); }));
+    if (mine?.own) menu.addItem((i) => i.setTitle('Take its button away').setIcon('trash-2').onClick(() => { void (async () => {
+      delete this.settings.abilities[k]; await this.save(); this.relink();
+      new Notice(`Combat+: ${u.name} has no button now.`);
+    })(); }));
+    menu.showAtPosition({ x: ev.clientX, y: ev.clientY }, el?.ownerDocument);
+    (field(menu, 'dom') as HTMLElement | undefined)?.addClass?.('sfx-sb-menu');
+  }
+  /** The cast window for an ability to give a button by hand: choose its shape, size and look, then Save. */
+  private async ownAbility(u: { name: string; text: string; statblock: HTMLElement }): Promise<void> {
+    const entry = this.ownEntry(u.name, u.text);
+    const m = new CastModal(this.app, this);
+    await m.pick({ key: entry.key, name: u.name, source: 'note', entry, ability: true });
+    m.casterToken = this.tokenOfStatblock(u.statblock)?.id;
+    m.open();
+    if (!this.settings.abilities[this.abilityKey(u.name)]?.own) new Notice(`Combat+: choose how ${u.name} looks (its shape, size and range too), then Save: it gets a Use button in every statblock that has it.`, 8000);
   }
   /** A Multiattack's attacks put on its cast: one roll each, in turn (a creature's own attacks: not spells). */
   private withSequence(p: Pending, link: SpellLink): Pending {
@@ -4506,7 +4548,8 @@ class CastModal extends Modal {
       // an ability: its saved preset (by name, for every statblock), with this statblock's own shape and size
       const preset = c.ability ? P.settings.abilities[P.abilityKey(c.name)] : undefined;
       let r = entry ? inUnitsNow(preset ?? P.settings.remember[entry.key]) : undefined;
-      if (preset && r && a) {
+      // (one given its button by hand: what was saved is its shape and size; its text names none)
+      if (preset && r && a && !preset.own) {
         const same = r.shape === a.shape;
         r = { ...r, shape: a.shape, size: a.size, from: a.from };
         delete r.width; delete r.ring; delete r.round; delete r.target; delete r.self;
@@ -4780,12 +4823,13 @@ class CastModal extends Modal {
         del.title = `Deletes what’s saved for ${this.name}; it’s read from each statblock’s text again`;
         del.onclick = () => new ConfirmModal(this.app, `Delete “${this.name}”?`, 'Its saved animation, colours and choices go. The ability stays in its statblocks, read from their text.', 'Delete', async () => {
           delete P.settings.abilities[k]; delete P.settings.remember[this.choice?.entry?.key ?? ''];
-          await P.save(); const c = this.choice; await this.pick(c); this.saved = `Deleted “${this.name}”`; this.render();
+          await P.save(); P.relink(); const c = this.choice; await this.pick(c); this.saved = `Deleted “${this.name}”`; this.render();
         }).open();
       }
-      const store = foot.createEl('button', { text: P.settings.abilities[k] ? 'Save changes' : 'Save' });
+      const own = !!this.choice.entry?.key.endsWith(':own');
+      const store = foot.createEl('button', { text: P.settings.abilities[k] ? 'Save changes' : own ? 'Save its button' : 'Save' });
       store.title = `From now on, ${this.name} looks like this in every statblock that has it (its shape and size still come from each statblock). Saved as an ability, not a spell.`;
-      store.onclick = async () => { P.settings.abilities[k] = this.memo(); await P.save(); this.saved = 'Saved ability'; this.render(); };
+      store.onclick = async () => { P.settings.abilities[k] = { ...this.memo(), ...(own ? { own: true } : {}) }; await P.save(); if (own) P.relink(); this.saved = own ? 'Saved: it has a Use button now' : 'Saved ability'; this.render(); };
     }
     const sp = this.choice?.ability ? createEl('button') : foot.createEl('button', { text: 'Save as new…' });
     sp.title = `Keeps all of this as a spell of its own, under a new name (a note in ${P.storageFolder()}): a blue Fireball, a small Darkness…`;

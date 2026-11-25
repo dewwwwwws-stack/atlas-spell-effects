@@ -185,6 +185,9 @@ export function areaOf(spell: SpellEntry): Area | null {
   // an ability with no shape named: "each creature within 120 feet of the dragon"
   if (spell.ability && (m = new RegExp(String.raw`\b(?:each|every|all|any)\b[^.]*?\bwithin (\d+(?:\.\d+)?)\s*-?\s*` + UNIT + String.raw`\s+of\s+(?:the|it|its|him|her|them|that)\b`, 'i').exec(text)))
     return { shape: 'emanation', size: toGame(num(m[1]), m[2]), from: 'caster', lasting: last };
+  // or no "of" at all (other games): "All within 30' must save", "everyone within 3 yards"
+  if (spell.ability && (m = new RegExp(String.raw`\b(?:each|every|all|any|anyone|anybody|everyone|everything)\b(?:\s+(?:other\s+)?(?:creatures?|enemies|foes|targets?|living|beings?|others?))?(?:\s+(?:meeting|hearing|seeing|who|that|which)\b[^.,;]{0,24}?)?\s+within (\d+(?:\.\d+)?)\s*-?\s*` + UNIT + String.raw`(?!\s*of\b)`, 'i').exec(text)))
+    return { shape: 'emanation', size: toGame(num(m[1]), m[2]), from: 'caster', lasting: last };
   // the sheet's own short form when the text has none: "S:15-ft rad", "S:15ft cone", "S:15ft cube", "S:60-ft line"
   if ((m = /^S:(\d+)-?ft\s*(rad|cone|cube|line)/i.exec(range))) {
     const k = m[2].toLowerCase();
@@ -210,19 +213,52 @@ function generic(text: string, range: string, self: boolean, last: boolean, foun
   const look = (re: RegExp, make: (m: RegExpExecArray) => Area | null) => { const m = re.exec(text); if (m) { const a = make(m); if (a && a.size > 0) found.push({ at: m.index, area: a }); } };
   const ft = (n: string, u: string) => toGame(num(n), u);
   look(new RegExp(D + String.raw`(?:radius\s+)?(burst|sphere|radius|circle)\b`, 'i'), (m) => ({ shape: 'radius', size: ft(m[1], m[2]), from: self ? 'caster' : 'point', lasting: last }));
-  look(new RegExp(D + String.raw`(emanation|aura)\b`, 'i'), (m) => ({ shape: 'emanation', size: ft(m[1], m[2]), from: 'caster', lasting: last }));
+  // (an aura is always on)
+  look(new RegExp(D + String.raw`(emanation|aura)\b`, 'i'), (m) => ({ shape: 'emanation', size: ft(m[1], m[2]), from: 'caster', lasting: last || /aura/i.test(m[3]) }));
+  // Pathfinder's aura trait, its size after it: "Stench (aura, olfactory) 30 feet"
+  look(new RegExp(String.raw`\(\s*aura\b[^)]*\)\s*` + D, 'i'), (m) => ({ shape: 'emanation', size: ft(m[1], m[2]), from: 'caster', lasting: true }));
   look(new RegExp(D + String.raw`cone\b`, 'i'), (m) => ({ shape: 'cone', size: ft(m[1], m[2]), from: 'caster', lasting: last }));
+  // its length after it: "Cone 90' long and 30' wide" (Old-School Essentials), "a 3m wide cone, 8m long"
+  look(new RegExp(String.raw`\bcone\b[^.]{0,24}?` + D + String.raw`(?:long|in length)\b`, 'i'), (m) => ({ shape: 'cone', size: ft(m[1], m[2]), from: 'caster', lasting: last }));
+  look(new RegExp(String.raw`\bline\b[^.]{0,24}?` + D + String.raw`(?:long|in length)\b(?:,?\s*(?:and\s*)?` + D + String.raw`wide)?`, 'i'), (m) => ({ shape: 'line', size: ft(m[1], m[2]), width: m[3] ? ft(m[3], m[4]) : square(), from: 'caster', lasting: last }));
+  // a cloud or an area by its sides: "Cloud 50' × 40' × 20'"
+  look(new RegExp(String.raw`\b(?:cloud|area|box|zone)\b[^.]{0,12}?` + D + String.raw`[×x]\s*` + D, 'i'), (m) => ({ shape: 'cube', size: ft(m[1], m[2]), from: 'point', lasting: last }));
   look(new RegExp(D + String.raw`(cube|square)\b(?![\s-]*portion)`, 'i'), (m) => ({ shape: 'cube', size: ft(m[1], m[2]), from: self ? 'caster' : 'point', lasting: last }));
   look(new RegExp(D + String.raw`line\b`, 'i'), (m) => ({ shape: 'line', size: ft(m[1], m[2]), width: square(), from: 'caster', lasting: last }));
   // squares, with no unit (Draw Steel): "3 burst" round the caster, "3 cube within 10", "5 × 1 line within 1"
-  look(/\b(\d+) (burst|aura)\b/i, (m) => ({ shape: 'emanation', size: ft(m[1], ''), from: 'caster', lasting: last }));
+  look(/\b(\d+) (burst|aura)\b/i, (m) => ({ shape: 'emanation', size: ft(m[1], ''), from: 'caster', lasting: last || /aura/i.test(m[2]) }));
   look(/\b(\d+) cube within \d+/i, (m) => ({ shape: 'cube', size: ft(m[1], ''), from: 'point', lasting: last }));
   look(/\b(\d+) ?[×x] ?(\d+) line\b/i, (m) => ({ shape: 'line', size: ft(m[1], ''), width: ft(m[2], ''), from: 'caster', lasting: last }));
+  look(/\b(\d+) wall within \d+/i, (m) => ({ shape: 'wall', size: ft(m[1], ''), width: square(), blocks: 'none', from: 'point', lasting: true }));
+  // a radius after its shape: "a gas cloud with a radius of 5 yards"
+  // (round a point it names, "centered on a point… to a radius of 300 feet"; else round itself, "pollen out to a
+  // radius of 30 feet", "a cloak of silence to a radius of 2 feet")
+  look(new RegExp(String.raw`\bradius of ` + D, 'i'), (m) => ({ shape: 'radius', size: ft(m[1], m[2]), from: !self && /\b(?:point|cent(?:er|re)d on|location|spot)\b/i.test(text.slice(0, m.index)) ? 'point' : 'caster', lasting: last }));
+  // by its sides, each with its unit: "a 10m/yds x 10m/yds square area" (Cyberpunk RED)
+  look(new RegExp(String.raw`(\d+(?:\.\d+)?)\s*` + UNIT + String.raw`(?:\/\w+)?\s*[×x]\s*\d+(?:\.\d+)?\s*` + UNIT + String.raw`(?:\/\w+)?\s*(?:square|area|cube)\b`, 'i'), (m) => ({ shape: 'cube', size: ft(m[1], m[2]), from: 'point', lasting: last }));
   // range bands
   const bands = bandsRe();
   if (bands) {
+    const B = `(${bands})(?: range)?\\b`;
+    const before = found.length;
     look(new RegExp(`\\b(${bands})[\\s-]*sized? (cube|square|area)\\b`, 'i'), (m) => ({ shape: 'cube', size: bandSize(m[1]), from: 'point', lasting: last }));
-    look(new RegExp(`\\b(?:all|each|every|any)\\b[^.]*?\\bwithin (${bands})(?: range)?\\b`, 'i'), (m) => ({ shape: 'emanation', size: bandSize(m[1]), from: 'caster', lasting: last }));
+    // at a point, an area round it: "a point within Far range. All targets within Very Close range of that point"
+    look(new RegExp(`\\b(?:point|spot|location|place)\\b[^.]*?\\bwithin ${B}[\\s\\S]*?\\bwithin ${B} of (?:that|the|this|its|their) (?:point|spot|location|place|impact)\\b`, 'i'), (m) => ({ shape: 'radius', size: bandSize(m[2]), from: 'point', lasting: last }));
+    // in front of it: a cone ("…in front of the Dragon within Close range", "a Close-range cone")
+    look(new RegExp(`\\bin front of\\b[^.]*?\\b(?:within|up to|out to) ${B}`, 'i'), (m) => ({ shape: 'cone', size: bandSize(m[1]), from: 'caster', lasting: last }));
+    look(new RegExp(`\\b(${bands})[\\s-]*(?:range[\\s-]*)?cone\\b|\\bcone\\b[^.]*?\\b(?:within|up to|out to) ${B}`, 'i'), (m) => ({ shape: 'cone', size: bandSize(m[1] ?? m[2]), from: 'caster', lasting: last }));
+    // a line: "in a line within Far range", "a line out to Close range", "a line of lightning, near length"
+    look(new RegExp(`\\b(?:in )?an? (?:straight |narrow )?line\\b[^.]*?\\b(?:within|up to|out to|to) ${B}`, 'i'), (m) => ({ shape: 'line', size: bandSize(m[1]), width: square(), from: 'caster', lasting: last }));
+    look(new RegExp(`\\bline\\b[^.]*?\\b(${bands})[\\s-]*(?:length|long)\\b`, 'i'), (m) => ({ shape: 'line', size: bandSize(m[1]), width: square(), from: 'caster', lasting: last }));
+    // round it, when none of those: "all targets within Very Close range", "each PC within Far range", "creatures
+    // within close range of the troglodyte"
+    if (found.length === before) look(new RegExp(`\\b(?:all|each|every|any|everyone|everything|creatures|enemies|foes|targets|adversaries)\\b[^.]*?\\bwithin ${B}`, 'i'), (m) => ({ shape: 'emanation', size: bandSize(m[1]), from: 'caster', lasting: last }));
+  }
+  // a cone, or everyone next to it, with no size (Cairn), when nothing else is named: a cone of three squares, a
+  // square round it
+  if (!found.length) {
+    look(/\bin a cone\b(?!\s*(?:of\s+)?\d)/i, () => ({ shape: 'cone', size: squares(3), from: 'caster', lasting: last }));
+    look(/\b(?:all|each|every|any)\b[^.]{0,20}?\badjacent\b(?!\s+to\b)/i, () => ({ shape: 'emanation', size: square(), from: 'caster', lasting: last }));
   }
   void range;
 }
@@ -279,8 +315,14 @@ export function abilityEntry(name: string, text: string): SpellEntry | null {
   const nm = name.replace(/\s+/g, ' ').trim();
   if (!t || !nm) return null;
   const within = new RegExp(String.raw`\b(?:point|space|location|ground|creature|target)\b[^.]*?\bwithin (\d+)\s*-?\s*` + UNIT, 'i').exec(t)
-    ?? new RegExp(String.raw`\brange (\d+)(?:\/\d+)?\s*` + UNIT, 'i').exec(t);
-  const last = /\blasts? (?:for|until)\b|\b(?:until|during)\b[^.]*\b(?:that|the|this) (?:area|movement|emanation|cone|sphere|cube|cylinder|line|cloud|zone|aura)\b/i.test(t);
+    ?? new RegExp(String.raw`\brange (\d+)(?:\/\d+)?\s*` + UNIT, 'i').exec(t)
+    // (Pathfinder's "10-foot burst within 60 feet", Old-School Essentials' "sphere of fire within 240'")
+    ?? new RegExp(String.raw`\b(?:burst|sphere|radius|cube|cloud|blast|explosion)\b[^.]*?\bwithin (\d+)\s*-?\s*` + UNIT, 'i').exec(t)
+    // (Draw Steel, in squares: "3 cube within 10", "10 wall within 10")
+    ?? (() => { const d = /\b(?:cube|wall|line) within (\d+)\b(?!\s*(?:feet|foot|ft|'|m\b|meters?|metres?|yards?))/i.exec(t); return d ? Object.assign([d[0], d[1], 'squares'], { index: d.index, input: t }) as unknown as RegExpExecArray : null; })();
+  // (Daggerheart names each feature's kind after it: "Frost Aura - Passive" is always on, as an aura is)
+  const passive = /\s[-–—]\s*Passive\s*$|\(Passive\)\s*$/i.test(nm);
+  const last = passive || /\blasts? (?:for|until)\b|\b(?:until|during)\b[^.]*\b(?:that|the|this) (?:area|movement|emanation|cone|sphere|cube|cylinder|line|cloud|zone|aura)\b/i.test(t);
   const e: SpellEntry = { key: '', name: nm, range: '', duration: last ? 'Lasting' : 'Instantaneous', descFull: t, ability: true };
   // (an attack first of all: its reach, or what happens to a creature it swallows "within 10 feet", is no area: a
   // Purple Worm's Bite is an attack)
@@ -303,6 +345,23 @@ export function abilityEntry(name: string, text: string): SpellEntry | null {
     const dealt = !!r && r.kind === 'damage' && r.damage.length > 0
       && /\b(?:one|a|that|the|each|this) (?:creature|target|attacker|enemy|humanoid|foe)\b|\btargets? (?:one|a)\b|\bto (?:it|the creature|the target|the attacker|that creature)\b/i.test(t)
       && !/\b(?:extra|additional)\b[^.]{0,40}\bdamage\b|\bmakes? (?:one|a|an|two|three)\b[^.]{0,40}\battacks?\b|\buses? (?:its )?Multiattack\b|\bwhen (?:it|he|she|they|the \w+) (?:takes?|is hit)\b[^.]{0,30}$|\badds? \d+d\d+\b/i.test(t);
+    // or one creature in a range band (Daggerheart: "Make an attack against a target within Close range"; "a PC
+    // within Far range must…"): cast on the creature clicked, within that range
+    const bands = bandsRe();
+    // (Draw Steel's: "Distance Melee 1 Target One creature", "Distance Ranged 10 Target One creature or object")
+    // ("Melee 1 or ranged 5": as far as it reaches)
+    const ds = /\bDistance\s+(?:Melee|Ranged)\s+(\d+)\b(?:\s+or\s+(?:melee|ranged)\s+(\d+))?[\s\S]*?\bTarget\s+(?:One|Two|Three|\d+)\s+(?:creatures?|enemy|enemies|ally|allies|targets?|objects?)\b/i.exec(t);
+    if (ds && !save) {
+      e.key = `ability:${nm.toLowerCase()}:one`; e.range = `${Math.max(Number(ds[1]), Number(ds[2] ?? 0))} squares`;
+      return e;
+    }
+    const one = bands ? new RegExp(`\\b(?:against|at|on|choose|target|targets) (?:a|one|the|another|any) (?:single )?(?:target|creature|PC|enemy|foe|adversary|ally)\\b[^.]*?\\bwithin (${bands})(?: range)?\\b|\\b(?:a|one) (?:target|creature|PC|enemy|foe)\\b (?:within (${bands})(?: range)?)\\b[^.]*?\\b(?:must|takes?|is|becomes?|loses?|marks?)\\b|^(?:one|a|1) (?:target|creature|enemy|foe)\\b (?:within (${bands})(?: range)?)\\b`, 'i').exec(t) : null;
+    // (an attack with no bonus of its own in a band, or damage dealt there, Daggerheart's: nothing to roll it with,
+    // it's aimed at the creature)
+    if (one && !save && !(attack && (r?.bonus !== undefined || lead))) {
+      e.key = `ability:${nm.toLowerCase()}:one`; e.range = one[1] ?? one[2] ?? one[3];
+      return e;
+    }
     if (!attack && !save && !dealt) return null;
     e.plain = attack ? 'attack' : save ? 'save' : 'damage'; e.key = `ability:${nm.toLowerCase()}:${e.plain}`;
     // how far it can go: the farthest of its reach and its ranges ("reach 5 ft. or range 150 ft.": 150;
@@ -314,6 +373,10 @@ export function abilityEntry(name: string, text: string): SpellEntry | null {
   }
   // how far away it can be put: a point's (not "each creature within 120 feet of it", which is its area)
   if (within && (a.from === 'point' || a.target) && toGame(num(within[1]), within[2]) !== a.size) e.range = `${within[1]} ${within[2]}`;
+  // (in a range band: "a point within Far range")
+  const bands = bandsRe();
+  const bandAt = bands && a.from === 'point' && !e.range ? new RegExp(`\\b(?:point|spot|location|place|creature|target)\\b[^.]*?\\bwithin (${bands})(?: range)?\\b`, 'i').exec(t) : null;
+  if (bandAt && bandSize(bandAt[1]) !== a.size) e.range = bandAt[1];
   e.key = `ability:${nm.toLowerCase()}:${a.shape}:${a.size}`;
   return e;
 }

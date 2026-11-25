@@ -1522,6 +1522,8 @@ function areaOf(spell) {
   let m;
   if (spell.ability && (m = new RegExp(String.raw`\b(?:each|every|all|any)\b[^.]*?\bwithin (\d+(?:\.\d+)?)\s*-?\s*` + UNIT + String.raw`\s+of\s+(?:the|it|its|him|her|them|that)\b`, "i").exec(text)))
     return { shape: "emanation", size: toGame(num2(m[1]), m[2]), from: "caster", lasting: last };
+  if (spell.ability && (m = new RegExp(String.raw`\b(?:each|every|all|any|anyone|anybody|everyone|everything)\b(?:\s+(?:other\s+)?(?:creatures?|enemies|foes|targets?|living|beings?|others?))?(?:\s+(?:meeting|hearing|seeing|who|that|which)\b[^.,;]{0,24}?)?\s+within (\d+(?:\.\d+)?)\s*-?\s*` + UNIT + String.raw`(?!\s*of\b)`, "i").exec(text)))
+    return { shape: "emanation", size: toGame(num2(m[1]), m[2]), from: "caster", lasting: last };
   if (m = /^S:(\d+)-?ft\s*(rad|cone|cube|line)/i.exec(range)) {
     const k = m[2].toLowerCase();
     const shape = k === "rad" ? "emanation" : k;
@@ -1543,17 +1545,35 @@ function generic(text, range, self, last, found) {
   };
   const ft = (n, u) => toGame(num2(n), u);
   look(new RegExp(D + String.raw`(?:radius\s+)?(burst|sphere|radius|circle)\b`, "i"), (m) => ({ shape: "radius", size: ft(m[1], m[2]), from: self ? "caster" : "point", lasting: last }));
-  look(new RegExp(D + String.raw`(emanation|aura)\b`, "i"), (m) => ({ shape: "emanation", size: ft(m[1], m[2]), from: "caster", lasting: last }));
+  look(new RegExp(D + String.raw`(emanation|aura)\b`, "i"), (m) => ({ shape: "emanation", size: ft(m[1], m[2]), from: "caster", lasting: last || /aura/i.test(m[3]) }));
+  look(new RegExp(String.raw`\(\s*aura\b[^)]*\)\s*` + D, "i"), (m) => ({ shape: "emanation", size: ft(m[1], m[2]), from: "caster", lasting: true }));
   look(new RegExp(D + String.raw`cone\b`, "i"), (m) => ({ shape: "cone", size: ft(m[1], m[2]), from: "caster", lasting: last }));
+  look(new RegExp(String.raw`\bcone\b[^.]{0,24}?` + D + String.raw`(?:long|in length)\b`, "i"), (m) => ({ shape: "cone", size: ft(m[1], m[2]), from: "caster", lasting: last }));
+  look(new RegExp(String.raw`\bline\b[^.]{0,24}?` + D + String.raw`(?:long|in length)\b(?:,?\s*(?:and\s*)?` + D + String.raw`wide)?`, "i"), (m) => ({ shape: "line", size: ft(m[1], m[2]), width: m[3] ? ft(m[3], m[4]) : square(), from: "caster", lasting: last }));
+  look(new RegExp(String.raw`\b(?:cloud|area|box|zone)\b[^.]{0,12}?` + D + String.raw`[×x]\s*` + D, "i"), (m) => ({ shape: "cube", size: ft(m[1], m[2]), from: "point", lasting: last }));
   look(new RegExp(D + String.raw`(cube|square)\b(?![\s-]*portion)`, "i"), (m) => ({ shape: "cube", size: ft(m[1], m[2]), from: self ? "caster" : "point", lasting: last }));
   look(new RegExp(D + String.raw`line\b`, "i"), (m) => ({ shape: "line", size: ft(m[1], m[2]), width: square(), from: "caster", lasting: last }));
-  look(/\b(\d+) (burst|aura)\b/i, (m) => ({ shape: "emanation", size: ft(m[1], ""), from: "caster", lasting: last }));
+  look(/\b(\d+) (burst|aura)\b/i, (m) => ({ shape: "emanation", size: ft(m[1], ""), from: "caster", lasting: last || /aura/i.test(m[2]) }));
   look(/\b(\d+) cube within \d+/i, (m) => ({ shape: "cube", size: ft(m[1], ""), from: "point", lasting: last }));
   look(/\b(\d+) ?[×x] ?(\d+) line\b/i, (m) => ({ shape: "line", size: ft(m[1], ""), width: ft(m[2], ""), from: "caster", lasting: last }));
+  look(/\b(\d+) wall within \d+/i, (m) => ({ shape: "wall", size: ft(m[1], ""), width: square(), blocks: "none", from: "point", lasting: true }));
+  look(new RegExp(String.raw`\bradius of ` + D, "i"), (m) => ({ shape: "radius", size: ft(m[1], m[2]), from: !self && /\b(?:point|cent(?:er|re)d on|location|spot)\b/i.test(text.slice(0, m.index)) ? "point" : "caster", lasting: last }));
+  look(new RegExp(String.raw`(\d+(?:\.\d+)?)\s*` + UNIT + String.raw`(?:\/\w+)?\s*[×x]\s*\d+(?:\.\d+)?\s*` + UNIT + String.raw`(?:\/\w+)?\s*(?:square|area|cube)\b`, "i"), (m) => ({ shape: "cube", size: ft(m[1], m[2]), from: "point", lasting: last }));
   const bands = bandsRe();
   if (bands) {
+    const B = `(${bands})(?: range)?\\b`;
+    const before = found.length;
     look(new RegExp(`\\b(${bands})[\\s-]*sized? (cube|square|area)\\b`, "i"), (m) => ({ shape: "cube", size: bandSize(m[1]), from: "point", lasting: last }));
-    look(new RegExp(`\\b(?:all|each|every|any)\\b[^.]*?\\bwithin (${bands})(?: range)?\\b`, "i"), (m) => ({ shape: "emanation", size: bandSize(m[1]), from: "caster", lasting: last }));
+    look(new RegExp(`\\b(?:point|spot|location|place)\\b[^.]*?\\bwithin ${B}[\\s\\S]*?\\bwithin ${B} of (?:that|the|this|its|their) (?:point|spot|location|place|impact)\\b`, "i"), (m) => ({ shape: "radius", size: bandSize(m[2]), from: "point", lasting: last }));
+    look(new RegExp(`\\bin front of\\b[^.]*?\\b(?:within|up to|out to) ${B}`, "i"), (m) => ({ shape: "cone", size: bandSize(m[1]), from: "caster", lasting: last }));
+    look(new RegExp(`\\b(${bands})[\\s-]*(?:range[\\s-]*)?cone\\b|\\bcone\\b[^.]*?\\b(?:within|up to|out to) ${B}`, "i"), (m) => ({ shape: "cone", size: bandSize(m[1] ?? m[2]), from: "caster", lasting: last }));
+    look(new RegExp(`\\b(?:in )?an? (?:straight |narrow )?line\\b[^.]*?\\b(?:within|up to|out to|to) ${B}`, "i"), (m) => ({ shape: "line", size: bandSize(m[1]), width: square(), from: "caster", lasting: last }));
+    look(new RegExp(`\\bline\\b[^.]*?\\b(${bands})[\\s-]*(?:length|long)\\b`, "i"), (m) => ({ shape: "line", size: bandSize(m[1]), width: square(), from: "caster", lasting: last }));
+    if (found.length === before) look(new RegExp(`\\b(?:all|each|every|any|everyone|everything|creatures|enemies|foes|targets|adversaries)\\b[^.]*?\\bwithin ${B}`, "i"), (m) => ({ shape: "emanation", size: bandSize(m[1]), from: "caster", lasting: last }));
+  }
+  if (!found.length) {
+    look(/\bin a cone\b(?!\s*(?:of\s+)?\d)/i, () => ({ shape: "cone", size: squares(3), from: "caster", lasting: last }));
+    look(/\b(?:all|each|every|any)\b[^.]{0,20}?\badjacent\b(?!\s+to\b)/i, () => ({ shape: "emanation", size: square(), from: "caster", lasting: last }));
   }
   void range;
 }
@@ -1597,8 +1617,12 @@ function abilityEntry(name, text) {
   const t = untag(text).replace(/\s+/g, " ").trim();
   const nm = name.replace(/\s+/g, " ").trim();
   if (!t || !nm) return null;
-  const within3 = new RegExp(String.raw`\b(?:point|space|location|ground|creature|target)\b[^.]*?\bwithin (\d+)\s*-?\s*` + UNIT, "i").exec(t) ?? new RegExp(String.raw`\brange (\d+)(?:\/\d+)?\s*` + UNIT, "i").exec(t);
-  const last = /\blasts? (?:for|until)\b|\b(?:until|during)\b[^.]*\b(?:that|the|this) (?:area|movement|emanation|cone|sphere|cube|cylinder|line|cloud|zone|aura)\b/i.test(t);
+  const within3 = new RegExp(String.raw`\b(?:point|space|location|ground|creature|target)\b[^.]*?\bwithin (\d+)\s*-?\s*` + UNIT, "i").exec(t) ?? new RegExp(String.raw`\brange (\d+)(?:\/\d+)?\s*` + UNIT, "i").exec(t) ?? new RegExp(String.raw`\b(?:burst|sphere|radius|cube|cloud|blast|explosion)\b[^.]*?\bwithin (\d+)\s*-?\s*` + UNIT, "i").exec(t) ?? (() => {
+    const d = /\b(?:cube|wall|line) within (\d+)\b(?!\s*(?:feet|foot|ft|'|m\b|meters?|metres?|yards?))/i.exec(t);
+    return d ? Object.assign([d[0], d[1], "squares"], { index: d.index, input: t }) : null;
+  })();
+  const passive = /\s[-–—]\s*Passive\s*$|\(Passive\)\s*$/i.test(nm);
+  const last = passive || /\blasts? (?:for|until)\b|\b(?:until|during)\b[^.]*\b(?:that|the|this) (?:area|movement|emanation|cone|sphere|cube|cylinder|line|cloud|zone|aura)\b/i.test(t);
   const e = { key: "", name: nm, range: "", duration: last ? "Lasting" : "Instantaneous", descFull: t, ability: true };
   const attackFirst = /^(?:melee|ranged)(?: or ranged)?(?: weapon| spell)? attack(?: roll)?\s*:|^(?:melee|ranged)(?:, [^:]{0,40})?:\s*[+-]\d+ to hit/i.test(t);
   const a = attackFirst ? null : areaOf(e);
@@ -1608,6 +1632,19 @@ function abilityEntry(name, text) {
     const attack = !!r && r.kind === "attack" && (r.bonus !== void 0 || lead) && (r.damage.length > 0 || !!r.after || /\bHit:/i.test(t));
     const save = !!r && r.kind === "save" && /Saving Throw:\s*DC|\bmust (?:make|succeed on)\b[^.]{0,40}\bsaving throw|\b(?:target|creature)\b[^.]{0,40}\b(?:makes?|succeeds?)\b[^.]{0,40}\bsaving throw/i.test(t) && !/\ballows? (?:it|you|them) to make\b|\bwhen (?:it|you) (?:make|succeed|fail)/i.test(t);
     const dealt = !!r && r.kind === "damage" && r.damage.length > 0 && /\b(?:one|a|that|the|each|this) (?:creature|target|attacker|enemy|humanoid|foe)\b|\btargets? (?:one|a)\b|\bto (?:it|the creature|the target|the attacker|that creature)\b/i.test(t) && !/\b(?:extra|additional)\b[^.]{0,40}\bdamage\b|\bmakes? (?:one|a|an|two|three)\b[^.]{0,40}\battacks?\b|\buses? (?:its )?Multiattack\b|\bwhen (?:it|he|she|they|the \w+) (?:takes?|is hit)\b[^.]{0,30}$|\badds? \d+d\d+\b/i.test(t);
+    const bands2 = bandsRe();
+    const ds = /\bDistance\s+(?:Melee|Ranged)\s+(\d+)\b(?:\s+or\s+(?:melee|ranged)\s+(\d+))?[\s\S]*?\bTarget\s+(?:One|Two|Three|\d+)\s+(?:creatures?|enemy|enemies|ally|allies|targets?|objects?)\b/i.exec(t);
+    if (ds && !save) {
+      e.key = `ability:${nm.toLowerCase()}:one`;
+      e.range = `${Math.max(Number(ds[1]), Number(ds[2] ?? 0))} squares`;
+      return e;
+    }
+    const one = bands2 ? new RegExp(`\\b(?:against|at|on|choose|target|targets) (?:a|one|the|another|any) (?:single )?(?:target|creature|PC|enemy|foe|adversary|ally)\\b[^.]*?\\bwithin (${bands2})(?: range)?\\b|\\b(?:a|one) (?:target|creature|PC|enemy|foe)\\b (?:within (${bands2})(?: range)?)\\b[^.]*?\\b(?:must|takes?|is|becomes?|loses?|marks?)\\b|^(?:one|a|1) (?:target|creature|enemy|foe)\\b (?:within (${bands2})(?: range)?)\\b`, "i").exec(t) : null;
+    if (one && !save && !(attack && (r?.bonus !== void 0 || lead))) {
+      e.key = `ability:${nm.toLowerCase()}:one`;
+      e.range = one[1] ?? one[2] ?? one[3];
+      return e;
+    }
     if (!attack && !save && !dealt) return null;
     e.plain = attack ? "attack" : save ? "save" : "damage";
     e.key = `ability:${nm.toLowerCase()}:${e.plain}`;
@@ -1617,6 +1654,9 @@ function abilityEntry(name, text) {
     return e;
   }
   if (within3 && (a.from === "point" || a.target) && toGame(num2(within3[1]), within3[2]) !== a.size) e.range = `${within3[1]} ${within3[2]}`;
+  const bands = bandsRe();
+  const bandAt = bands && a.from === "point" && !e.range ? new RegExp(`\\b(?:point|spot|location|place|creature|target)\\b[^.]*?\\bwithin (${bands})(?: range)?\\b`, "i").exec(t) : null;
+  if (bandAt && bandSize(bandAt[1]) !== a.size) e.range = bandAt[1];
   e.key = `ability:${nm.toLowerCase()}:${a.shape}:${a.size}`;
   return e;
 }
@@ -3705,6 +3745,19 @@ var StatblockLinker = class {
   off = [];
   /** Whether plain attacks (a sword, a bite) get a button: only while rolling is on (they'd do nothing else). */
   attacks = () => false;
+  /** Whether an ability has a button given it by hand (its name: one whose text names nothing the add-on reads). */
+  own = () => false;
+  /** Each ability name in a statblock with no button, by its name's element: to give it one by hand (right-click). */
+  bare = /* @__PURE__ */ new WeakMap();
+  /** The ability whose name is at `el` (or round it) in a statblock, with or without a button, or null. */
+  abilityAt(el) {
+    const at = el.closest("[data-sfx-ability]");
+    const sb = at?.closest(STATBLOCK);
+    const u = at ? this.bare.get(at) : void 0;
+    if (!at || !sb || !u) return null;
+    const prev = at.previousSibling;
+    return { ...u, statblock: sb, button: !!(prev?.instanceOf(Element) && prev.classList.contains(CAST_BTN)) };
+  }
   /** What each statblock's entries got, and why not (Explain statblock buttons), by statblock, from the last look. */
   why = /* @__PURE__ */ new WeakMap();
   /** Something that went wrong on a look, once each (the rest of the statblock is still done). */
@@ -4060,9 +4113,13 @@ var StatblockLinker = class {
             keep.add(this.put(parent2, u.anchor, link2, shownText(u.anchor) || u.name));
             continue;
           }
-          const ae = abilityEntry(u.name, u.text);
+          if (u.anchor.instanceOf(Element)) {
+            u.anchor.setAttribute("data-sfx-ability", u.name);
+            this.bare.set(u.anchor, { name: u.name, text: u.text });
+          }
+          const ae = abilityEntry(u.name, u.text) ?? (this.own(u.name) ? { plain: void 0 } : null);
           if (!ae) {
-            why.push(`${u.name}: no button (no attack, save, damage or area found in its text)`);
+            why.push(`${u.name}: no button (no attack, save, damage or area found in its text: right-click its name to give it one)`);
             continue;
           }
           if (ae.plain && !attacksOn) {
@@ -5472,6 +5529,8 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
         const k = this.settings.rollWho === "npcs" ? this.tokenOfStatblock(sb) : null;
         return !(k && this.isPC(k.tab, k.id)) || this.settings.attackAnims;
       };
+      l.own = (name) => !!this.settings.abilities[this.abilityKey(name)]?.own;
+      this.registerDomEvent(d, "contextmenu", (ev) => this.abilityMenu(ev, l), { capture: true });
       l.start();
       this.linkers.set(d, l);
     }
@@ -5547,8 +5606,55 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
       const entry2 = { ...entries[0], key: `ability:${link.name.toLowerCase()}:multi`, name: link.name, ...far ? { range: `${far} ft.` } : {} };
       return { key: entry2.key, name: link.name, source: "note", entry: entry2, ability: true };
     }
-    const entry = abilityEntry(link.name, link.ability);
+    const entry = abilityEntry(link.name, link.ability) ?? (this.settings.abilities[this.abilityKey(link.name)]?.own ? this.ownEntry(link.name, link.ability) : null);
     return entry ? { key: entry.key, name: link.name, source: "note", entry, ability: true } : null;
+  }
+  /** An ability given its button by hand: its text, and what was saved for it (its shape and size, its look). */
+  ownEntry(name, text) {
+    return { key: `ability:${name.replace(/\s+/g, " ").trim().toLowerCase()}:own`, name, range: "", duration: "Instantaneous", descFull: text.replace(/\s+/g, " ").trim(), ability: true };
+  }
+  /** Each statblock looked at again: its buttons as they are now (an ability given or taken its button by hand). */
+  relink() {
+    for (const l of this.linkers.values()) l.soon();
+  }
+  /**
+   * An ability's name right-clicked in a statblock: one with no button can be given one by hand (its shape, size,
+   * range and look chosen in the cast window, then saved: every statblock with an ability of that name has it);
+   * one given its button so can be changed, or have it taken away. One with a button of its own (read from its
+   * text) has its button's menu instead, and the right-click is left to Atlas.
+   */
+  abilityMenu(ev, l) {
+    const t = ev.target;
+    const el = t ? t.nodeType === 1 ? t : t.parentElement : null;
+    const u = el ? l.abilityAt(el) : null;
+    if (!u) return;
+    const k = this.abilityKey(u.name), mine = this.settings.abilities[k];
+    if (u.button && !mine?.own) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    const menu = new import_obsidian4.Menu();
+    menu.addItem((i) => i.setTitle(mine?.own ? `Change ${u.name}'s button\u2026` : `Give ${u.name} a Use button\u2026`).setIcon("zap").onClick(() => {
+      void this.ownAbility(u);
+    }));
+    if (mine?.own) menu.addItem((i) => i.setTitle("Take its button away").setIcon("trash-2").onClick(() => {
+      void (async () => {
+        delete this.settings.abilities[k];
+        await this.save();
+        this.relink();
+        new import_obsidian4.Notice(`Combat+: ${u.name} has no button now.`);
+      })();
+    }));
+    menu.showAtPosition({ x: ev.clientX, y: ev.clientY }, el?.ownerDocument);
+    field(menu, "dom")?.addClass?.("sfx-sb-menu");
+  }
+  /** The cast window for an ability to give a button by hand: choose its shape, size and look, then Save. */
+  async ownAbility(u) {
+    const entry = this.ownEntry(u.name, u.text);
+    const m = new CastModal(this.app, this);
+    await m.pick({ key: entry.key, name: u.name, source: "note", entry, ability: true });
+    m.casterToken = this.tokenOfStatblock(u.statblock)?.id;
+    m.open();
+    if (!this.settings.abilities[this.abilityKey(u.name)]?.own) new import_obsidian4.Notice(`Combat+: choose how ${u.name} looks (its shape, size and range too), then Save: it gets a Use button in every statblock that has it.`, 8e3);
   }
   /** A Multiattack's attacks put on its cast: one roll each, in turn (a creature's own attacks: not spells). */
   withSequence(p, link) {
@@ -10385,7 +10491,7 @@ var CastModal = class extends import_obsidian4.Modal {
       const a = entry ? areaOf(entry) ?? targetOf(entry) ?? fallbackArea(entry) : null;
       const preset = c.ability ? P.settings.abilities[P.abilityKey(c.name)] : void 0;
       let r = entry ? inUnitsNow(preset ?? P.settings.remember[entry.key]) : void 0;
-      if (preset && r && a) {
+      if (preset && r && a && !preset.own) {
         const same = r.shape === a.shape;
         r = { ...r, shape: a.shape, size: a.size, from: a.from };
         delete r.width;
@@ -10810,18 +10916,21 @@ var CastModal = class extends import_obsidian4.Modal {
           delete P.settings.abilities[k];
           delete P.settings.remember[this.choice?.entry?.key ?? ""];
           await P.save();
+          P.relink();
           const c = this.choice;
           await this.pick(c);
           this.saved = `Deleted \u201C${this.name}\u201D`;
           this.render();
         }).open();
       }
-      const store2 = foot.createEl("button", { text: P.settings.abilities[k] ? "Save changes" : "Save" });
+      const own = !!this.choice.entry?.key.endsWith(":own");
+      const store2 = foot.createEl("button", { text: P.settings.abilities[k] ? "Save changes" : own ? "Save its button" : "Save" });
       store2.title = `From now on, ${this.name} looks like this in every statblock that has it (its shape and size still come from each statblock). Saved as an ability, not a spell.`;
       store2.onclick = async () => {
-        P.settings.abilities[k] = this.memo();
+        P.settings.abilities[k] = { ...this.memo(), ...own ? { own: true } : {} };
         await P.save();
-        this.saved = "Saved ability";
+        if (own) P.relink();
+        this.saved = own ? "Saved: it has a Use button now" : "Saved ability";
         this.render();
       };
     }
