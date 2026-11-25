@@ -4674,6 +4674,10 @@ function storeMatters(now, before) {
 }
 var isCanvas = (c) => !!c && typeof c.instanceOf === "function" && c.instanceOf(HTMLCanvasElement);
 var DEFAULTS = { folders: "", online: false, attackAnims: false, attackMelee: "slash", attackRanged: "arrow", autoClose: true, srdSpells: false, srdEdition: "2024", srdFolder: "Combat+ SRD", rolling: false, rollWho: "all", rollPost: false, above: "none", legendary: {}, tempResource: "Temp HP", animations: true, made: [], remember: {}, abilities: {}, lasting: [], snap: true, storage: "Spell Storage", bases: [], presets: [], jb2aFolder: "JB2A_DnD5e", jb2aOffer: true, noJb2a: false, noteSpells: true, orphanLights: [], coneAngle: 0, artTrim: {}, showAim: false, aimLook: "outline", markCreatures: true, showRounds: true, atlasAreas: true, throughWalls: false, areas: {}, roundSecs: {}, marks: [], caught: [], recent: [] };
+function changedAt(f) {
+  const st = f.stat;
+  return typeof st?.mtime === "number" ? st.mtime : void 0;
+}
 function pickOpt(s, feet, choice) {
   const all2 = s.alts?.length ? s.alts : [s];
   if (choice !== null) return all2[choice % all2.length];
@@ -4913,7 +4917,7 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
     }));
     const respell = () => {
       window.clearTimeout(this.timers.rs);
-      this.timers.rs = window.setTimeout(() => this.indexSpells(), 800);
+      this.timers.rs = window.setTimeout(() => this.indexSpells(true), 800);
     };
     this.registerEvent(this.app.metadataCache.on("changed", respell));
     this.registerEvent(this.app.metadataCache.on("resolved", respell));
@@ -5423,9 +5427,13 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
   windowTok = /* @__PURE__ */ new WeakMap();
   /** Spell names changed (spells read or saved): looked for again. */
   namesChanged() {
+    const sig = `${this.stored.map((x) => x.path + "" + x.name).join("")}|${this.noteChoices.map((c) => c.key + "" + c.name + (c.entry ? "+" : "")).join("")}|${this.abilityChoices.map((c) => c.key).join("")}`;
     this.names = null;
+    if (sig === this.namesSig) return;
+    this.namesSig = sig;
     for (const l of this.linkers.values()) l.soon();
   }
+  namesSig = "";
   /** The names this add-on can cast: spells with an area, and saved ones. */
   spellNames() {
     if (this.names) return this.names;
@@ -5603,10 +5611,10 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
     const SECS = 15;
     new import_obsidian4.Notice(`Combat+: measuring for ${SECS} seconds. Drag tokens around now, as when it lags.`, 6e3);
     const mine = /* @__PURE__ */ new Map();
-    let depth = 0, ownWrites = 0;
+    let depth = 0;
     const undo = [];
     const self = this;
-    for (const k of ["frame", "chores", "paintSelection", "watchAtlasPlacing", "syncAreas", "syncLights", "catchPending", "syncConditions", "paintCaught", "paintPopover", "paintRounds", "hideMarkers", "syncWalls", "syncMade", "bars", "linkStatblocks", "hook"]) {
+    for (const k of ["frame", "chores", "paintSelection", "watchAtlasPlacing", "syncAreas", "syncLights", "catchPending", "syncConditions", "paintCaught", "paintPopover", "paintRounds", "hideMarkers", "syncWalls", "syncMade", "bars", "linkStatblocks", "hook", "indexSpells", "indexVault", "noteEntry"]) {
       const f = self[k];
       if (typeof f !== "function") continue;
       const had = Object.prototype.hasOwnProperty.call(self, k);
@@ -5653,29 +5661,24 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
         o["scan"] = f;
       });
     }
-    const store = { n: 0, ms: 0, worst: 0, tokens: 0 };
+    const store = { n: 0, tokens: 0, ownWrites: 0 };
     for (const t of this.atlasTabs()) {
-      const st = t.store;
-      const f = st["setState"];
-      if (typeof f !== "function") continue;
-      st["setState"] = function(...a) {
-        if (depth > 0) ownWrites++;
-        const before = t.store.getState?.()?.objects?.tokens;
-        const t0 = performance.now();
-        try {
-          return f.apply(this, a);
-        } finally {
-          const d = performance.now() - t0;
-          store.n++;
-          store.ms += d;
-          store.worst = Math.max(store.worst, d);
-          if (t.store.getState?.()?.objects?.tokens !== before) store.tokens++;
-        }
-      };
+      if (typeof t.store.subscribe !== "function") continue;
+      const off = t.store.subscribe((now, before) => {
+        store.n++;
+        if (depth > 0) store.ownWrites++;
+        if (now?.objects?.tokens !== before?.objects?.tokens) store.tokens++;
+      });
       undo.push(() => {
-        st["setState"] = f;
+        if (typeof off === "function") off();
       });
     }
+    let vaultChanges = 0;
+    const onChange = () => {
+      vaultChanges++;
+    };
+    this.app.metadataCache.on("changed", onChange);
+    undo.push(() => this.app.metadataCache.off("changed", onChange));
     const frames = [];
     let last = performance.now(), raf = 0;
     const tick = (now) => {
@@ -5708,7 +5711,7 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
       const slow = frames.filter((f) => f > 50);
       const ownTotal = mine.get("frame")?.ms ?? 0;
       const choresTotal = mine.get("chores")?.ms ?? 0;
-      const ours = ownTotal + (this.effects.length ? 0 : choresTotal) + (mine.get("statblock buttons")?.ms ?? 0) + (mine.get("linkStatblocks")?.ms ?? 0);
+      const ours = ownTotal + (this.effects.length ? 0 : choresTotal) + (mine.get("statblock buttons")?.ms ?? 0) + (mine.get("linkStatblocks")?.ms ?? 0) + (mine.get("indexSpells")?.ms ?? 0) + (mine.get("indexVault")?.ms ?? 0) + (mine.get("noteEntry")?.ms ?? 0);
       const st = this.atlasTab()?.store.getState?.();
       const count2 = (o) => o && typeof o === "object" ? Object.keys(o).length : 0;
       const out = [
@@ -5717,13 +5720,13 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
         "",
         `Smoothness: ${frames.length} frames (${(frames.length / SECS).toFixed(0)} a second); ${slow.length} took over 50 ms, the worst ${ms(Math.max(0, ...frames))}.`,
         `Long stalls (anything over 50 ms): ${po ? `${stalls.length}, ${ms(stalls.reduce((a, b) => a + b, 0))} in all, the worst ${ms(Math.max(0, ...stalls))}` : "can't be measured here"}.`,
-        `Atlas's map changed ${store.n} times (${store.tokens} of them tokens), taking ${ms(store.ms)} in all (the worst ${ms(store.worst)}), with everything that listens: Atlas itself, Combat+ and other add-ons.`,
-        `  Of those, Combat+ made ${ownWrites} (its lights, areas and walls following what moved).`,
+        `Atlas's map changed ${store.n} times (${store.tokens} of them tokens); Combat+ made ${store.ownWrites} of those changes (its lights, areas and walls following what moved).`,
+        `Notes changed in the vault: ${vaultChanges} (Atlas saving, a character synced, a pip pressed: each makes add-ons look at the vault again).`,
         "",
         `Combat+'s own time: about ${ms(ours)} in ${SECS} seconds (${(ours / (SECS * 10)).toFixed(1)}% of the time).`,
         ...[...mine.entries()].sort((a, b) => b[1].ms - a[1].ms).filter(([, e]) => e.n).map(([k, e]) => `  ${k}: ${e.n} times, ${ms(e.ms)} (the worst ${e.worst.toFixed(1)} ms)`),
         "",
-        ours > 0.15 * Math.max(1, stalls.reduce((a, b) => a + b, 0) + store.ms) && ours > 300 ? "Combat+ takes a fair share of the time: send this to whoever looks after it." : stalls.length || slow.length > frames.length / 10 ? "Atlas is slow here, but most of the time isn't Combat+'s. Try again with other add-ons off (one at a time) to find which." : "No real slowness was measured. Try again while it lags."
+        ours > 0.15 * Math.max(1, stalls.reduce((a, b) => a + b, 0)) && ours > 300 ? "Combat+ takes a fair share of the time: send this to whoever looks after it." : stalls.length || slow.length > frames.length / 10 ? "Atlas is slow here, but most of the time isn't Combat+'s. Try again with other add-ons off (one at a time) to find which." : "No real slowness was measured. Try again while it lags."
       ];
       const text = out.join("\n");
       const m = new import_obsidian4.Modal(this.app);
@@ -5980,7 +5983,7 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
     this.baseState.clear();
     const respell = () => {
       window.clearTimeout(this.timers.rb);
-      this.timers.rb = window.setTimeout(() => this.indexSpells(), 300);
+      this.timers.rb = window.setTimeout(() => this.indexSpells(true), 300);
     };
     for (const path of this.settings.bases) {
       const r = new BaseReader(this.app, path, (paths) => {
@@ -6014,7 +6017,11 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
     return (link) => mc.getFirstLinkpathDest(link, from)?.path ?? (this.app.vault.getAbstractFileByPath(link) || this.files.some((f) => f.path === link) ? link : null);
   }
   /** The spells: notes with saved effect defaults (anywhere), the chosen Bases' notes, and (if wanted) other spell notes. */
-  indexSpells() {
+  indexSpells(keep = false) {
+    if (!keep) {
+      this.noteRead.clear();
+      this.abilitiesRead.clear();
+    }
     const mc = this.app.metadataCache;
     const inBases = new Set([...this.baseNotes.values()].flat());
     const stored = [];
@@ -6033,7 +6040,10 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
         stored.push(storedFrom(f.path, fm ?? {}, this.resolver(f.path)));
       } else if (inBases.has(f.path) || this.settings.noteSpells && looksLikeSpell(fm, (cache?.tags ?? []).map((t) => t.tag))) {
         const name = String(fm?.["name"] ?? f.basename);
-        notes.push({ key: "note:" + f.path, name, source: "note", notePath: f.path });
+        const c = { key: "note:" + f.path, name, source: "note", notePath: f.path };
+        const was = this.noteRead.get(f.path);
+        if (was && was.mtime === changedAt(f) && was.mtime !== void 0) c.entry = was.entry;
+        notes.push(c);
       }
     }
     stored.sort((a, b) => a.name.localeCompare(b.name));
@@ -6060,6 +6070,12 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
       if (run !== this.abilityRun) return;
       const f = this.app.vault.getAbstractFileByPath(path);
       if (!(f instanceof import_obsidian4.TFile)) continue;
+      const was = this.abilitiesRead.get(path);
+      if (was && was.mtime !== void 0 && was.mtime === changedAt(f)) {
+        out.push(...was.out);
+        continue;
+      }
+      const mine = [];
       const fm = this.app.metadataCache.getFileCache(f)?.frontmatter ?? {};
       let text = "";
       try {
@@ -6092,9 +6108,11 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
           const entry = abilityEntry(name, desc);
           if (!entry || entry.plain) continue;
           seen.add(name.toLowerCase());
-          out.push({ key: `${entry.key}@${path}`, name, source: "note", entry, ability: true, owner: owner2, notePath: path });
+          mine.push({ key: `${entry.key}@${path}`, name, source: "note", entry, ability: true, owner: owner2, notePath: path });
         }
       }
+      this.abilitiesRead.set(path, { mtime: changedAt(f), out: mine });
+      out.push(...mine);
     }
     out.sort((a, b) => a.name.localeCompare(b.name) || (a.owner ?? "").localeCompare(b.owner ?? ""));
     this.ownAbilities = out;
@@ -6109,6 +6127,14 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
     this.abilityChoices = [...this.ownAbilities, ...srd].sort((a, b) => a.name.localeCompare(b.name) || (a.owner ?? "").localeCompare(b.owner ?? ""));
     this.namesChanged();
   }
+  /**
+   * What each note was read as, by its path, while it is unchanged (its time of change the same): a spell note's
+   * entry, a creature's abilities. Any note changing in the vault (a map saved, a character synced, a pip pressed)
+   * looks at the vault again, and only what changed is read again: reading every spell and creature each time
+   * stalled Atlas for seconds with a big bestiary.
+   */
+  noteRead = /* @__PURE__ */ new Map();
+  abilitiesRead = /* @__PURE__ */ new Map();
   /** Notes found to hold a statblock block when their text was read. */
   statblockBodies = /* @__PURE__ */ new Set();
   abilityRun = 0;
@@ -6230,6 +6256,7 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
       return null;
     }
     c.entry = spellFromNote(f.path, fm, body);
+    this.noteRead.set(f.path, { mtime: changedAt(f), entry: c.entry });
     return c.entry;
   }
   /** Saves a spell's defaults onto its own note's properties (a note in the folder for your own effects, for one without). */

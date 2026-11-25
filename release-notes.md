@@ -1,4 +1,4 @@
-# Combat+ 1.13.9
+# Combat+ 1.13.10
 
-- **Smoother token dragging.** With no spell effects on the map, Combat+ did its upkeep (areas, lights, conditions, cards) on every mouse movement while a button was held. A fast mouse sends up to a thousand of those a second, so dragging a token could make it run many times a frame. It now runs once a frame at most.
-- **New command: Find what slows Atlas down.** Run it, then drag tokens around for 15 seconds as you would when it lags. A window then shows how smooth Atlas was, how often the map changed and how long that took, and how much of the time was Combat+'s own, part by part. Copy it and send it on. It changes nothing.
+- **No more long freezes when a note changes.** Whenever any note in the vault changed (Atlas saving, a character synced, a pip pressed), Combat+ read every spell note and every creature's statblock again. With a big bestiary that could freeze Atlas for a second or more, over and over while you played. It now reads again only the notes that changed, and leaves the open statblocks alone unless what can be cast changed.
+- **Find what slows Atlas down, more telling.** It now counts every change of Atlas's map (it missed most before) and how many notes changed in the vault while it measured, and it times Combat+'s reading of notes too.

@@ -1,7 +1,7 @@
 {
   "id": "atlas-spell-effects",
   "name": "Combat+ for Atlas VTT",
-  "version": "1.13.9",
+  "version": "1.13.10",
   "minAppVersion": "1.10.0",
   "description": "Spells, animations and areas on your Atlas VTT maps, with optional D&D 5e attack, save and damage rolls. Cast and attack right from your statblocks.",
   "author": "dew",
