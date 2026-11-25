@@ -1,3 +1,4 @@
+/* Atlas Spell Effects - animated spell areas on Atlas VTT maps. */
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -4755,6 +4756,7 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
     this.addCommand({ id: "snap", name: "Snap effects to the grid on or off", callback: () => {
       void this.toggleSnap();
     } });
+    this.addCommand({ id: "check-slowness", name: "Find what slows Atlas down (measures for 15 seconds while you play)", callback: () => this.checkSlowness() });
     this.addCommand({ id: "explain-statblocks", name: "Explain the buttons on open statblocks (what was found, and why not)", callback: () => this.explainStatblocks() });
     this.addCommand({ id: "forget-choices", name: "Forget chosen damage types (Elemental Affinity\u2026)", callback: () => {
       const n = Object.keys(this.settings.chosen ?? {}).length;
@@ -5587,6 +5589,153 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
     this.leaveDmScreen(how.statblock);
     this.place(p, tok && this.mapOf(tok.tab) === this.mapOf(this.atlasTab()) ? tok.id : void 0);
   }
+  /**
+   * For 15 seconds, while the DM drags tokens or plays as usual: how smooth Atlas is (frames, long stalls), how
+   * often its map changes and how long each change takes everyone listening, and how much of that is Combat+'s own
+   * (each part of it timed). Shown in a window, to copy and send. Nothing is changed.
+   */
+  checkSlowness() {
+    if (this.measuring) {
+      new import_obsidian4.Notice("Combat+: already measuring.");
+      return;
+    }
+    this.measuring = true;
+    const SECS = 15;
+    new import_obsidian4.Notice(`Combat+: measuring for ${SECS} seconds. Drag tokens around now, as when it lags.`, 6e3);
+    const mine = /* @__PURE__ */ new Map();
+    let depth = 0, ownWrites = 0;
+    const undo = [];
+    const self = this;
+    for (const k of ["frame", "chores", "paintSelection", "watchAtlasPlacing", "syncAreas", "syncLights", "catchPending", "syncConditions", "paintCaught", "paintPopover", "paintRounds", "hideMarkers", "syncWalls", "syncMade", "bars", "linkStatblocks", "hook"]) {
+      const f = self[k];
+      if (typeof f !== "function") continue;
+      const had = Object.prototype.hasOwnProperty.call(self, k);
+      self[k] = function(...a) {
+        const t0 = performance.now();
+        depth++;
+        try {
+          return f.apply(this, a);
+        } finally {
+          depth--;
+          const d = performance.now() - t0;
+          const e = mine.get(k) ?? { n: 0, ms: 0, worst: 0 };
+          e.n++;
+          e.ms += d;
+          e.worst = Math.max(e.worst, d);
+          mine.set(k, e);
+        }
+      };
+      undo.push(() => {
+        if (had) self[k] = f;
+        else delete self[k];
+      });
+    }
+    for (const l of this.linkers.values()) {
+      const o = l;
+      const f = o["scan"];
+      if (typeof f !== "function") continue;
+      o["scan"] = function(...a) {
+        const t0 = performance.now();
+        depth++;
+        try {
+          return f.apply(this, a);
+        } finally {
+          depth--;
+          const d = performance.now() - t0;
+          const e = mine.get("statblock buttons") ?? { n: 0, ms: 0, worst: 0 };
+          e.n++;
+          e.ms += d;
+          e.worst = Math.max(e.worst, d);
+          mine.set("statblock buttons", e);
+        }
+      };
+      undo.push(() => {
+        o["scan"] = f;
+      });
+    }
+    const store = { n: 0, ms: 0, worst: 0, tokens: 0 };
+    for (const t of this.atlasTabs()) {
+      const st = t.store;
+      const f = st["setState"];
+      if (typeof f !== "function") continue;
+      st["setState"] = function(...a) {
+        if (depth > 0) ownWrites++;
+        const before = t.store.getState?.()?.objects?.tokens;
+        const t0 = performance.now();
+        try {
+          return f.apply(this, a);
+        } finally {
+          const d = performance.now() - t0;
+          store.n++;
+          store.ms += d;
+          store.worst = Math.max(store.worst, d);
+          if (t.store.getState?.()?.objects?.tokens !== before) store.tokens++;
+        }
+      };
+      undo.push(() => {
+        st["setState"] = f;
+      });
+    }
+    const frames = [];
+    let last = performance.now(), raf = 0;
+    const tick = (now) => {
+      frames.push(now - last);
+      last = now;
+      raf = window.requestAnimationFrame(tick);
+    };
+    raf = window.requestAnimationFrame(tick);
+    const stalls = [];
+    let po = null;
+    try {
+      po = new PerformanceObserver((list) => {
+        for (const e of list.getEntries()) stalls.push(e.duration);
+      });
+      po.observe({ type: "longtask", buffered: false });
+    } catch {
+      po = null;
+    }
+    window.setTimeout(() => {
+      window.cancelAnimationFrame(raf);
+      po?.disconnect();
+      for (const u of undo.reverse()) {
+        try {
+          u();
+        } catch {
+        }
+      }
+      this.measuring = false;
+      const ms = (n) => `${Math.round(n)} ms`;
+      const slow = frames.filter((f) => f > 50);
+      const ownTotal = mine.get("frame")?.ms ?? 0;
+      const choresTotal = mine.get("chores")?.ms ?? 0;
+      const ours = ownTotal + (this.effects.length ? 0 : choresTotal) + (mine.get("statblock buttons")?.ms ?? 0) + (mine.get("linkStatblocks")?.ms ?? 0);
+      const st = this.atlasTab()?.store.getState?.();
+      const count2 = (o) => o && typeof o === "object" ? Object.keys(o).length : 0;
+      const out = [
+        `Combat+ ${this.manifest.version}: ${SECS} seconds measured.`,
+        `Map: ${count2(st?.objects?.tokens)} tokens, ${count2(st?.objects?.lights)} lights, ${count2(st?.objects?.walls)} walls, ${count2(st?.objects?.measures)} areas; Combat+ effects: ${this.effects.length}.`,
+        "",
+        `Smoothness: ${frames.length} frames (${(frames.length / SECS).toFixed(0)} a second); ${slow.length} took over 50 ms, the worst ${ms(Math.max(0, ...frames))}.`,
+        `Long stalls (anything over 50 ms): ${po ? `${stalls.length}, ${ms(stalls.reduce((a, b) => a + b, 0))} in all, the worst ${ms(Math.max(0, ...stalls))}` : "can't be measured here"}.`,
+        `Atlas's map changed ${store.n} times (${store.tokens} of them tokens), taking ${ms(store.ms)} in all (the worst ${ms(store.worst)}), with everything that listens: Atlas itself, Combat+ and other add-ons.`,
+        `  Of those, Combat+ made ${ownWrites} (its lights, areas and walls following what moved).`,
+        "",
+        `Combat+'s own time: about ${ms(ours)} in ${SECS} seconds (${(ours / (SECS * 10)).toFixed(1)}% of the time).`,
+        ...[...mine.entries()].sort((a, b) => b[1].ms - a[1].ms).filter(([, e]) => e.n).map(([k, e]) => `  ${k}: ${e.n} times, ${ms(e.ms)} (the worst ${e.worst.toFixed(1)} ms)`),
+        "",
+        ours > 0.15 * Math.max(1, stalls.reduce((a, b) => a + b, 0) + store.ms) && ours > 300 ? "Combat+ takes a fair share of the time: send this to whoever looks after it." : stalls.length || slow.length > frames.length / 10 ? "Atlas is slow here, but most of the time isn't Combat+'s. Try again with other add-ons off (one at a time) to find which." : "No real slowness was measured. Try again while it lags."
+      ];
+      const text = out.join("\n");
+      const m = new import_obsidian4.Modal(this.app);
+      m.titleEl.setText("Combat+: what slows Atlas down");
+      m.contentEl.createEl("pre", { text, cls: "sfx-explain" });
+      new import_obsidian4.Setting(m.contentEl).addButton((b) => b.setButtonText("Copy").setCta().onClick(() => {
+        void navigator.clipboard.writeText(text).then(() => new import_obsidian4.Notice("Combat+: copied."));
+      }));
+      m.open();
+    }, SECS * 1e3);
+  }
+  measuring = false;
   /**
    * Why a statblock's entries have (or don't have) their buttons: every open statblock, each entry, with the
    * settings and the token that decide it. Shown in a window, to copy and send.
@@ -6593,8 +6742,15 @@ ${text}`);
     this.hook();
     if (this.loop) return;
     if (!this.effects.length && !this.placing) {
-      this.clearPainters();
-      this.chores();
+      if (!this.choresAsked) this.choresAsked = window.requestAnimationFrame(() => {
+        this.choresAsked = 0;
+        if (this.effects.length || this.placing) {
+          this.wake();
+          return;
+        }
+        this.clearPainters();
+        this.chores();
+      });
       return;
     }
     const step = () => {
@@ -6611,6 +6767,8 @@ ${text}`);
   }
   /** Frames in a row with nothing changed. */
   still = 0;
+  /** The next frame's chores, asked for (nothing drawn). */
+  choresAsked = 0;
   lastSig = "";
   hooked = /* @__PURE__ */ new WeakSet();
   /** Wakes the loop on what moves things: Atlas's store, its camera, the TV window's pointer and wheel. */
