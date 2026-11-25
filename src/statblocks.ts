@@ -6,6 +6,7 @@
 // token: that creature is the caster.
 
 import { abilityEntry } from './areas';
+import { rollSpecOf } from './rolls';
 
 /** A spell a name in a statblock stands for. */
 export interface SpellLink { key: string; name: string; /** A creature's ability, not a spell: its own text in the statblock. */ ability?: string; /** A plain attack (a sword, a bite): rolled at a creature, nothing drawn. */ attack?: boolean; /** A Multiattack: the attacks it makes, in turn (each its name and text; `alts`: the attacks it may be instead, itself first). */ multi?: MultiStep[] }
@@ -20,11 +21,20 @@ const WORDS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five:
  */
 export function multiOf(text: string, attacks: { name: string; text: string }[]): MultiStep[] {
   const t = text.replace(/\s+/g, ' ');
-  const byName = (n: string) => attacks.find((a) => a.name.toLowerCase() === n.toLowerCase());
+  // (its attacks by their names, and as the text may call them: "Claw" for Claws, "Spear" for Silver Spear,
+  // "longsword" for Frost Longsword: a last word only where one attack has it)
+  const alias = new Map<string, { name: string; text: string }>();
+  const add = (k: string, a: { name: string; text: string }, weak = false) => { const key = k.toLowerCase().trim(); if (key.length < 3) return; if (weak && alias.has(key) && alias.get(key) !== a) { alias.set(key, null as never); return; } if (!alias.has(key)) alias.set(key, a); };
+  // (a magic weapon's bonus aside: "Shortsword +2" is "shortsword"; and its first word: "Trident of Fish Command" a trident)
+  const plainName = (a: { name: string }) => a.name.replace(/\s*[+−–-]\s*\d+\s*$/, '').trim();
+  for (const a of attacks) { for (const n of new Set([a.name.trim(), plainName(a)])) { add(n, a); add(n.endsWith('s') ? n.slice(0, -1) : n + 's', a); } }
+  for (const a of attacks) { const w = plainName(a).split(/\s+/); if (w.length > 1) for (const x of [w[w.length - 1], w[0]]) { add(x, a, true); add(x.endsWith('s') ? x.slice(0, -1) : x + 's', a, true); } }
+  for (const [k, v] of [...alias]) if (!v) alias.delete(k);
+  const byName = (n: string) => alias.get(n.toLowerCase().trim());
   const out: MultiStep[] = [];
   /** An attack that may be any of these (the first unless chosen). */
   const either = (list: { name: string; text: string }[]): MultiStep => (list.length > 1 ? { ...list[0], alts: list } : list[0]);
-  const names = attacks.map((a) => a.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).sort((a, b) => b.length - a.length);
+  const names = [...alias.keys()].map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).sort((a, b) => b.length - a.length);
   if (!names.length) return out;
   const num = String.raw`(\d+|one|two|three|four|five|six|seven|eight|an?|once|twice)`;
   // "three Rend attacks", "one Bite attack", "two attacks with its Claws", "attacks twice with its Longsword"
@@ -52,14 +62,85 @@ export function multiOf(text: string, attacks: { name: string; text: string }[])
     const list = said.filter((a, i) => said.indexOf(a) === i);
     if (list.length) for (let i = 0; i < Math.min(n, 8); i++) out.push(either(list));
   }
+  if (out.length) return out;
+  const count = (w: string): number => { const d = /^(\d+)d(\d+)$/i.exec(w); return d ? Number(d[1]) * Number(d[2]) : WORDS[w.toLowerCase()] ?? (parseInt(w, 10) || 1); };
+  const numD = String.raw`(\d+d\d+|\d+|one|two|three|four|five|six|seven|eight|an?)`;
+  const nameList = String.raw`((?:` + names.join('|') + String.raw`)s?(?:\s*,\s*(?:(?:or|and)\s+)?(?:` + names.join('|') + String.raw`)s?)*(?:,?\s+(?:or|and)\s+(?:` + names.join('|') + String.raw`)s?)?)`;
+  // "two Longsword, Pistol, or Musket attacks", "any combination of three Bite, Claw, or Spear attacks", "four total
+  // Tentacle and Stomp attacks", "two Unarmed Strikes", "1d4 Claw attacks" (the most)
+  const listed = new RegExp(String.raw`\b(?:up to\s+)?` + numD + String.raw`\s+(?:total\s+)?` + nameList + String.raw`(?:\s+attacks?\b|(?=[\s.,;]|$))`, 'i').exec(t);
+  if (listed) {
+    const said = [...listed[2].matchAll(new RegExp(String.raw`(` + names.join('|') + String.raw`)`, 'gi'))].map((m) => byName(m[1])).filter((x): x is { name: string; text: string } => !!x);
+    const list = said.filter((a, i) => said.indexOf(a) === i);
+    if (list.length) { for (let i = 0; i < Math.min(count(listed[1]), 8); i++) out.push(either(list)); return out; }
+  }
+  // "uses Fire Ray twice"
+  const uses = new RegExp(String.raw`\buses (` + names.join('|') + String.raw`) (twice|three times|four times|(\d+) times)\b`, 'i').exec(t);
+  if (uses) { const a = byName(uses[1]); const n = uses[3] ? Number(uses[3]) : ({ twice: 2, 'three times': 3, 'four times': 4 } as Record<string, number>)[uses[2].toLowerCase()] ?? 1; if (a) { for (let i = 0; i < n; i++) out.push(a); return out; } }
+  // a summoned creature's: "makes a number of Rend attacks equal to half this spell's level" (four at most: Esc when done)
+  const some = new RegExp(String.raw`\bmakes a number of (?:(` + names.join('|') + String.raw`)\s+)?attacks\b`, 'i').exec(t);
+  if (some) { const one = some[1] ? byName(some[1]) : undefined; const list = one ? [one] : attacks; for (let i = 0; i < 4; i++) out.push(either(list)); return out; }
+  // "attacks twice with a weapon", "attacks three times with a melee weapon", "attacks twice with one of its weapons"
+  // (or "attacks twice, with its longsword or dagger", "attacks three times with its daggers", "attacks twice")
+  const named = /\battacks (twice|three times|four times)\b([^.]*)/i.exec(t);
+  if (named) {
+    const said = [...named[2].matchAll(new RegExp(String.raw`\b(` + names.join('|') + String.raw`)\b`, 'gi'))].map((m) => byName(m[1])).filter((x): x is { name: string; text: string } => !!x);
+    const list = said.filter((a, i) => said.indexOf(a) === i);
+    if (list.length || !/\bweapons?\b/i.test(named[2])) {
+      const n = ({ twice: 2, 'three times': 3, 'four times': 4 } as Record<string, number>)[named[1].toLowerCase()] ?? 2;
+      for (let i = 0; i < n; i++) out.push(either(list.length ? list : attacks));
+      return out;
+    }
+  }
+  const times = /\battacks (twice|three times|four times) with (?:a|an|one of its|its) (melee |ranged )?weapons?\b/i.exec(t);
+  if (times) {
+    const far = (a: { text: string }) => { const r = rollSpecOf(a.text); return !!r && (!!r.ranged || (r.short !== undefined && r.reach === undefined)); };
+    const pool = times[2]?.trim() === 'melee' ? attacks.filter((a) => !far(a)) : times[2]?.trim() === 'ranged' ? attacks.filter(far) : attacks;
+    const n = ({ twice: 2, 'three times': 3, 'four times': 4 } as Record<string, number>)[times[1].toLowerCase()] ?? 2;
+    for (let i = 0; i < n; i++) out.push(either(pool.length ? pool : attacks));
+    return out;
+  }
+  // "makes two melee attacks", "makes two attacks", "makes three melee attacks or two ranged attacks": each any of its
+  // attacks of that kind (by distance: the melee one within reach, else the ranged one)
+  const plain = new RegExp(String.raw`\bmakes? (?:up to\s+)?` + numD + String.raw`\s+(melee |ranged |weapon )?(?:weapon )?attacks?\b(?:[^.]*?\bor\s+(?:makes?\s+)?` + numD + String.raw`\s+(melee |ranged )?(?:weapon )?attacks?\b)?`, 'i').exec(t);
+  if (plain) {
+    const far = (a: { text: string }) => { const r = rollSpecOf(a.text); return !!r && (!!r.ranged || (r.short !== undefined && r.reach === undefined)); };
+    const kind = (k: string | undefined) => (k?.trim() === 'melee' ? attacks.filter((a) => !far(a)) : k?.trim() === 'ranged' ? attacks.filter(far) : attacks);
+    const pool = plain[3] ? [...kind(plain[2]), ...kind(plain[4])] : kind(plain[2]);
+    const list = (pool.length ? pool : attacks).filter((a, i, all) => all.indexOf(a) === i);
+    for (let i = 0; i < Math.min(count(plain[1]), 8); i++) out.push(either(list));
+  }
   return out;
 }
 
-const norm = (s: string): string => s.toLowerCase().replace(/[’']/g, "'").replace(/\s+/g, ' ').trim();
+// (a slash and a hyphen between words the same: a statblock's "Enlarge/Reduce" is the note "Enlarge-Reduce", whose name can't have a slash)
+const norm = (s: string): string => s.toLowerCase().replace(/[’']/g, "'").replace(/\s*[/‐–-]\s*/g, '-').replace(/\s+/g, ' ').trim();
 const bare = (s: string): string => norm(s.replace(/\([^)]*\)/g, '').replace(/[\s.:;,*]+$/g, ''));
-const esc = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s+').replace(/'/g, "['’]");
+const esc = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s+').replace(/'/g, "['’]").replace(/-/g, '\\s*[/‐–-]\\s*');
 
 /** Finds names in text: longest first, whole words only, any case. */
+/**
+ * A creature's attacks and abilities, each as its statblock button would be (an attack, a save, damage dealt or an
+ * area), and its Multiattack with the attacks it makes: for a list of them away from the statblock (Table Touch's
+ * combat panel). `entries`: each its name and its text.
+ */
+export function abilityLinksOf(entries: { name: string; text: string }[]): SpellLink[] {
+  const units = entries.map((u) => ({ name: u.name.replace(/[*_]/g, '').replace(/[\s.:]+$/, '').trim(), text: u.text.replace(/[*_]/g, '') })).filter((u) => u.name);
+  const withEntry = units.map((u) => ({ ...u, e: /^multiattack$/i.test(u.name) ? null : abilityEntry(u.name, u.text) }));
+  const attacks = withEntry.filter((u) => u.e?.plain).map((u) => ({ name: u.name, text: u.text }));
+  const out: SpellLink[] = [];
+  for (const u of withEntry) {
+    if (/^multiattack$/i.test(u.name)) {
+      const multi = multiOf(u.text, attacks);
+      if (multi.length) out.push({ key: 'ability:multiattack', name: u.name, ability: u.text, multi });
+      continue;
+    }
+    if (!u.e || /spellcasting/i.test(u.name)) continue;
+    out.push({ key: 'ability:' + norm(u.name), name: u.name, ability: u.text, ...(u.e.plain === 'attack' ? { attack: true } : {}) });
+  }
+  return out;
+}
+
 export class SpellNames {
   private re: RegExp | null = null;
   private byName = new Map<string, SpellLink>();
@@ -220,7 +301,8 @@ export class StatblockLinker {
     this.scan();
   }
 
-  private watch(): void { this.obs?.observe(this.doc.body, { childList: true, subtree: true, characterData: true }); }
+  // (and a part of one shown or hidden: a statblock's tab opened, its Spells, whose text was hidden when looked at)
+  private watch(): void { this.obs?.observe(this.doc.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['hidden', 'aria-hidden'] }); }
 
   stop(): void {
     this.obs?.disconnect(); this.obs = null;

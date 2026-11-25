@@ -1,4 +1,3 @@
-/* Atlas Spell Effects - animated spell areas on Atlas VTT maps. */
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -953,12 +952,13 @@ function untag(text) {
   });
 }
 function rollSpecOf(text) {
-  const t = untag(String(text ?? "")).replace(/\s+/g, " ");
+  const t = untag(String(text ?? "")).replace(/\s+/g, " ").replace(/(Attack(?: Roll)?:)\s*Bonus equals your spell attack modifier,?/gi, "$1").replace(/[+−–-]?\s*\d*\s*(?:\+|plus)?\s*(?:PB|your (?:\w+ )?spell attack (?:modifier|bonus))\s+to hit\b/gi, "to hit").replace(/\s*(?:\+|plus)\s*(?:the spell's level|PB|(?:your|its|the (?:caster|summoner)'s) (?:\w+ )?(?:modifier|proficiency bonus))\b/gi, "");
   if (!t) return null;
   const atk = /\b(?:melee|ranged)(?: or ranged)? (?:spell |weapon )?attack\b|\bAttack Roll:/i.exec(t);
   const sav = /\b(?:Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma) sav(?:ing throw|e)\b|\bSaving Throw:/i.exec(t);
   if (atk && sav && sav.index > atk.index && !/^\s*$/.test(t.slice(atk.index, sav.index))) {
-    const cut = Math.max(t.lastIndexOf(". ", sav.index) + 2, t.lastIndexOf(", and ", sav.index) + 6, t.lastIndexOf("; ", sav.index) + 2, atk.index + 1);
+    const andThe = /^(.*)\sand (?:the target|the creature|it)\b/i.exec(t.slice(0, sav.index));
+    const cut = Math.max(t.lastIndexOf(". ", sav.index) + 2, t.lastIndexOf(", and ", sav.index) + 6, t.lastIndexOf("; ", sav.index) + 2, andThe && andThe[1].length > atk.index ? andThe[1].length + 1 : 0, atk.index + 1);
     const first = rollSpecOf(t.slice(0, cut)), then = rollSpecOf(t.slice(cut));
     if (first?.kind === "attack" && then?.kind === "save" && !then.damage.length) return first;
     if (first?.kind === "attack" && then?.kind === "save") {
@@ -1023,7 +1023,7 @@ function rollSpecOf(text) {
   } else if ((m = /\b(?:Melee|Ranged)\b[^.:]{0,30}?:\s*([+−–-]\s*\d+)\s*(?:to hit\b|,)/i.exec(t)) || (m = /([+−–-]\s*\d+)\s+to hit\b/i.exec(t))) {
     spec.kind = "attack";
     spec.bonus = Number(clean(m[1]));
-  } else if (/\b(?:melee|ranged) spell attack\b|\bmake (?:a|an) (?:melee|ranged) (?:spell )?attack\b|\bspell attack (?:roll|against)\b/i.test(t)) {
+  } else if (/\b(?:melee|ranged) spell attack\b|\bmake (?:a|an) (?:melee|ranged) (?:spell )?attack\b|\bspell attack (?:roll|against)\b|^\s*(?:Melee|Ranged)(?: or Ranged)? (?:Spell |Weapon )?Attack(?: Roll)?:/i.test(t)) {
     spec.kind = "attack";
   }
   if (spec.kind === "attack") {
@@ -1603,10 +1603,12 @@ function abilityEntry(name, text) {
   const a = attackFirst ? null : areaOf(e);
   if (!a || !(a.size > 0)) {
     const r = rollSpecOf(t);
-    const attack = !!r && r.kind === "attack" && r.bonus !== void 0 && (r.damage.length > 0 || !!r.after || /\bHit:/i.test(t));
+    const lead = /^\s*(?:Melee|Ranged)(?: or Ranged)? (?:Spell |Weapon )?Attack(?: Roll)?:/i.test(t);
+    const attack = !!r && r.kind === "attack" && (r.bonus !== void 0 || lead) && (r.damage.length > 0 || !!r.after || /\bHit:/i.test(t));
     const save = !!r && r.kind === "save" && /Saving Throw:\s*DC|\bmust (?:make|succeed on)\b[^.]{0,40}\bsaving throw|\b(?:target|creature)\b[^.]{0,40}\b(?:makes?|succeeds?)\b[^.]{0,40}\bsaving throw/i.test(t) && !/\ballows? (?:it|you|them) to make\b|\bwhen (?:it|you) (?:make|succeed|fail)/i.test(t);
-    if (!attack && !save) return null;
-    e.plain = attack ? "attack" : "save";
+    const dealt = !!r && r.kind === "damage" && r.damage.length > 0 && /\b(?:one|a|that|the|each|this) (?:creature|target|attacker|enemy|humanoid|foe)\b|\btargets? (?:one|a)\b|\bto (?:it|the creature|the target|the attacker|that creature)\b/i.test(t) && !/\b(?:extra|additional)\b[^.]{0,40}\bdamage\b|\bmakes? (?:one|a|an|two|three)\b[^.]{0,40}\battacks?\b|\buses? (?:its )?Multiattack\b|\bwhen (?:it|he|she|they|the \w+) (?:takes?|is hit)\b[^.]{0,30}$|\badds? \d+d\d+\b/i.test(t);
+    if (!attack && !save && !dealt) return null;
+    e.plain = attack ? "attack" : save ? "save" : "damage";
     e.key = `ability:${nm.toLowerCase()}:${e.plain}`;
     const far = Math.max(r?.reach ?? 0, r?.short ?? 0, r?.long ?? 0);
     if (far > 0) e.range = `${far} ft.`;
@@ -3262,13 +3264,14 @@ var MELEE_NAMES = { slash: "A slash", sword: "A sword swing", claw: "A claw stri
 var RANGED_NAMES = { arrow: "An arrow", bolt: "A crossbow bolt", bullet: "A sling bullet", dagger: "A thrown dagger", none: "None (drawn)" };
 var WEAPONS = [
   [/\b(?:long|short|great|oath)?bows?\b|\barrows?\b/, "Generic/Weapon_Attacks/Ranged/Arrow01", true],
-  [/\bcrossbows?\b|\bbolt launcher\b|\bboltgun\b|\bballista\b|\bharpoon gun\b/, "Generic/Weapon_Attacks/Ranged/Bolt01", true],
+  [/\bcrossbows?\b|\bbolt launcher\b|\b(?:serrated|lancing|crossbow|barbed) bolts?\b|\bboltgun\b|\bballista\b|\bharpoon gun\b/, "Generic/Weapon_Attacks/Ranged/Bolt01", true],
   [/\bcannon\b/, "Generic/Weapon_Attacks/Ranged/LaunchCannonBall01", true],
   [/\blaser\b|\bantimatter\b|\bblaster\b/, "Generic/Weapon_Attacks/Ranged/LaserShot", true],
   [/\bhoopak, ranged\b|\bsling(?:shot)?\b|\bmusket\b|\bpistol\b|\brifle\b|\brevolver\b|\bshotgun\b|\bblunderbuss\b|\bfirearm\b|\bguns?\b|\bshot\b(?! put)/, "Generic/Weapon_Attacks/Ranged/Bullet", true],
   [/\bbarrel\b/, "Generic/Weapon_Attacks/Ranged/WoodenBarrelToss01", true],
   [/\bsnowball\b/, "Generic/Weapon_Attacks/Ranged/SnowballToss", true],
   [/\bcards?\b/, "Generic/RangedSpell/Card/", true],
+  [/\borbs?\b|\bjet\b/, "Generic/RangedSpell/01/", true],
   [/\bchakram\b|\bchatkcha\b|\bboomerang\b/, "Generic/Weapon_Attacks/Melee/Group01/MeleeAttack01_Chakram01", false],
   [/\bgreatswords?\b|\bruneblade\b|\bclaymore\b/, "Generic/Weapon_Attacks/Melee/GreatSword01", false],
   [/\bgreataxes?\b/, "Generic/Weapon_Attacks/Melee/GreatAxe01", false],
@@ -3278,7 +3281,7 @@ var WEAPONS = [
   [/\bhandaxes?\b|\baxes?\b|\baxehand\b/, "Generic/Weapon_Attacks/Melee/HandAxe02", false],
   [/\bhalberds?\b|\bpikes?\b|\bpolearm\b|\bpole\b|\bgythka\b|\bhoopak\b/, "Generic/Weapon_Attacks/Melee/Halberd01", false],
   [/\bglaives?\b|\bnaginata\b|\bbardiche\b/, "Generic/Weapon_Attacks/Melee/Glaive01", false],
-  [/\bwarhammers?\b|\bhammers?\b|\bwar ?picks?\b|\bpick(?:axe)?\b|\bmattock\b|\bmallet\b/, "Generic/Weapon_Attacks/Melee/Warhammer01", false],
+  [/\bwarhammers?\b|\bhammers?\b|\bwar ?picks?\b|\bpick(?:axe)?\b|\bmattock\b|\bmallet\b|\bthrower\b/, "Generic/Weapon_Attacks/Melee/Warhammer01", false],
   [/\bflails?\b|\bmorningstars?\b|\bchains?\b(?! lightning)|\banchor\b/, "Generic/Weapon_Attacks/Melee/Group01/MeleeAttack01_Flail01", false],
   [/\bmaces?\b|\bscepter\b|\brod\b|\bcauldron\b/, "Generic/Weapon_Attacks/Melee/Mace01", false],
   [/\bwrench\b/, "Generic/Weapon_Attacks/Melee/Group02/MeleeAttack02_Wrench01", false],
@@ -3295,15 +3298,15 @@ var WEAPONS = [
   [/\b(?:long)?swords?\b|\bblades?\b|\bbladed\b|\bsabers?\b|\bsabre\b|\barmblade\b|\bsaw\b|\bbonesaw\b|\bsteamsaw\b|\bslicer\b|\bslice\b|\bsharp edges\b/, "Generic/Weapon_Attacks/Melee/Sword01", false],
   [/\bshields?\b/, "Generic/Weapon_Attacks/Melee/Group06/MeleeAttack06_Shield01", false],
   [/\bscythes?\b/, "Generic/Weapon_Attacks/Melee/Group05/MeleeAttack05_Scythe01", false],
-  [/\bdarts?\b|\bjavelins?\b|\bneedles?\b|\bquills?\b|\bspine fling\b|\bblowgun\b|\bthrowing\b|\bfling\b|\bbolas\b/, "Generic/Weapon_Attacks/Ranged/Dagger01", true],
+  [/\bdarts?\b|\bjavelins?\b|\bneedles?\b|\bquills?\b|\bspines?\b|\bthorns?\b|\bbarbs?\b|\bspine fling\b|\bblowgun\b|\bthrowing\b|\bfling\b|\bbolas\b/, "Generic/Weapon_Attacks/Ranged/Dagger01", true],
   [/\b(?:rock|boulder|stone|brick|trash|lob|junk|mudball|shot put|anvil|debris)\b/, "Generic/Weapon_Attacks/Ranged/BoulderToss02", true],
   [/\bflask\b|\bvial\b|\bbomb\b|\bjug\b|\bpotion\b|\bgrenade\b/, "Generic/Weapon_Attacks/Ranged/ThrowFlask01", true],
   [/\bwhips?\b|\blash\b|\bscourge\b|\bvines?\b|\bbramble\b|\broots?\b|\btongues?\b|\bwebby\b/, "Generic/Weapon_Attacks/Melee/Slash02/", false],
   [/\bfists?\b|\bpunch\b|\bunarmed\b|\bgauntlets?\b|\bknuckles\b|\bhaymaker\b|\bhammerfist\b|\bjab\b|\btouch\b|\bhands?\b|\bkick\b|\bhead ?butts?\b|\bstrike\b/, "Generic/Unarmed_Attacks/Unarmed_Strike/", false],
   [/\bslams?\b|\bstomp(?:ing)?\b|\bbash\b|\bsmash\b|\bpummel\b|\bthrash\b|\bthwack\b|\btrample\b|\bflop\b|\bwings?\b|\bflippers?\b|\barms?\b|\blimbs?\b|\bhug\b|\bcrush(?:ing)?\b|\bram\b|\bhooves\b|\bhoof\b|\btail\b|\bfoot\b|\btrunk\b|\bpseudopods?\b|\bbody\b/, "Generic/Creature/Fist/", false],
   [/\bpincers?\b|\bnippers?\b|\bchelae?\b|\bscissorhand\b/, "Generic/Creature/Pincer/", false],
-  [/\bbites?\b|\bjaws\b|\bfangs?\b|\bteeth\b|\btooth\b|\bmaw\b|\bbeaks?\b|\bpeck\b|\bproboscis\b|\bgnash\w*\b|\bblood drain\b|\bmandibles\b|\bswallow\b|\bengulf\b/, "Generic/Creature/Bite", false],
-  [/\bclaws?\b|\bclawed\b|\bscratch\b|\btalons?\b|\brake\b|\braking\b|\brend\b|\bgouge\b|\bswipe\b|\bslash\b|\bgore\b|\bhorns?\b|\bantlers\b|\btusks?\b|\bsting(?:er)?\b|\btentacles?\b|\btendrils?\b|\bconstrict\w*\b|\bgrasp\w*\b|\bgrab\w*\b|\bsmother\b|\battach\b|\bforelegs?\b|\blegs?\b|\bbeard\b|\bsnaky hair\b|\bsnake hair\b|\bravage\b/, "Generic/Creature/Claw/", false]
+  [/\bbites?\b|\bjaws\b|\bfangs?\b|\bteeth\b|\btooth\b|\bmaw\b|\bbeaks?\b|\bpeck\b|\bproboscis\b|\bgnash\w*\b|\bdeath roll\b|\bflytrap\b|\bblood drain\b|\bmandibles\b|\bswallow\b|\bengulf\b/, "Generic/Creature/Bite", false],
+  [/\bclaws?\b|\bclawed\b|\bscratch\b|\btalons?\b|\brake\b|\braking\b|\brend\b|\bgouge\b|\bswipe\b|\bslash\b|\bgore\b|\bhorns?\b|\bantlers\b|\btusks?\b|\bsting(?:er)?\b|\btentacles?\b|\btendrils?\b|\bconstrict\w*\b|\bgrasp\w*\b|\bgrab\w*\b|\bsmother\b|\battach\b|\bforelegs?\b|\blegs?\b|\bbeard\b|\bsnaky hair\b|\bsnake hair\b|\bravage\b|\bpinions?\b/, "Generic/Creature/Claw/", false]
 ];
 function attackFile(name, text, files, defaults, bolt, ranged) {
   const said = /\bdamage\b/i.test(text) ? text : text.replace(/\b(acid|cold|fire|force|lightning|necrotic|poison|psychic|radiant|thunder)\b(?!\s+damage)(?=\s*(?:[.,;]|$|\+|and\b|or\b))/gi, "$1 damage");
@@ -3463,10 +3466,35 @@ var BaseSuggest = class extends import_obsidian3.AbstractInputSuggest {
 var WORDS3 = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, a: 1, an: 1, once: 1, twice: 2 };
 function multiOf(text, attacks) {
   const t = text.replace(/\s+/g, " ");
-  const byName = (n) => attacks.find((a) => a.name.toLowerCase() === n.toLowerCase());
+  const alias = /* @__PURE__ */ new Map();
+  const add = (k, a, weak = false) => {
+    const key = k.toLowerCase().trim();
+    if (key.length < 3) return;
+    if (weak && alias.has(key) && alias.get(key) !== a) {
+      alias.set(key, null);
+      return;
+    }
+    if (!alias.has(key)) alias.set(key, a);
+  };
+  const plainName = (a) => a.name.replace(/\s*[+−–-]\s*\d+\s*$/, "").trim();
+  for (const a of attacks) {
+    for (const n of /* @__PURE__ */ new Set([a.name.trim(), plainName(a)])) {
+      add(n, a);
+      add(n.endsWith("s") ? n.slice(0, -1) : n + "s", a);
+    }
+  }
+  for (const a of attacks) {
+    const w = plainName(a).split(/\s+/);
+    if (w.length > 1) for (const x of [w[w.length - 1], w[0]]) {
+      add(x, a, true);
+      add(x.endsWith("s") ? x.slice(0, -1) : x + "s", a, true);
+    }
+  }
+  for (const [k, v] of [...alias]) if (!v) alias.delete(k);
+  const byName = (n) => alias.get(n.toLowerCase().trim());
   const out = [];
   const either = (list) => list.length > 1 ? { ...list[0], alts: list } : list[0];
-  const names = attacks.map((a) => a.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).sort((a, b) => b.length - a.length);
+  const names = [...alias.keys()].map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).sort((a, b) => b.length - a.length);
   if (!names.length) return out;
   const num3 = String.raw`(\d+|one|two|three|four|five|six|seven|eight|an?|once|twice)`;
   const re = new RegExp(String.raw`\b` + num3 + String.raw`\s+(` + names.join("|") + String.raw`)\s+attacks?\b|\b` + num3 + String.raw`\s+(?:attacks?\s+)?with (?:its|their|his|her) (` + names.join("|") + String.raw`)s?\b|\battacks? (` + "once|twice|" + String.raw`\d+ times) with (?:its|their) (` + names.join("|") + String.raw`)s?\b`, "gi");
@@ -3494,11 +3522,91 @@ function multiOf(text, attacks) {
     const list = said.filter((a, i) => said.indexOf(a) === i);
     if (list.length) for (let i = 0; i < Math.min(n, 8); i++) out.push(either(list));
   }
+  if (out.length) return out;
+  const count2 = (w) => {
+    const d = /^(\d+)d(\d+)$/i.exec(w);
+    return d ? Number(d[1]) * Number(d[2]) : WORDS3[w.toLowerCase()] ?? (parseInt(w, 10) || 1);
+  };
+  const numD = String.raw`(\d+d\d+|\d+|one|two|three|four|five|six|seven|eight|an?)`;
+  const nameList = String.raw`((?:` + names.join("|") + String.raw`)s?(?:\s*,\s*(?:(?:or|and)\s+)?(?:` + names.join("|") + String.raw`)s?)*(?:,?\s+(?:or|and)\s+(?:` + names.join("|") + String.raw`)s?)?)`;
+  const listed = new RegExp(String.raw`\b(?:up to\s+)?` + numD + String.raw`\s+(?:total\s+)?` + nameList + String.raw`(?:\s+attacks?\b|(?=[\s.,;]|$))`, "i").exec(t);
+  if (listed) {
+    const said = [...listed[2].matchAll(new RegExp(String.raw`(` + names.join("|") + String.raw`)`, "gi"))].map((m) => byName(m[1])).filter((x) => !!x);
+    const list = said.filter((a, i) => said.indexOf(a) === i);
+    if (list.length) {
+      for (let i = 0; i < Math.min(count2(listed[1]), 8); i++) out.push(either(list));
+      return out;
+    }
+  }
+  const uses = new RegExp(String.raw`\buses (` + names.join("|") + String.raw`) (twice|three times|four times|(\d+) times)\b`, "i").exec(t);
+  if (uses) {
+    const a = byName(uses[1]);
+    const n = uses[3] ? Number(uses[3]) : { twice: 2, "three times": 3, "four times": 4 }[uses[2].toLowerCase()] ?? 1;
+    if (a) {
+      for (let i = 0; i < n; i++) out.push(a);
+      return out;
+    }
+  }
+  const some = new RegExp(String.raw`\bmakes a number of (?:(` + names.join("|") + String.raw`)\s+)?attacks\b`, "i").exec(t);
+  if (some) {
+    const one = some[1] ? byName(some[1]) : void 0;
+    const list = one ? [one] : attacks;
+    for (let i = 0; i < 4; i++) out.push(either(list));
+    return out;
+  }
+  const named = /\battacks (twice|three times|four times)\b([^.]*)/i.exec(t);
+  if (named) {
+    const said = [...named[2].matchAll(new RegExp(String.raw`\b(` + names.join("|") + String.raw`)\b`, "gi"))].map((m) => byName(m[1])).filter((x) => !!x);
+    const list = said.filter((a, i) => said.indexOf(a) === i);
+    if (list.length || !/\bweapons?\b/i.test(named[2])) {
+      const n = { twice: 2, "three times": 3, "four times": 4 }[named[1].toLowerCase()] ?? 2;
+      for (let i = 0; i < n; i++) out.push(either(list.length ? list : attacks));
+      return out;
+    }
+  }
+  const times = /\battacks (twice|three times|four times) with (?:a|an|one of its|its) (melee |ranged )?weapons?\b/i.exec(t);
+  if (times) {
+    const far = (a) => {
+      const r = rollSpecOf(a.text);
+      return !!r && (!!r.ranged || r.short !== void 0 && r.reach === void 0);
+    };
+    const pool = times[2]?.trim() === "melee" ? attacks.filter((a) => !far(a)) : times[2]?.trim() === "ranged" ? attacks.filter(far) : attacks;
+    const n = { twice: 2, "three times": 3, "four times": 4 }[times[1].toLowerCase()] ?? 2;
+    for (let i = 0; i < n; i++) out.push(either(pool.length ? pool : attacks));
+    return out;
+  }
+  const plain = new RegExp(String.raw`\bmakes? (?:up to\s+)?` + numD + String.raw`\s+(melee |ranged |weapon )?(?:weapon )?attacks?\b(?:[^.]*?\bor\s+(?:makes?\s+)?` + numD + String.raw`\s+(melee |ranged )?(?:weapon )?attacks?\b)?`, "i").exec(t);
+  if (plain) {
+    const far = (a) => {
+      const r = rollSpecOf(a.text);
+      return !!r && (!!r.ranged || r.short !== void 0 && r.reach === void 0);
+    };
+    const kind = (k) => k?.trim() === "melee" ? attacks.filter((a) => !far(a)) : k?.trim() === "ranged" ? attacks.filter(far) : attacks;
+    const pool = plain[3] ? [...kind(plain[2]), ...kind(plain[4])] : kind(plain[2]);
+    const list = (pool.length ? pool : attacks).filter((a, i, all2) => all2.indexOf(a) === i);
+    for (let i = 0; i < Math.min(count2(plain[1]), 8); i++) out.push(either(list));
+  }
   return out;
 }
-var norm = (s) => s.toLowerCase().replace(/[’']/g, "'").replace(/\s+/g, " ").trim();
+var norm = (s) => s.toLowerCase().replace(/[’']/g, "'").replace(/\s*[/‐–-]\s*/g, "-").replace(/\s+/g, " ").trim();
 var bare = (s) => norm(s.replace(/\([^)]*\)/g, "").replace(/[\s.:;,*]+$/g, ""));
-var esc2 = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/ /g, "\\s+").replace(/'/g, "['\u2019]");
+var esc2 = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/ /g, "\\s+").replace(/'/g, "['\u2019]").replace(/-/g, "\\s*[/\u2010\u2013-]\\s*");
+function abilityLinksOf(entries) {
+  const units = entries.map((u) => ({ name: u.name.replace(/[*_]/g, "").replace(/[\s.:]+$/, "").trim(), text: u.text.replace(/[*_]/g, "") })).filter((u) => u.name);
+  const withEntry = units.map((u) => ({ ...u, e: /^multiattack$/i.test(u.name) ? null : abilityEntry(u.name, u.text) }));
+  const attacks = withEntry.filter((u) => u.e?.plain).map((u) => ({ name: u.name, text: u.text }));
+  const out = [];
+  for (const u of withEntry) {
+    if (/^multiattack$/i.test(u.name)) {
+      const multi = multiOf(u.text, attacks);
+      if (multi.length) out.push({ key: "ability:multiattack", name: u.name, ability: u.text, multi });
+      continue;
+    }
+    if (!u.e || /spellcasting/i.test(u.name)) continue;
+    out.push({ key: "ability:" + norm(u.name), name: u.name, ability: u.text, ...u.e.plain === "attack" ? { attack: true } : {} });
+  }
+  return out;
+}
 var SpellNames = class {
   re = null;
   byName = /* @__PURE__ */ new Map();
@@ -3663,8 +3771,9 @@ var StatblockLinker = class {
     });
     this.scan();
   }
+  // (and a part of one shown or hidden: a statblock's tab opened, its Spells, whose text was hidden when looked at)
   watch() {
-    this.obs?.observe(this.doc.body, { childList: true, subtree: true, characterData: true });
+    this.obs?.observe(this.doc.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["hidden", "aria-hidden"] });
   }
   stop() {
     this.obs?.disconnect();
@@ -4205,6 +4314,7 @@ var hasTag = (fm) => {
 var isLegacy = (fm) => !!fm && fm[prop("area")] === void 0 && (fm["area"] !== void 0 && SHAPES.includes(String(fm["area"]).toLowerCase()) || hasTag(fm));
 function get(fm, k) {
   const v = fm[prop(k)];
+  if (v === null || typeof v === "string" && !v.trim() || Array.isArray(v) && !v.length && k !== "conditions") return void 0;
   if (v !== void 0) return v;
   if (!isLegacy(fm)) return void 0;
   return k === "walls" ? fm["blocks"] : k === "colour" ? fm["colour"] ?? fm["color"] : k === "light-colour" ? fm["light-colour"] ?? fm["light-color"] : fm[k];
@@ -4248,7 +4358,7 @@ function storedFrom(path, fm, resolve) {
   const lcv = get(fm, "light-colour");
   const lc = typeof lcv === "string" ? lcv : "";
   const light = lm === "darkness" ? { mode: "darkness", bright: 0, dim: area.size } : lm === "light" || lm === "bright" || lm === "dim" ? { mode: "light", bright: feet(get(fm, "bright")), dim: Math.max(feet(get(fm, "dim")), feet(get(fm, "bright"))) || area.size, ...lc ? { colour: lc } : {} } : lm === "none" || lm === "no" || lm === "false" ? null : void 0;
-  const col = get(fm, "colour"), col2 = fm[prop("colour-outer")], op = Number(fm[prop("opacity")]);
+  const col = get(fm, "colour"), col2 = get(fm, "colour-outer"), op = Number(fm[prop("opacity")]);
   const mo = get(fm, "motion");
   const more = {};
   const n = (key) => {
@@ -5449,6 +5559,13 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
   /** A saved ability's key: its name, any case. */
   abilityKey(name) {
     return name.replace(/\s+/g, " ").trim().toLowerCase();
+  }
+  /**
+   * For other plugins (Table Touch's combat panel): a creature's attacks and abilities as links, to cast with
+   * castFromStatblock just as their statblock buttons do. `entries`: each its name and its text.
+   */
+  abilityLinks(entries) {
+    return abilityLinksOf(entries);
   }
   /** A spell clicked in a statblock: cast it (its creature as the caster), or Shift: open it in the cast window. */
   async castFromStatblock(link, how) {

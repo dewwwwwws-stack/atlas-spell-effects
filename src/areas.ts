@@ -34,7 +34,7 @@ export interface Area {
   lasting: boolean;
 }
 
-export interface SpellEntry { key: string; name: string; range?: string; duration?: string; descFull?: string; desc?: string; level?: number; school?: string; /** A creature's ability read from its statblock (Fire Breath), not a spell. */ ability?: boolean; /** A plain attack (a sword, a bite) or a save at one creature (Stunning Strike): rolled at a creature, with no area and no animation. */ plain?: 'attack' | 'save' }
+export interface SpellEntry { key: string; name: string; range?: string; duration?: string; descFull?: string; desc?: string; level?: number; school?: string; /** A creature's ability read from its statblock (Fire Breath), not a spell. */ ability?: boolean; /** A plain attack (a sword, a bite) or a save at one creature (Stunning Strike): rolled at a creature, with no area and no animation. */ plain?: 'attack' | 'save' | 'damage' }
 
 export const num = (s: string | undefined): number => { const n = Number(s); return Number.isFinite(n) && n > 0 ? n : 0; };
 
@@ -292,11 +292,19 @@ export function abilityEntry(name: string, text: string): SpellEntry | null {
     // or a save made by one creature ("Stunning Strike… the target must succeed on a Constitution saving throw",
     // "Dreadful Glare. Wisdom Saving Throw: DC 11, one creature the mummy can see")
     const r = rollSpecOf(t);
-    const attack = !!r && r.kind === 'attack' && r.bonus !== undefined && (r.damage.length > 0 || !!r.after || /\bHit:/i.test(t));      // (a hit that only restrains or grapples counts too)
+    // (its bonus not given: a summoned creature's, its summoner's spell attack modifier: asked on its card)
+    const lead = /^\s*(?:Melee|Ranged)(?: or Ranged)? (?:Spell |Weapon )?Attack(?: Roll)?:/i.test(t);
+    const attack = !!r && r.kind === 'attack' && (r.bonus !== undefined || lead) && (r.damage.length > 0 || !!r.after || /\bHit:/i.test(t));      // (a hit that only restrains or grapples counts too)
     const save = !!r && r.kind === 'save' && /Saving Throw:\s*DC|\bmust (?:make|succeed on)\b[^.]{0,40}\bsaving throw|\b(?:target|creature)\b[^.]{0,40}\b(?:makes?|succeeds?)\b[^.]{0,40}\bsaving throw/i.test(t)
       && !/\ballows? (?:it|you|them) to make\b|\bwhen (?:it|you) (?:make|succeed|fail)/i.test(t);
-    if (!attack && !save) return null;
-    e.plain = attack ? 'attack' : 'save'; e.key = `ability:${nm.toLowerCase()}:${e.plain}`;
+    // or damage dealt straight to a creature, no roll ("…deals 9 (2d8) force damage to that creature", "the target
+    // takes 7 (2d6) fire damage"): not more damage on another attack ("…makes one Claw attack. If it hits, it deals an
+    // extra 3 (1d6)"), nor damage it takes itself
+    const dealt = !!r && r.kind === 'damage' && r.damage.length > 0
+      && /\b(?:one|a|that|the|each|this) (?:creature|target|attacker|enemy|humanoid|foe)\b|\btargets? (?:one|a)\b|\bto (?:it|the creature|the target|the attacker|that creature)\b/i.test(t)
+      && !/\b(?:extra|additional)\b[^.]{0,40}\bdamage\b|\bmakes? (?:one|a|an|two|three)\b[^.]{0,40}\battacks?\b|\buses? (?:its )?Multiattack\b|\bwhen (?:it|he|she|they|the \w+) (?:takes?|is hit)\b[^.]{0,30}$|\badds? \d+d\d+\b/i.test(t);
+    if (!attack && !save && !dealt) return null;
+    e.plain = attack ? 'attack' : save ? 'save' : 'damage'; e.key = `ability:${nm.toLowerCase()}:${e.plain}`;
     // how far it can go: the farthest of its reach and its ranges ("reach 5 ft. or range 150 ft.": 150;
     // "range 80/320 ft.": 320, with disadvantage past 80)
     const far = Math.max(r?.reach ?? 0, r?.short ?? 0, r?.long ?? 0);

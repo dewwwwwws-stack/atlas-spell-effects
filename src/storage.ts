@@ -96,7 +96,9 @@ const hasTag = (fm: FM) => { const t = fm?.['tags']; return (Array.isArray(t) ? 
 const isLegacy = (fm: FM): boolean => !!fm && fm[prop('area')] === undefined && ((fm['area'] !== undefined && SHAPES.includes(String(fm['area']).toLowerCase() as Shape)) || hasTag(fm));
 /** One of the add-on's properties ("effect-size", or "size" in an older note). */
 function get(fm: Record<string, unknown>, k: Key): unknown {
+  // (left blank, as in a note made from a template: not said, so read from the spell's text)
   const v = fm[prop(k)];
+  if (v === null || (typeof v === 'string' && !v.trim()) || (Array.isArray(v) && !v.length && k !== 'conditions')) return undefined;
   if (v !== undefined) return v;
   if (!isLegacy(fm)) return undefined;
   return k === 'walls' ? fm['blocks'] : k === 'colour' ? fm['colour'] ?? fm['color'] : k === 'light-colour' ? fm['light-colour'] ?? fm['light-color'] : fm[k];
@@ -147,7 +149,7 @@ export function storedFrom(path: string, fm: Record<string, unknown>, resolve: (
     lm === 'darkness' ? { mode: 'darkness', bright: 0, dim: area.size } :
     lm === 'light' || lm === 'bright' || lm === 'dim' ? { mode: 'light', bright: feet(get(fm, 'bright')), dim: Math.max(feet(get(fm, 'dim')), feet(get(fm, 'bright'))) || area.size, ...(lc ? { colour: lc } : {}) } :
     lm === 'none' || lm === 'no' || lm === 'false' ? null : undefined;
-  const col = get(fm, 'colour'), col2 = fm[prop('colour-outer')], op = Number(fm[prop('opacity')]);
+  const col = get(fm, 'colour'), col2 = get(fm, 'colour-outer'), op = Number(fm[prop('opacity')]);
   const mo = get(fm, 'motion');
   const more: More = {};
   const n = (key: 'push' | 'count' | 'chain' | 'chain-range'): number => { const v = Number(get(fm, key)); return Number.isFinite(v) ? v : 0; };

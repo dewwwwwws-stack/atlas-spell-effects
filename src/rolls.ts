@@ -139,7 +139,13 @@ export function untag(text: string): string {
 }
 
 export function rollSpecOf(text: string | undefined): RollSpec | null {
-  const t = untag(String(text ?? '')).replace(/\s+/g, ' ');
+  // (a summoned creature's statblock, its numbers its summoner's: "Bonus equals your spell attack modifier", "+3 plus
+  // PB to hit", "1d8 + 3 + the spell's level Force damage", "1d6 plus PB": the bonus left to the caster (unknown here,
+  // so asked on its card), the dice as written; add the rest on its card)
+  const t = untag(String(text ?? '')).replace(/\s+/g, ' ')
+    .replace(/(Attack(?: Roll)?:)\s*Bonus equals your spell attack modifier,?/gi, '$1')
+    .replace(/[+−–-]?\s*\d*\s*(?:\+|plus)?\s*(?:PB|your (?:\w+ )?spell attack (?:modifier|bonus))\s+to hit\b/gi, 'to hit')
+    .replace(/\s*(?:\+|plus)\s*(?:the spell's level|PB|(?:your|its|the (?:caster|summoner)'s) (?:\w+ )?(?:modifier|proficiency bonus))\b/gi, '');
   if (!t) return null;
   // an attack, then a save after it (Ice Knife: "Make a ranged spell attack… Hit or miss, the shard explodes. The
   // target and each creature within 5 feet of it must succeed on a Dexterity saving throw"): each read on its own
@@ -147,7 +153,9 @@ export function rollSpecOf(text: string | undefined): RollSpec | null {
   const sav = /\b(?:Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma) sav(?:ing throw|e)\b|\bSaving Throw:/i.exec(t);
   if (atk && sav && sav.index > atk.index && !/^\s*$/.test(t.slice(atk.index, sav.index))) {
     // (from the save's own sentence or clause: "…Piercing damage, and the target must make a DC 11 Constitution saving throw")
-    const cut = Math.max(t.lastIndexOf('. ', sav.index) + 2, t.lastIndexOf(', and ', sav.index) + 6, t.lastIndexOf('; ', sav.index) + 2, atk.index + 1);
+    // (or "…Piercing damage and the target must succeed…", "…Fire damage and the target has a condition (… saving throw ends it)")
+    const andThe = /^(.*)\sand (?:the target|the creature|it)\b/i.exec(t.slice(0, sav.index));
+    const cut = Math.max(t.lastIndexOf('. ', sav.index) + 2, t.lastIndexOf(', and ', sav.index) + 6, t.lastIndexOf('; ', sav.index) + 2, andThe && andThe[1].length > atk.index ? andThe[1].length + 1 : 0, atk.index + 1);
     const first = rollSpecOf(t.slice(0, cut)), then = rollSpecOf(t.slice(cut));
     // a rider with no damage of its own ("…or have the Prone condition"): the attack alone (its condition is offered on its card)
     if (first?.kind === 'attack' && then?.kind === 'save' && !then.damage.length) return first;
@@ -213,7 +221,7 @@ export function rollSpecOf(text: string | undefined): RollSpec | null {
   } else if ((m = /\b(?:Melee|Ranged)\b[^.:]{0,30}?:\s*([+−–-]\s*\d+)\s*(?:to hit\b|,)/i.exec(t)) || (m = /([+−–-]\s*\d+)\s+to hit\b/i.exec(t))) {
     // "Melee: +2 to hit", "Ranged (Longbow): +5 to hit", "+5 to hit"
     spec.kind = 'attack'; spec.bonus = Number(clean(m[1]));
-  } else if (/\b(?:melee|ranged) spell attack\b|\bmake (?:a|an) (?:melee|ranged) (?:spell )?attack\b|\bspell attack (?:roll|against)\b/i.test(t)) {
+  } else if (/\b(?:melee|ranged) spell attack\b|\bmake (?:a|an) (?:melee|ranged) (?:spell )?attack\b|\bspell attack (?:roll|against)\b|^\s*(?:Melee|Ranged)(?: or Ranged)? (?:Spell |Weapon )?Attack(?: Roll)?:/i.test(t)) {
     spec.kind = 'attack';
   }
   if (spec.kind === 'attack') {

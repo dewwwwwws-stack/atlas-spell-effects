@@ -77,6 +77,8 @@ Set a spell up as you like it in the cast window (its area, animation, colours, 
 
 Saved spells are listed first in the cast window, under **Saved spells** (★). Presets from versions before 1.4 become saved spells of their own automatically, still in ✨'s menu.
 
+Any of them can be left blank (a note made from a template): a blank one counts as not said, and is worked out from the spell's text.
+
 | Property | What it does | Example |
 |---|---|---|
 | `effect-area` | sphere `radius`, `emanation` (around the caster), `cone`, `cube`, `line`, `wall` | `radius` |

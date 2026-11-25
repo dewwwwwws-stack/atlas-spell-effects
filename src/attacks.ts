@@ -13,13 +13,14 @@ export const RANGED_NAMES: Readonly<Record<string, string>> = { arrow: 'An arrow
 // by its name: [what it's called, its animation, thrown or shot]
 export const WEAPONS: readonly [RegExp, string, boolean][] = [
   [/\b(?:long|short|great|oath)?bows?\b|\barrows?\b/, 'Generic/Weapon_Attacks/Ranged/Arrow01', true],
-  [/\bcrossbows?\b|\bbolt launcher\b|\bboltgun\b|\bballista\b|\bharpoon gun\b/, 'Generic/Weapon_Attacks/Ranged/Bolt01', true],
+  [/\bcrossbows?\b|\bbolt launcher\b|\b(?:serrated|lancing|crossbow|barbed) bolts?\b|\bboltgun\b|\bballista\b|\bharpoon gun\b/, 'Generic/Weapon_Attacks/Ranged/Bolt01', true],
   [/\bcannon\b/, 'Generic/Weapon_Attacks/Ranged/LaunchCannonBall01', true],
   [/\blaser\b|\bantimatter\b|\bblaster\b/, 'Generic/Weapon_Attacks/Ranged/LaserShot', true],
   [/\bhoopak, ranged\b|\bsling(?:shot)?\b|\bmusket\b|\bpistol\b|\brifle\b|\brevolver\b|\bshotgun\b|\bblunderbuss\b|\bfirearm\b|\bguns?\b|\bshot\b(?! put)/, 'Generic/Weapon_Attacks/Ranged/Bullet', true],
   [/\bbarrel\b/, 'Generic/Weapon_Attacks/Ranged/WoodenBarrelToss01', true],
   [/\bsnowball\b/, 'Generic/Weapon_Attacks/Ranged/SnowballToss', true],
   [/\bcards?\b/, 'Generic/RangedSpell/Card/', true],
+  [/\borbs?\b|\bjet\b/, 'Generic/RangedSpell/01/', true],
   [/\bchakram\b|\bchatkcha\b|\bboomerang\b/, 'Generic/Weapon_Attacks/Melee/Group01/MeleeAttack01_Chakram01', false],
   [/\bgreatswords?\b|\bruneblade\b|\bclaymore\b/, 'Generic/Weapon_Attacks/Melee/GreatSword01', false],
   [/\bgreataxes?\b/, 'Generic/Weapon_Attacks/Melee/GreatAxe01', false],
@@ -29,7 +30,7 @@ export const WEAPONS: readonly [RegExp, string, boolean][] = [
   [/\bhandaxes?\b|\baxes?\b|\baxehand\b/, 'Generic/Weapon_Attacks/Melee/HandAxe02', false],
   [/\bhalberds?\b|\bpikes?\b|\bpolearm\b|\bpole\b|\bgythka\b|\bhoopak\b/, 'Generic/Weapon_Attacks/Melee/Halberd01', false],
   [/\bglaives?\b|\bnaginata\b|\bbardiche\b/, 'Generic/Weapon_Attacks/Melee/Glaive01', false],
-  [/\bwarhammers?\b|\bhammers?\b|\bwar ?picks?\b|\bpick(?:axe)?\b|\bmattock\b|\bmallet\b/, 'Generic/Weapon_Attacks/Melee/Warhammer01', false],
+  [/\bwarhammers?\b|\bhammers?\b|\bwar ?picks?\b|\bpick(?:axe)?\b|\bmattock\b|\bmallet\b|\bthrower\b/, 'Generic/Weapon_Attacks/Melee/Warhammer01', false],
   [/\bflails?\b|\bmorningstars?\b|\bchains?\b(?! lightning)|\banchor\b/, 'Generic/Weapon_Attacks/Melee/Group01/MeleeAttack01_Flail01', false],
   [/\bmaces?\b|\bscepter\b|\brod\b|\bcauldron\b/, 'Generic/Weapon_Attacks/Melee/Mace01', false],
   [/\bwrench\b/, 'Generic/Weapon_Attacks/Melee/Group02/MeleeAttack02_Wrench01', false],
@@ -46,15 +47,15 @@ export const WEAPONS: readonly [RegExp, string, boolean][] = [
   [/\b(?:long)?swords?\b|\bblades?\b|\bbladed\b|\bsabers?\b|\bsabre\b|\barmblade\b|\bsaw\b|\bbonesaw\b|\bsteamsaw\b|\bslicer\b|\bslice\b|\bsharp edges\b/, 'Generic/Weapon_Attacks/Melee/Sword01', false],
   [/\bshields?\b/, 'Generic/Weapon_Attacks/Melee/Group06/MeleeAttack06_Shield01', false],
   [/\bscythes?\b/, 'Generic/Weapon_Attacks/Melee/Group05/MeleeAttack05_Scythe01', false],
-  [/\bdarts?\b|\bjavelins?\b|\bneedles?\b|\bquills?\b|\bspine fling\b|\bblowgun\b|\bthrowing\b|\bfling\b|\bbolas\b/, 'Generic/Weapon_Attacks/Ranged/Dagger01', true],
+  [/\bdarts?\b|\bjavelins?\b|\bneedles?\b|\bquills?\b|\bspines?\b|\bthorns?\b|\bbarbs?\b|\bspine fling\b|\bblowgun\b|\bthrowing\b|\bfling\b|\bbolas\b/, 'Generic/Weapon_Attacks/Ranged/Dagger01', true],
   [/\b(?:rock|boulder|stone|brick|trash|lob|junk|mudball|shot put|anvil|debris)\b/, 'Generic/Weapon_Attacks/Ranged/BoulderToss02', true],
   [/\bflask\b|\bvial\b|\bbomb\b|\bjug\b|\bpotion\b|\bgrenade\b/, 'Generic/Weapon_Attacks/Ranged/ThrowFlask01', true],
   [/\bwhips?\b|\blash\b|\bscourge\b|\bvines?\b|\bbramble\b|\broots?\b|\btongues?\b|\bwebby\b/, 'Generic/Weapon_Attacks/Melee/Slash02/', false],
   [/\bfists?\b|\bpunch\b|\bunarmed\b|\bgauntlets?\b|\bknuckles\b|\bhaymaker\b|\bhammerfist\b|\bjab\b|\btouch\b|\bhands?\b|\bkick\b|\bhead ?butts?\b|\bstrike\b/, 'Generic/Unarmed_Attacks/Unarmed_Strike/', false],
   [/\bslams?\b|\bstomp(?:ing)?\b|\bbash\b|\bsmash\b|\bpummel\b|\bthrash\b|\bthwack\b|\btrample\b|\bflop\b|\bwings?\b|\bflippers?\b|\barms?\b|\blimbs?\b|\bhug\b|\bcrush(?:ing)?\b|\bram\b|\bhooves\b|\bhoof\b|\btail\b|\bfoot\b|\btrunk\b|\bpseudopods?\b|\bbody\b/, 'Generic/Creature/Fist/', false],
   [/\bpincers?\b|\bnippers?\b|\bchelae?\b|\bscissorhand\b/, 'Generic/Creature/Pincer/', false],
-  [/\bbites?\b|\bjaws\b|\bfangs?\b|\bteeth\b|\btooth\b|\bmaw\b|\bbeaks?\b|\bpeck\b|\bproboscis\b|\bgnash\w*\b|\bblood drain\b|\bmandibles\b|\bswallow\b|\bengulf\b/, 'Generic/Creature/Bite', false],
-  [/\bclaws?\b|\bclawed\b|\bscratch\b|\btalons?\b|\brake\b|\braking\b|\brend\b|\bgouge\b|\bswipe\b|\bslash\b|\bgore\b|\bhorns?\b|\bantlers\b|\btusks?\b|\bsting(?:er)?\b|\btentacles?\b|\btendrils?\b|\bconstrict\w*\b|\bgrasp\w*\b|\bgrab\w*\b|\bsmother\b|\battach\b|\bforelegs?\b|\blegs?\b|\bbeard\b|\bsnaky hair\b|\bsnake hair\b|\bravage\b/, 'Generic/Creature/Claw/', false],
+  [/\bbites?\b|\bjaws\b|\bfangs?\b|\bteeth\b|\btooth\b|\bmaw\b|\bbeaks?\b|\bpeck\b|\bproboscis\b|\bgnash\w*\b|\bdeath roll\b|\bflytrap\b|\bblood drain\b|\bmandibles\b|\bswallow\b|\bengulf\b/, 'Generic/Creature/Bite', false],
+  [/\bclaws?\b|\bclawed\b|\bscratch\b|\btalons?\b|\brake\b|\braking\b|\brend\b|\bgouge\b|\bswipe\b|\bslash\b|\bgore\b|\bhorns?\b|\bantlers\b|\btusks?\b|\bsting(?:er)?\b|\btentacles?\b|\btendrils?\b|\bconstrict\w*\b|\bgrasp\w*\b|\bgrab\w*\b|\bsmother\b|\battach\b|\bforelegs?\b|\blegs?\b|\bbeard\b|\bsnaky hair\b|\bsnake hair\b|\bravage\b|\bpinions?\b/, 'Generic/Creature/Claw/', false],
 ];
 
 /**

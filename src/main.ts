@@ -16,7 +16,7 @@ import { rollSpecOf, statsOf, rollAgainst, addExtra, type RollSpec, type CastRol
 import { IN_SPELL_ID, IN_SPELL, ROUND_SECS, idsOf, upFor, timeOf, secondsOf, spellConditions, type ConditionDef } from './conditions';
 import { call, field, type AtlasAssets, type Tab, type AtlasView, type AtlasViewport, type AtlasState, type CanvasNode, type PlayersView, type Measurement } from './atlas';
 import { FolderSuggest, BaseSuggest } from './suggest';
-import { SpellNames, StatblockLinker, type SpellLink } from './statblocks';
+import { SpellNames, StatblockLinker, abilityLinksOf, type SpellLink } from './statblocks';
 import { areaOf, abilityEntry, targetOf, fallbackArea, describe, rangeOf, teleportOf, setRules, unitLabel, square, squares, fromFeet, type GameUnitType, type Area, type Shape, type SpellEntry, type WallBlocks } from './areas';
 import { indexFiles, indexFile, matchesFor, defaultFor, hintsOf, coloursOf, search, nearestLength, type EffectFile } from './library';
 import { isStored, storedFrom, writeDefaults, clearDefaults, baseFile, noteName, unitFactor, unitNow, type StoredSpell } from './storage';
@@ -830,6 +830,12 @@ export default class AtlasSpellEffects extends Plugin {
   }
   /** A saved ability's key: its name, any case. */
   abilityKey(name: string): string { return name.replace(/\s+/g, ' ').trim().toLowerCase(); }
+
+  /**
+   * For other plugins (Table Touch's combat panel): a creature's attacks and abilities as links, to cast with
+   * castFromStatblock just as their statblock buttons do. `entries`: each its name and its text.
+   */
+  abilityLinks(entries: { name: string; text: string }[]): SpellLink[] { return abilityLinksOf(entries); }
 
   /** A spell clicked in a statblock: cast it (its creature as the caster), or Shift: open it in the cast window. */
   async castFromStatblock(link: SpellLink, how: { shift: boolean; statblock: HTMLElement }): Promise<void> {
