@@ -42,6 +42,8 @@ interface Remembered { /** An ability given its button by hand (its text names n
 interface Settings {
   folders: string;                 // vault folders with effect files, comma-separated; '' = any folder named like JB2A or "Spell Effects"
   remember: Record<string, Remembered>;
+  /** Buttons taken away by hand (right-click: Take its button away): 'spell:<name>' or 'ability:<name>', any case. */
+  noButton: string[];
   /** Saved abilities (not spells), by name: how every statblock's Fire Breath looks. Their shape and size come from each statblock's own text. */
   abilities: Record<string, Remembered>;
   lasting: Effect[];               // lasting effects, kept between sessions
@@ -140,7 +142,7 @@ export function storeMatters(now: unknown, before: unknown): boolean {
 /** A canvas, whichever window it's in (a popped-out one's too). */
 const isCanvas = (c: unknown): c is HTMLCanvasElement => !!c && typeof (c as Node).instanceOf === 'function' && (c as Node).instanceOf(HTMLCanvasElement);
 
-const DEFAULTS: Settings = { folders: '', online: false, attackAnims: false, attackMelee: 'slash', attackRanged: 'arrow', autoClose: true, srdSpells: false, srdEdition: '2024', srdFolder: 'Combat+ SRD', rolling: false, rollWho: 'all', rollPost: false, above: 'none', legendary: {}, tempResource: 'Temp HP', animations: true, made: [], remember: {}, abilities: {}, lasting: [], snap: true, storage: 'Spell Storage', bases: [], presets: [], jb2aFolder: 'JB2A_DnD5e', jb2aOffer: true, noJb2a: false, noteSpells: true, orphanLights: [], coneAngle: 0, artTrim: {}, showAim: false, aimLook: 'outline', markCreatures: true, showRounds: true, atlasAreas: true, throughWalls: false, areas: {}, roundSecs: {}, marks: [], caught: [], recent: [] };
+const DEFAULTS: Settings = { folders: '', online: false, attackAnims: false, attackMelee: 'slash', attackRanged: 'arrow', autoClose: true, srdSpells: false, srdEdition: '2024', srdFolder: 'Combat+ SRD', rolling: false, rollWho: 'all', rollPost: false, above: 'none', legendary: {}, tempResource: 'Temp HP', animations: true, made: [], remember: {}, abilities: {}, noButton: [], lasting: [], snap: true, storage: 'Spell Storage', bases: [], presets: [], jb2aFolder: 'JB2A_DnD5e', jb2aOffer: true, noJb2a: false, noteSpells: true, orphanLights: [], coneAngle: 0, artTrim: {}, showAim: false, aimLook: 'outline', markCreatures: true, showRounds: true, atlasAreas: true, throughWalls: false, areas: {}, roundSecs: {}, marks: [], caught: [], recent: [] };
 
 /** A spell to pick in the cast window: a saved one, or a spell note (from a Base or found in the vault). */
 export interface Choice { key: string; name: string; source: 'stored' | 'note'; entry?: SpellEntry; stored?: StoredSpell; notePath?: string; /** A creature's ability from a statblock (Fire Breath), not a spell. */ ability?: boolean; /** Whose ability it is (its creature's name). */ owner?: string; /** A built-in SRD spell (no note of its own). */ srd?: boolean }
@@ -735,7 +737,8 @@ export default class AtlasSpellEffects extends Plugin {
     const seen = new Set<string>();
     // every spell (one with no area is cast on its caster, or at a point), by its name and its other names: a
     // note's aliases, and the name without its inventor ("Acid Arrow" for "Melf's Acid Arrow", as 2024 names it)
-    const add = (key: string, name: string) => { const k = name.trim().toLowerCase(); if (k.length >= 3 && !seen.has(k)) { links.push({ key, name: name.trim() }); seen.add(k); } };
+    const off = new Set(this.settings.noButton ?? []);
+    const add = (key: string, name: string) => { const k = name.trim().toLowerCase(); if (off.has('spell:' + this.abilityKey(name))) return; if (k.length >= 3 && !seen.has(k)) { links.push({ key, name: name.trim() }); seen.add(k); } };
     const all = this.choices().filter((c) => !!c.stored || !!c.entry || !!c.notePath);
     for (const c of all) add(c.key, c.name);
     for (const c of all) {
@@ -758,6 +761,8 @@ export default class AtlasSpellEffects extends Plugin {
       // (an attack does something when it's rolled, or animated)
       l.attacks = (sb) => { if (!this.settings.rolling) return this.settings.attackAnims; const k = this.settings.rollWho === 'npcs' ? this.tokenOfStatblock(sb) : null; return !(k && this.isPC(k.tab, k.id)) || this.settings.attackAnims; };
       l.own = (name) => !!this.settings.abilities[this.abilityKey(name)]?.own;
+      l.removed = (name) => (this.settings.noButton ?? []).includes('ability:' + this.abilityKey(name));
+      l.context = (link, how) => this.buttonMenu(link, how);
       // an ability's name right-clicked: give it a button by hand, or change or take away the one given
       this.registerDomEvent(d, 'contextmenu', (ev: MouseEvent) => this.abilityMenu(ev, l), { capture: true });
       l.start(); this.linkers.set(d, l);
@@ -847,9 +852,21 @@ export default class AtlasSpellEffects extends Plugin {
     const u = el ? l.abilityAt(el) : null;
     if (!u) return;
     const k = this.abilityKey(u.name), mine = this.settings.abilities[k];
-    if (u.button && !mine?.own) return;
+    if (u.button) {
+      const link = l.linkNamed(u.statblock, u.name);
+      if (!link) return;
+      ev.preventDefault(); ev.stopPropagation();
+      this.buttonMenu(link, { statblock: u.statblock, x: ev.clientX, y: ev.clientY });
+      return;
+    }
     ev.preventDefault(); ev.stopPropagation();
     const menu = new Menu();
+    if ((this.settings.noButton ?? []).includes('ability:' + k)) {
+      menu.addItem((i) => i.setTitle(`Put ${u.name}'s button back`).setIcon('undo-2').onClick(() => { void this.putBack('ability:' + k, u.name); }));
+      menu.showAtPosition({ x: ev.clientX, y: ev.clientY }, el?.ownerDocument);
+      (field(menu, 'dom') as HTMLElement | undefined)?.addClass?.('sfx-sb-menu');
+      return;
+    }
     menu.addItem((i) => i.setTitle(mine?.own ? `Change ${u.name}'s button…` : `Give ${u.name} a Use button…`).setIcon('zap').onClick(() => { void this.ownAbility(u); }));
     if (mine?.own) menu.addItem((i) => i.setTitle('Take its button away').setIcon('trash-2').onClick(() => { void (async () => {
       delete this.settings.abilities[k]; await this.save(); this.relink();
@@ -858,6 +875,63 @@ export default class AtlasSpellEffects extends Plugin {
     menu.showAtPosition({ x: ev.clientX, y: ev.clientY }, el?.ownerDocument);
     (field(menu, 'dom') as HTMLElement | undefined)?.addClass?.('sfx-sb-menu');
   }
+  /** A taken-away button's key: 'spell:<name>' or 'ability:<name>'. */
+  offKey(link: SpellLink): string { return (link.ability !== undefined ? 'ability:' : 'spell:') + this.abilityKey(link.name); }
+
+  /**
+   * A Cast, Use or Attack button right-clicked (or the name it stands in front of): change it in the cast window,
+   * put it back as its text reads it, or take it away (from every statblock: right-click the name, or the settings,
+   * to put it back).
+   */
+  buttonMenu(link: SpellLink, how: { statblock: HTMLElement; x: number; y: number }): void {
+    this.peekButton(null, null);
+    const k = this.abilityKey(link.name);
+    const ability = link.ability !== undefined;
+    const mine = ability ? this.settings.abilities[k] : undefined;
+    const c = this.choiceOf(link);
+    const saved = ability ? !!mine && !mine.own : !!(c?.entry && this.settings.remember[c.entry.key]);
+    const what = link.attack || link.multi?.length ? 'Attack' : ability ? 'Use' : 'Cast';
+    const menu = new Menu();
+    menu.addItem((i) => i.setTitle(`${what} button: ${link.name}`).setIcon(link.attack || link.multi?.length ? 'sword' : ability ? 'zap' : 'sparkles').setDisabled(true));
+    menu.addSeparator();
+    menu.addItem((i) => i.setTitle(`Edit ${link.name}…`).setIcon('pencil').onClick(() => { void (async () => {
+      if (mine?.own && link.ability !== undefined) { await this.ownAbility({ name: link.name, text: link.ability, statblock: how.statblock }); return; }
+      if (!c) return;
+      const m = new CastModal(this.app, this);
+      await m.pick(c);
+      m.casterToken = this.tokenOfStatblock(how.statblock)?.id;
+      m.open();
+    })(); }));
+    if (saved) menu.addItem((i) => i.setTitle('Undo my changes (read from its text again)').setIcon('rotate-ccw').onClick(() => { void (async () => {
+      if (ability) delete this.settings.abilities[k];
+      if (c?.entry) delete this.settings.remember[c.entry.key];
+      await this.save(); this.relink();
+      new Notice(`Combat+: ${link.name} is read from its text again.`);
+    })(); }));
+    menu.addItem((i) => i.setTitle('Take its button away').setIcon('trash-2').onClick(() => { void this.takeAway(link); }));
+    menu.showAtPosition({ x: how.x, y: how.y }, how.statblock.ownerDocument);
+    (field(menu, 'dom') as HTMLElement | undefined)?.addClass?.('sfx-sb-menu');
+  }
+
+  /** A button taken away, from every statblock (a hand-given one: forgotten). */
+  async takeAway(link: SpellLink): Promise<void> {
+    const k = this.abilityKey(link.name), key = this.offKey(link);
+    if (link.ability !== undefined && this.settings.abilities[k]?.own) delete this.settings.abilities[k];
+    else if (!this.settings.noButton.includes(key)) this.settings.noButton.push(key);
+    await this.save();
+    this.names = null;
+    for (const l of this.linkers.values()) { l.dropButtons((x) => this.offKey(x) === key); l.soon(); }
+    new Notice(`Combat+: ${link.name} has no button now. Right-click its name to put it back${link.ability !== undefined ? '' : ' (or see Combat+’s settings: Buttons taken away)'}.`, 7000);
+  }
+
+  /** A button taken away, put back. */
+  async putBack(key: string, name: string): Promise<void> {
+    this.settings.noButton = this.settings.noButton.filter((x) => x !== key);
+    await this.save();
+    this.names = null; this.relink();
+    new Notice(`Combat+: ${name} has its button back.`);
+  }
+
   /** The cast window for an ability to give a button by hand: choose its shape, size and look, then Save. */
   private async ownAbility(u: { name: string; text: string; statblock: HTMLElement }): Promise<void> {
     const entry = this.ownEntry(u.name, u.text);
@@ -5547,6 +5621,17 @@ class EffectSettings extends PluginSettingTab {
         t.inputEl.type = 'number'; t.inputEl.min = '1'; t.inputEl.max = '170';
         t.onChange((v) => { void (async () => { const n = Number(v); if (!v.trim()) s.coneAngle = 0; else if (n >= 1 && n <= 170) s.coneAngle = n; else return; await p.save(); })(); });
       }); },
+    });
+    // ── buttons taken away by hand (right-click a button: Take its button away) ──
+    spells.push({
+      name: 'Buttons taken away',
+      desc: s.noButton.length ? 'Spells and abilities you took the button off (right-clicked: Take its button away). Put one back here, or right-click an ability’s name in a statblock.' : 'None. Right-click any Cast, Use or Attack button in a statblock to change it or take it away.',
+      render: (st) => {
+        for (const key of s.noButton) {
+          const name = key.replace(/^(spell|ability):/, '');
+          st.addButton((b) => b.setButtonText(`${name} (${key.startsWith('spell:') ? 'spell' : 'ability'}) ↺`).setTooltip('Put its button back').onClick(() => { void p.putBack(key, name).then(() => this.redraw()); }));
+        }
+      },
     });
     return ([{ rows: main }, { heading: 'Spells', rows: spells }, { heading: 'On the map', rows: map }, { heading: 'Players', rows: players }, { heading: 'Your game', rows: game }, { heading: 'Rolling', rows: rolls }, { heading: 'Built-in SRD (D&D 5e)', rows: srd }, { heading: 'Animation files', rows: anims }] as { heading?: string; rows: Row[] }[]).filter((x) => x.rows.length);
   }

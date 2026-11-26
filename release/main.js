@@ -3788,6 +3788,21 @@ var StatblockLinker = class {
   attacks = () => false;
   /** Whether an ability has a button given it by hand (its name: one whose text names nothing the add-on reads). */
   own = () => false;
+  /** Whether an ability's button was taken away by hand (its name): none is put on it, anywhere. */
+  removed = () => false;
+  /** A button right-clicked: its menu to change it or take it away, at `x`, `y`. */
+  context = () => {
+  };
+  /** Takes away the buttons on show whose link `drop` picks (a spell's button taken away by hand). */
+  dropButtons(drop) {
+    for (const b of Array.from(this.doc.querySelectorAll("." + CAST_BTN))) {
+      const l = this.buttons.get(b);
+      if (!l || !drop(l)) continue;
+      const row = b.parentElement?.classList.contains(ROW) ? b.parentElement : null;
+      b.remove();
+      if (row) row.replaceWith(...Array.from(row.childNodes));
+    }
+  }
   /** Each ability name in a statblock with no button, by its name's element: to give it one by hand (right-click). */
   bare = /* @__PURE__ */ new WeakMap();
   /** A statblock's button by its name ("Rend", "Bite"): its link, or null (no button by that name there). */
@@ -4089,6 +4104,12 @@ var StatblockLinker = class {
       const link2 = this.buttons.get(b);
       if (sb && link2) this.cast(link2, { shift: false, statblock: sb, x: e.clientX, y: e.clientY });
     });
+    b.addEventListener("contextmenu", (e) => {
+      quiet(e);
+      const sb = b.closest(STATBLOCK);
+      const link2 = this.buttons.get(b);
+      if (sb && link2) this.context(link2, { statblock: sb, x: e.clientX, y: e.clientY });
+    });
     b.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") {
         const r = b.getBoundingClientRect();
@@ -4151,6 +4172,17 @@ var StatblockLinker = class {
       const attacksHere = units.map((u) => ({ name: u.name, text: u.text, e: abilityEntry(u.name, u.text) })).filter((u) => u.e?.plain).map((u) => ({ name: u.name, text: u.text }));
       for (const u of units) {
         try {
+          if (u.anchor.instanceOf(Element)) {
+            u.anchor.setAttribute("data-sfx-ability", u.name);
+            this.bare.set(u.anchor, { name: u.name, text: u.text });
+          }
+          if (this.removed(u.name)) {
+            const prev2 = u.anchor.previousSibling;
+            if (!(prev2?.instanceOf(Element) && prev2.classList.contains(CAST_BTN) && !prev2.classList.contains("is-ability"))) {
+              why.push(`${u.name}: no button (you took it away: right-click its name to put it back)`);
+              continue;
+            }
+          }
           if (/^multiattack$/i.test(u.name.trim())) {
             const seq = attacksOn ? multiOf(u.text, attacksHere) : [];
             const prev2 = u.anchor.previousSibling;
@@ -4175,10 +4207,6 @@ var StatblockLinker = class {
             if (!parent2) continue;
             keep.add(this.put(parent2, u.anchor, link2, shownText(u.anchor) || u.name));
             continue;
-          }
-          if (u.anchor.instanceOf(Element)) {
-            u.anchor.setAttribute("data-sfx-ability", u.name);
-            this.bare.set(u.anchor, { name: u.name, text: u.text });
           }
           const ae = abilityEntry(u.name, u.text) ?? (this.own(u.name) ? { plain: void 0 } : null);
           if (!ae) {
@@ -4789,7 +4817,7 @@ function storeMatters(now, before) {
   return false;
 }
 var isCanvas = (c) => !!c && typeof c.instanceOf === "function" && c.instanceOf(HTMLCanvasElement);
-var DEFAULTS = { folders: "", online: false, attackAnims: false, attackMelee: "slash", attackRanged: "arrow", autoClose: true, srdSpells: false, srdEdition: "2024", srdFolder: "Combat+ SRD", rolling: false, rollWho: "all", rollPost: false, above: "none", legendary: {}, tempResource: "Temp HP", animations: true, made: [], remember: {}, abilities: {}, lasting: [], snap: true, storage: "Spell Storage", bases: [], presets: [], jb2aFolder: "JB2A_DnD5e", jb2aOffer: true, noJb2a: false, noteSpells: true, orphanLights: [], coneAngle: 0, artTrim: {}, showAim: false, aimLook: "outline", markCreatures: true, showRounds: true, atlasAreas: true, throughWalls: false, areas: {}, roundSecs: {}, marks: [], caught: [], recent: [] };
+var DEFAULTS = { folders: "", online: false, attackAnims: false, attackMelee: "slash", attackRanged: "arrow", autoClose: true, srdSpells: false, srdEdition: "2024", srdFolder: "Combat+ SRD", rolling: false, rollWho: "all", rollPost: false, above: "none", legendary: {}, tempResource: "Temp HP", animations: true, made: [], remember: {}, abilities: {}, noButton: [], lasting: [], snap: true, storage: "Spell Storage", bases: [], presets: [], jb2aFolder: "JB2A_DnD5e", jb2aOffer: true, noJb2a: false, noteSpells: true, orphanLights: [], coneAngle: 0, artTrim: {}, showAim: false, aimLook: "outline", markCreatures: true, showRounds: true, atlasAreas: true, throughWalls: false, areas: {}, roundSecs: {}, marks: [], caught: [], recent: [] };
 var byName = new Intl.Collator();
 function changedAt(f) {
   const st = f.stat;
@@ -5557,8 +5585,10 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
     if (this.names) return this.names;
     const links = [];
     const seen = /* @__PURE__ */ new Set();
+    const off = new Set(this.settings.noButton ?? []);
     const add = (key, name) => {
       const k = name.trim().toLowerCase();
+      if (off.has("spell:" + this.abilityKey(name))) return;
       if (k.length >= 3 && !seen.has(k)) {
         links.push({ key, name: name.trim() });
         seen.add(k);
@@ -5589,6 +5619,8 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
         return !(k && this.isPC(k.tab, k.id)) || this.settings.attackAnims;
       };
       l.own = (name) => !!this.settings.abilities[this.abilityKey(name)]?.own;
+      l.removed = (name) => (this.settings.noButton ?? []).includes("ability:" + this.abilityKey(name));
+      l.context = (link, how) => this.buttonMenu(link, how);
       this.registerDomEvent(d, "contextmenu", (ev) => this.abilityMenu(ev, l), { capture: true });
       l.start();
       this.linkers.set(d, l);
@@ -5688,10 +5720,25 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
     const u = el ? l.abilityAt(el) : null;
     if (!u) return;
     const k = this.abilityKey(u.name), mine = this.settings.abilities[k];
-    if (u.button && !mine?.own) return;
+    if (u.button) {
+      const link = l.linkNamed(u.statblock, u.name);
+      if (!link) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      this.buttonMenu(link, { statblock: u.statblock, x: ev.clientX, y: ev.clientY });
+      return;
+    }
     ev.preventDefault();
     ev.stopPropagation();
     const menu = new import_obsidian4.Menu();
+    if ((this.settings.noButton ?? []).includes("ability:" + k)) {
+      menu.addItem((i) => i.setTitle(`Put ${u.name}'s button back`).setIcon("undo-2").onClick(() => {
+        void this.putBack("ability:" + k, u.name);
+      }));
+      menu.showAtPosition({ x: ev.clientX, y: ev.clientY }, el?.ownerDocument);
+      field(menu, "dom")?.addClass?.("sfx-sb-menu");
+      return;
+    }
     menu.addItem((i) => i.setTitle(mine?.own ? `Change ${u.name}'s button\u2026` : `Give ${u.name} a Use button\u2026`).setIcon("zap").onClick(() => {
       void this.ownAbility(u);
     }));
@@ -5705,6 +5752,75 @@ var AtlasSpellEffects = class extends import_obsidian4.Plugin {
     }));
     menu.showAtPosition({ x: ev.clientX, y: ev.clientY }, el?.ownerDocument);
     field(menu, "dom")?.addClass?.("sfx-sb-menu");
+  }
+  /** A taken-away button's key: 'spell:<name>' or 'ability:<name>'. */
+  offKey(link) {
+    return (link.ability !== void 0 ? "ability:" : "spell:") + this.abilityKey(link.name);
+  }
+  /**
+   * A Cast, Use or Attack button right-clicked (or the name it stands in front of): change it in the cast window,
+   * put it back as its text reads it, or take it away (from every statblock: right-click the name, or the settings,
+   * to put it back).
+   */
+  buttonMenu(link, how) {
+    this.peekButton(null, null);
+    const k = this.abilityKey(link.name);
+    const ability = link.ability !== void 0;
+    const mine = ability ? this.settings.abilities[k] : void 0;
+    const c = this.choiceOf(link);
+    const saved = ability ? !!mine && !mine.own : !!(c?.entry && this.settings.remember[c.entry.key]);
+    const what = link.attack || link.multi?.length ? "Attack" : ability ? "Use" : "Cast";
+    const menu = new import_obsidian4.Menu();
+    menu.addItem((i) => i.setTitle(`${what} button: ${link.name}`).setIcon(link.attack || link.multi?.length ? "sword" : ability ? "zap" : "sparkles").setDisabled(true));
+    menu.addSeparator();
+    menu.addItem((i) => i.setTitle(`Edit ${link.name}\u2026`).setIcon("pencil").onClick(() => {
+      void (async () => {
+        if (mine?.own && link.ability !== void 0) {
+          await this.ownAbility({ name: link.name, text: link.ability, statblock: how.statblock });
+          return;
+        }
+        if (!c) return;
+        const m = new CastModal(this.app, this);
+        await m.pick(c);
+        m.casterToken = this.tokenOfStatblock(how.statblock)?.id;
+        m.open();
+      })();
+    }));
+    if (saved) menu.addItem((i) => i.setTitle("Undo my changes (read from its text again)").setIcon("rotate-ccw").onClick(() => {
+      void (async () => {
+        if (ability) delete this.settings.abilities[k];
+        if (c?.entry) delete this.settings.remember[c.entry.key];
+        await this.save();
+        this.relink();
+        new import_obsidian4.Notice(`Combat+: ${link.name} is read from its text again.`);
+      })();
+    }));
+    menu.addItem((i) => i.setTitle("Take its button away").setIcon("trash-2").onClick(() => {
+      void this.takeAway(link);
+    }));
+    menu.showAtPosition({ x: how.x, y: how.y }, how.statblock.ownerDocument);
+    field(menu, "dom")?.addClass?.("sfx-sb-menu");
+  }
+  /** A button taken away, from every statblock (a hand-given one: forgotten). */
+  async takeAway(link) {
+    const k = this.abilityKey(link.name), key = this.offKey(link);
+    if (link.ability !== void 0 && this.settings.abilities[k]?.own) delete this.settings.abilities[k];
+    else if (!this.settings.noButton.includes(key)) this.settings.noButton.push(key);
+    await this.save();
+    this.names = null;
+    for (const l of this.linkers.values()) {
+      l.dropButtons((x) => this.offKey(x) === key);
+      l.soon();
+    }
+    new import_obsidian4.Notice(`Combat+: ${link.name} has no button now. Right-click its name to put it back${link.ability !== void 0 ? "" : " (or see Combat+\u2019s settings: Buttons taken away)"}.`, 7e3);
+  }
+  /** A button taken away, put back. */
+  async putBack(key, name) {
+    this.settings.noButton = this.settings.noButton.filter((x) => x !== key);
+    await this.save();
+    this.names = null;
+    this.relink();
+    new import_obsidian4.Notice(`Combat+: ${name} has its button back.`);
   }
   /** The cast window for an ability to give a button by hand: choose its shape, size and look, then Save. */
   async ownAbility(u) {
@@ -12133,6 +12249,18 @@ var EffectSettings = class extends import_obsidian4.PluginSettingTab {
             })();
           });
         });
+      }
+    });
+    spells.push({
+      name: "Buttons taken away",
+      desc: s.noButton.length ? "Spells and abilities you took the button off (right-clicked: Take its button away). Put one back here, or right-click an ability\u2019s name in a statblock." : "None. Right-click any Cast, Use or Attack button in a statblock to change it or take it away.",
+      render: (st) => {
+        for (const key of s.noButton) {
+          const name = key.replace(/^(spell|ability):/, "");
+          st.addButton((b) => b.setButtonText(`${name} (${key.startsWith("spell:") ? "spell" : "ability"}) \u21BA`).setTooltip("Put its button back").onClick(() => {
+            void p.putBack(key, name).then(() => this.redraw());
+          }));
+        }
       }
     });
     return [{ rows: main }, { heading: "Spells", rows: spells }, { heading: "On the map", rows: map }, { heading: "Players", rows: players }, { heading: "Your game", rows: game }, { heading: "Rolling", rows: rolls }, { heading: "Built-in SRD (D&D 5e)", rows: srd }, { heading: "Animation files", rows: anims }].filter((x) => x.rows.length);

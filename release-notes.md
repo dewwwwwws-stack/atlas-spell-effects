@@ -1,3 +1,7 @@
-# Combat+ 1.13.14
+# Combat+ 1.13.15
 
-- **Distances follow your map's diagonal rule.** How far a creature can move or teleport (Misty Step, a gnoll's half Speed), a spell's range, who's in reach, how far apart two creatures are (melee or ranged for a Multiattack), how far a push or pull goes (Thunderwave, Thorn Whip) and how far a spell leaps on (Chain Lightning) now count diagonals the way your collection's **Grid and measurement → Diagonals** setting says, as Atlas's own ruler does. D&D's default (every diagonal 5 ft) lets 15 ft reach 3 squares diagonally, and the reach shows as a square. "Alternate 1 and 2 (5/10/5)", the optional rule in the 2024 DMG and Pathfinder's rule, counts every second diagonal as 10 ft. "Every diagonal counts 2" shows a diamond and "Exact distance" a circle. Hex grids count straight across.
+- **Right-click any button to change it or take it away.** Right-click a Cast, Use or Attack button in a statblock (or the name it stands in front of) for its menu:
+  - **Edit…** opens it in the cast window: its shape, size, range, animation, colours and the rest. Save there and it looks that way in every statblock that has it.
+  - **Undo my changes** (once you've saved some) reads it from its text again.
+  - **Take its button away** removes the button from every statblock that has it. The name stays as it is.
+- **Putting a button back:** right-click the ability's name and pick **Put its button back**, or press it in Combat+'s settings under **Spells → Buttons taken away**, which lists every one you've taken away (spells too).

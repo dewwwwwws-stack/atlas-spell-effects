@@ -236,7 +236,9 @@ Only spells the add-on knows (your spell notes, see *Spells: your Bases*) are cl
 - an area or a save before the move (a dragon's Wing Attack, *…The dragon can then fly up to half its flying speed*): placed first, then the move.
 A target being pushed (*pushes the target up to 10 feet*), an ally moving, or something the creature makes (*the ooze moves 10 feet*) isn't read as the creature's own move.
 
-**Giving an ability a button by hand:** an ability with nothing in its text the add-on can read (no area, no target) has no button. Right-click its name in the statblock and pick **Give … a Use button**: the cast window opens for it. Choose its shape, size and range (and its animation and colours, if you like), then press **Save its button**. From then on it has a **Use** button in every statblock with an ability of that name. Right-click its name again to **Change** it or **Take its button away**. **Explain statblock buttons** (Ctrl+P) lists every ability in an open statblock and why each has or hasn't a button.
+**Giving an ability a button by hand:** an ability with nothing in its text the add-on can read (no area, no target) has no button. Right-click its name in the statblock and pick **Give … a Use button**: the cast window opens for it. Choose its shape, size and range (and its animation and colours, if you like), then press **Save its button**. From then on it has a **Use** button in every statblock with an ability of that name. Right-click its name again to **Change** it or **Take its button away**.
+
+**Changing or taking away any button:** right-click any **Cast**, **Use** or **Attack** button (or the name beside it). **Edit…** opens it in the cast window; **Undo my changes** reads it from its text again; **Take its button away** removes it from every statblock. To put one back, right-click the ability's name and pick **Put its button back**, or use **Buttons taken away** in Combat+'s settings. **Explain statblock buttons** (Ctrl+P) lists every ability in an open statblock and why each has or hasn't a button.
 
 Nothing else about the ability is worked out: saves and damage are yours to run.
 

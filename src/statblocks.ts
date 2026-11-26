@@ -253,6 +253,19 @@ export class StatblockLinker {
   attacks: (statblock: HTMLElement) => boolean = () => false;
   /** Whether an ability has a button given it by hand (its name: one whose text names nothing the add-on reads). */
   own: (name: string) => boolean = () => false;
+  /** Whether an ability's button was taken away by hand (its name): none is put on it, anywhere. */
+  removed: (name: string) => boolean = () => false;
+  /** A button right-clicked: its menu to change it or take it away, at `x`, `y`. */
+  context: (link: SpellLink, how: { statblock: HTMLElement; x: number; y: number }) => void = () => {};
+  /** Takes away the buttons on show whose link `drop` picks (a spell's button taken away by hand). */
+  dropButtons(drop: (link: SpellLink) => boolean): void {
+    for (const b of Array.from(this.doc.querySelectorAll('.' + CAST_BTN))) {
+      const l = this.buttons.get(b); if (!l || !drop(l)) continue;
+      const row = b.parentElement?.classList.contains(ROW) ? b.parentElement : null;
+      b.remove();
+      if (row) row.replaceWith(...Array.from(row.childNodes));
+    }
+  }
   /** Each ability name in a statblock with no button, by its name's element: to give it one by hand (right-click). */
   private bare = new WeakMap<Element, { name: string; text: string }>();
   /** A statblock's button by its name ("Rend", "Bite"): its link, or null (no button by that name there). */
@@ -526,6 +539,12 @@ export class StatblockLinker {
       const sb = b.closest<HTMLElement>(STATBLOCK); const link = this.buttons.get(b);
       if (sb && link) this.cast(link, { shift: false, statblock: sb, x: e.clientX, y: e.clientY });
     });
+    // right-click: change it, or take it away
+    b.addEventListener('contextmenu', (e) => {
+      quiet(e);
+      const sb = b.closest<HTMLElement>(STATBLOCK); const link = this.buttons.get(b);
+      if (sb && link) this.context(link, { statblock: sb, x: e.clientX, y: e.clientY });
+    });
     b.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { const r = b.getBoundingClientRect(); open(e, r.left, r.bottom); } });
     parent.insertBefore(b, before);
     return b;
@@ -581,6 +600,13 @@ export class StatblockLinker {
       const attacksHere = units.map((u) => ({ name: u.name, text: u.text, e: abilityEntry(u.name, u.text) })).filter((u) => u.e?.plain).map((u) => ({ name: u.name, text: u.text }));
       for (const u of units) {
        try {
+        // (each one's name can be right-clicked: to give it a button by hand, change the one it has, or take it away)
+        if (u.anchor.instanceOf(Element)) { u.anchor.setAttribute('data-sfx-ability', u.name); this.bare.set(u.anchor, { name: u.name, text: u.text }); }
+        if (this.removed(u.name)) {
+          const prev = u.anchor.previousSibling;
+          // (a spell of that name keeps its own button: that's taken away as a spell's)
+          if (!(prev?.instanceOf(Element) && prev.classList.contains(CAST_BTN) && !prev.classList.contains('is-ability'))) { why.push(`${u.name}: no button (you took it away: right-click its name to put it back)`); continue; }
+        }
         if (/^multiattack$/i.test(u.name.trim())) {
           const seq = attacksOn ? multiOf(u.text, attacksHere) : [];
           const prev = u.anchor.previousSibling;
@@ -593,8 +619,6 @@ export class StatblockLinker {
           keep.add(this.put(parent, u.anchor, link, shownText(u.anchor) || u.name));
           continue;
         }
-        // (each one's name can be right-clicked to give it a button by hand, or change the one it has)
-        if (u.anchor.instanceOf(Element)) { u.anchor.setAttribute('data-sfx-ability', u.name); this.bare.set(u.anchor, { name: u.name, text: u.text }); }
         const ae = abilityEntry(u.name, u.text) ?? (this.own(u.name) ? { plain: undefined } : null);
         if (!ae) { why.push(`${u.name}: no button (no attack, save, damage or area found in its text: right-click its name to give it one)`); continue; }
         if (ae.plain && !attacksOn) { why.push(`${u.name}: no button (an attack, and attack buttons are off for this creature: rolling is off, or it's a player's and rolling is for NPCs only; and animations for attacks are off)`); continue; }
