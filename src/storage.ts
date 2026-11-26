@@ -10,7 +10,7 @@ export const STORAGE_TAG = 'spell-effect';
 export const SHAPES: readonly Shape[] = ['radius', 'emanation', 'cone', 'cube', 'line', 'wall'];
 const BLOCKS: readonly WallBlocks[] = ['none', 'sight', 'movement', 'solid'];
 /** The add-on's properties, without their "effect-" prefix. */
-const KEYS = ['area', 'size', 'width', 'angle', 'origin', 'lasting', 'attach', 'animation', 'colour', 'colour-outer', 'motion', 'push', 'count', 'chain', 'chain-range', 'summon', 'terrain', 'opacity', 'target', 'ring', 'round', 'walls', 'light', 'bright', 'dim', 'light-colour', 'menu', 'range', 'conditions', 'unit', 'teleport', 'look', 'draw', 'area-light', 'walls', 'players', 'tool'] as const;
+const KEYS = ['area', 'size', 'width', 'angle', 'origin', 'lasting', 'attach', 'animation', 'colour', 'colour-outer', 'motion', 'push', 'count', 'chain', 'chain-range', 'summon', 'terrain', 'terrain-air', 'opacity', 'target', 'ring', 'round', 'walls', 'light', 'bright', 'dim', 'light-colour', 'menu', 'range', 'conditions', 'unit', 'teleport', 'look', 'draw', 'area-light', 'walls', 'players', 'tool'] as const;
 type Key = (typeof KEYS)[number];
 export const prop = (k: Key): string => 'effect-' + k;
 
@@ -157,7 +157,7 @@ export function storedFrom(path: string, fm: Record<string, unknown>, resolve: (
   if (n('count') > 1) more.count = Math.round(n('count'));
   if (n('chain') > 0) { more.chain = Math.round(n('chain')); more.chainRange = scaled(n('chain-range') || 30, k); }
   if (yes(get(fm, 'summon'))) more.summon = true;
-  if (yes(get(fm, 'terrain'))) more.terrain = true;
+  { const tc = Number(get(fm, 'terrain')); if (tc > 2) more.terrain = tc; else if (yes(get(fm, 'terrain')) || tc === 2) more.terrain = true; if (more.terrain && yes(get(fm, 'terrain-air'))) more.terrainAir = true; }
   // (a note that says nothing of them: read from the spell's text instead; one that says "no": none)
   const said = (['push', 'count', 'chain', 'summon', 'terrain'] as const).some((key) => get(fm, key) !== undefined);
   return { path, name, area, ...(said ? { more } : {}), ...(typeof mo === 'string' && mo.trim() ? { motion: mo.trim().toLowerCase() } : {}), ...(file ? { file } : {}), ...(typeof col === 'string' ? { colour: col } : {}), ...(typeof col2 === 'string' ? { colour2: col2 } : {}), ...(op > 0 && op < 1 ? { alpha: op } : op > 1 && op < 100 ? { alpha: op / 100 } : {}), ...(image ? { image } : {}), ...(yes(get(fm, 'attach')) ? { attach: true } : {}), ...(light !== undefined ? { light } : {}), ...(yes(fm[prop('menu')]) ? { menu: true } : {}), ...(Number(get(fm, 'range')) > 0 ? { range: scaled(Number(get(fm, 'range')), k) } : {}), ...(listOf(get(fm, 'conditions')) ? { conditions: listOf(get(fm, 'conditions'))! } : {}), ...(get(fm, 'teleport') !== undefined && Number.isFinite(Number(get(fm, 'teleport'))) ? { teleport: scaled(Math.max(0, Number(get(fm, 'teleport'))), k) } : {}), ...(typeof get(fm, 'look') === 'string' ? { look: String(get(fm, 'look')).trim().toLowerCase() === 'none' ? '' : String(get(fm, 'look')).trim().toLowerCase() } : {}), ...atlasFrom(fm) };
@@ -189,7 +189,7 @@ export function writeDefaults(fm: Record<string, unknown>, s: { area: Area; file
   if (s.more) {
     // (each one said, so that what its text says isn't read back in over a choice to turn it off)
     set('push', s.more.push ?? 0); set('count', s.more.count ?? 1); set('chain', s.more.chain ?? 0);
-    set('chain-range', s.more.chain ? s.more.chainRange : undefined); set('summon', !!s.more.summon); set('terrain', !!s.more.terrain);
+    set('chain-range', s.more.chain ? s.more.chainRange : undefined); set('summon', !!s.more.summon); set('terrain', typeof s.more.terrain === 'number' && s.more.terrain > 2 ? s.more.terrain : !!s.more.terrain); set('terrain-air', s.more.terrain && s.more.terrainAir ? true : undefined);
   }
   set('opacity', s.alpha !== undefined && s.alpha < 1 ? s.alpha : undefined);
   set('attach', s.attach ? true : undefined);

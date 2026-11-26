@@ -8,7 +8,7 @@ import { jb2aFiles, fetchJb2a, fetchAll } from './jb2a';
 import { measureArt, hasReach, type Trim } from './trim';
 import { kitOf, PixiPainter, forgetBlobs, type AimLook } from './pixi';
 import { areaOf as atlasAreaOf, areaKey, effectFromArea, lookOf, areaCarries, atlasLightOf, toolShapeOf, AREA_LOOKS, LOOK_NAMES, LOOK_COLOURS, type AreaShape, type AreaLook } from './measures';
-import { moreOf, countAt, hasMore, type More } from './more';
+import { moreOf, countAt, hasMore, terrainCost, type More } from './more';
 import { fiveEFile } from './fives';
 import { attackFile, MELEE_DEFAULTS, MELEE_NAMES, RANGED_DEFAULTS, RANGED_NAMES } from './attacks';
 import { paletteOf } from './elements';
@@ -184,7 +184,7 @@ function inUnitsNow(r: Remembered | undefined): Remembered | undefined {
 /** The conditions part of an effect made from a pending spell. */
 const condsOf = (p: Pending): Partial<Effect> => {
   const a = p.atlas ?? {};
-  return { ...(p.roll ? { roll: p.roll } : {}), ...(p.more?.push ? { push: p.more.push } : {}), ...(p.more?.terrain ? { terrain: true } : {}), ...(p.motion ? { motion: p.motion } : {}), ...(p.conditions?.length ? { conditions: [...p.conditions] } : {}), ...(p.look ? { look: p.look } : {}), ...(a.draw ? { draw: a.draw } : {}), ...(a.areaLight ? { areaLight: a.areaLight } : {}), ...(a.throughWalls ? { throughWalls: true } : {}), ...(a.hidden ? { hidden: true } : {}) };
+  return { ...(p.roll ? { roll: p.roll } : {}), ...(p.more?.push ? { push: p.more.push } : {}), ...(p.more?.terrain ? { terrain: p.more.terrain, ...(p.more.terrainAir ? { terrainAir: true } : {}) } : {}), ...(p.motion ? { motion: p.motion } : {}), ...(p.conditions?.length ? { conditions: [...p.conditions] } : {}), ...(p.look ? { look: p.look } : {}), ...(a.draw ? { draw: a.draw } : {}), ...(a.areaLight ? { areaLight: a.areaLight } : {}), ...(a.throughWalls ? { throughWalls: true } : {}), ...(a.hidden ? { hidden: true } : {}) };
 };
 
 /** What casting a spell from a statblock's menu does, in a few words (`who`: its caster, when known). */
@@ -698,6 +698,9 @@ export default class AtlasSpellEffects extends Plugin {
     window.clearTimeout(this.condTimer);
     this.placing?.stop();
     if (this.loop) window.cancelAnimationFrame(this.loop);
+    // Atlas's movement ruler as it was
+    for (const undo of this.rulerUndo) undo();
+    this.rulerUndo = [];
     for (const p of this.painters.values()) p.stop();
     this.painters.clear();
     for (const p of this.pixiPainters.values()) p.stop();
@@ -1000,7 +1003,9 @@ export default class AtlasSpellEffects extends Plugin {
    * climbing or burrowing one for `mode` when it has one; or six squares when it says none.
    */
   speedOf(tab: Tab, tokenId: string | undefined, mode?: Walk['mode']): number {
-    const fallback = squares(6);
+    // (one that states none: the collection's speed for such creatures, as Atlas's movement rules have it)
+    const mv = this.collectionValue(tab, 'movement') as { speed?: unknown } | undefined;
+    const fallback = typeof mv?.speed === 'number' && mv.speed > 0 ? mv.speed : squares(6);
     const tok = tokenId ? tab.store.getState()?.objects?.tokens?.[tokenId] as Record<string, unknown> | undefined : undefined;
     const texts: string[] = [];
     const path = typeof tok?.['statblockPath'] === 'string' ? tok['statblockPath'] : '';
@@ -1699,14 +1704,195 @@ export default class AtlasSpellEffects extends Plugin {
     const dist = m?.unitDistance;
     const per = typeof dist === 'number' && Number.isFinite(dist) && dist > 0 ? dist : 5;
     this.readSystem(m, per);
-    const gt = field(call(t.renderer, 'getGridOptions'), 'type') ?? (t.store.getState()?.grid as { type?: string } | undefined)?.type;
+    const g = (t.store.getState()?.grid ?? {}) as { type?: string; enabled?: boolean };
+    const gt = field(call(t.renderer, 'getGridOptions'), 'type') ?? g.type;
+    this.hex = gt === 'hex-horizontal' ? 'flat' : gt === 'hex-vertical' ? 'pointy' : null;
     const d = m?.diagonalRule;
-    this.diagonal = typeof gt === 'string' && gt.startsWith('hex') ? 'euclidean' : d === 'alternating' || d === 'euclidean' || d === 'manhattan' ? d : 'equidistant';
+    this.diagonal = d === 'alternating' || d === 'euclidean' || d === 'manhattan' ? d : 'equidistant';
     return { cell, feetPerCell: per };
   }
 
-  /** How the open map counts diagonal steps (Atlas's collection setting; a hex grid: straight across). */
+  /** How the open map counts diagonal steps (Atlas's collection setting; a hex grid counts hex steps). */
   diagonal: 'equidistant' | 'alternating' | 'euclidean' | 'manhattan' = 'equidistant';
+  /** The open map's hex grid ('flat': columns, Atlas's hex-horizontal; 'pointy': rows), or null for squares. */
+  hex: 'flat' | 'pointy' | null = null;
+  /** When an area catches a creature (Atlas's collection setting): half a square of its space covered, its middle, or any of it. */
+  cellRule: 'half' | 'centre' | 'any' = 'half';
+
+  /** Whether difficult terrain costs a move double in the collection's rules (Atlas's Difficult terrain setting). */
+  difficultDouble = false;
+
+  /**
+   * What moving through a spot costs a foot, in feet: 1, or more in difficult terrain: Atlas's map features marked
+   * difficult (double, where the collection's rules price it), and lasting spells that make it (Spike Growth: double;
+   * Plant Growth: 4 feet a foot). Where they overlap, the dearest.
+   */
+  terrainAt(t: Tab, p: Point, who: TerrainWho = {}): number {
+    let most = 1;
+    if (who.free) return 1;
+    const st = t.store.getState?.();
+    const lvl = (st as { viewedLevel?: string } | undefined)?.viewedLevel;
+    // (a flying creature passes over what's on the ground: Atlas's rubble, plants, grease)
+    if (this.difficultDouble && !who.fly) {
+      // (not those Combat+ made for a spell: the spell's own cost counts, below)
+      const mine = new Set(this.effects.map((e) => e.terrainId).filter(Boolean));
+      for (const [fid, f] of Object.entries((st?.objects?.mapFeatures ?? {}) as Record<string, { polygon?: Point[]; terrain?: { difficult?: boolean }; level?: string }>)) {
+        if (mine.has(fid) || !f?.terrain?.difficult || !Array.isArray(f.polygon) || f.polygon.length < 3 || (f.level && lvl && f.level !== lvl)) continue;
+        if (inPolygon(p, f.polygon)) { most = Math.max(most, 2); break; }
+      }
+    }
+    const map = this.mapOf(t);
+    for (const e of this.effects) {
+      if (e.map !== map || !e.terrain || !e.lasting || e.id === 'preview') continue;
+      if (who.fly && !e.terrainAir) continue;
+      if (who.webs && /\bweb/i.test(e.name)) continue;
+      const c = e.terrain === true ? (this.difficultDouble ? 2 : 1) : terrainCost(e.terrain);
+      if (c <= most) continue;
+      const pieces = e.shape === 'wall' ? wallPieces(e, this.scaleOf(t), e.token ? this.tokenOf(t, e.token) : null, !!e.file) : undefined;
+      if (hitEffect(e, this.boxFor(e, t), p, pieces)) most = c;
+    }
+    return most;
+  }
+
+  /**
+   * What difficult terrain costs a creature on this move: a flying move passes over the ground's; nothing for one whose
+   * statblock says it ignores difficult terrain ("ignores difficult terrain", "isn't slowed by…", Land's Stride),
+   * one with Freedom of Movement on it, or a move set so by hand; webs nothing for Spider Climb or Web Walker.
+   */
+  terrainWho(t: Tab, token: string | undefined, sb: HTMLElement | null, walk?: Walk): TerrainWho {
+    const texts: string[] = [];
+    if (sb?.textContent) texts.push(sb.textContent);
+    const tok = token ? t.store.getState()?.objects?.tokens?.[token] as Record<string, unknown> | undefined : undefined;
+    const path = typeof tok?.['statblockPath'] === 'string' ? tok['statblockPath'] : '';
+    const f = path ? this.app.vault.getAbstractFileByPath(path) : null;
+    if (f instanceof TFile) { const fm = this.app.metadataCache.getFileCache(f)?.frontmatter; if (fm) texts.push(JSON.stringify(fm)); }
+    const said = texts.join('\n');
+    const map = this.mapOf(t);
+    // up in the air: its token raised above the floor, or with a condition that makes it airborne (Flying)
+    const conds = Array.isArray(tok?.['conditions']) ? (tok!['conditions'] as unknown[]).map(String) : [];
+    const defs = conds.length ? this.conditionDefs(t) as { id: string; name: string; effect?: string }[] : [];
+    const aloft = (typeof tok?.['elevation'] === 'number' && (tok['elevation'] as number) > 0) || conds.some((id) => { const d = defs.find((x) => x.id === id); return d?.effect === 'airborne' || /^(?:flying|airborne|levitating)$/i.test(d?.name ?? ''); });
+    const freedom = !!token && this.effects.some((e) => e.map === map && e.token === token && /\bfreedom of movement\b/i.test(e.name));
+    // (its own: not "the target ignores difficult terrain", an ally's, or another creature's)
+    const IGN = /\b(?:ignores?|ignoring)\s+(?:all\s+)?(?:nonmagical\s+)?difficult terrain\b|\b(?:isn['’]t|is not|aren['’]t|are not)\s+(?:slowed|affected|hindered)\s+by\s+(?:nonmagical\s+)?difficult terrain\b|\bdifficult terrain\s+(?:doesn['’]t|does not)\s+(?:cost|slow)\b|\bLand['’]s Stride\b|\bcosts? (?:it|them|you) no extra movement\b/gi;
+    const own = [...said.matchAll(IGN)].some((m) => !/\b(?:target|targets|ally|allies|creatures?|others|you|your)\b[^.]{0,20}$/i.test(said.slice(Math.max(0, (m.index ?? 0) - 30), m.index)));
+    const free = !!walk?.free || freedom || own;
+    const webs = /\b(?:Spider Climb|Web Walker|Web Sense|ignores movement restrictions caused by webbing)\b/i.test(said);
+    return { ...(walk?.mode === 'fly' || aloft ? { fly: true } : {}), ...(free ? { free: true } : {}), ...(webs ? { webs: true } : {}) };
+  }
+
+  /** Atlas's movement rulers Combat+ prices terrain for, and how to put each back. */
+  private rulers = new WeakSet<object>();
+  private rulerUndo: (() => void)[] = [];
+
+  /**
+   * Atlas's movement ruler (dragging a token by hand), taught what Atlas's own rules can't say: terrain dearer than
+   * double (Plant Growth: 4 ft a foot), and creatures that pay less (flying, raised off the floor or airborne, over
+   * the ground's; a statblock that ignores it; Spider Climb in webs; Freedom of Movement). What Atlas counts stays
+   * Atlas's; only the difference is added, so its ruler, its movement steps and the move counted for the turn agree.
+   */
+  hookRuler(t: Tab): void {
+    const dr = field(call(t.renderer, 'getTokenRenderer'), 'dragRuler') as { cost?: (...a: unknown[]) => number; tokenId?: string | null } | undefined;
+    if (!dr || typeof dr.cost !== 'function' || this.rulers.has(dr)) return;
+    this.rulers.add(dr);
+    const own = Object.prototype.hasOwnProperty.call(dr, 'cost') ? dr.cost : undefined;
+    const orig = dr.cost.bind(dr);
+    dr.cost = (points: unknown, grid: unknown, settings: unknown, size?: unknown) => {
+      const base = orig(points, grid, settings, size);
+      try { return Math.max(0, base + this.rulerExtra(t, dr.tokenId ?? null, points as Point[], typeof size === 'number' ? size : undefined)); } catch { return base; }
+    };
+    this.rulerUndo.push(() => { if (own) dr.cost = own; else delete dr.cost; this.rulers.delete(dr); });
+  }
+
+  /** What Combat+ adds to Atlas's ruler for a drag (cells; below 0: less): its own price of the path, less Atlas's. */
+  rulerExtra(t: Tab, token: string | null, points: readonly Point[], size?: number): number {
+    if (!token || !Array.isArray(points) || points.length < 2) return 0;
+    const map = this.mapOf(t);
+    const st = t.store.getState?.();
+    const feats = Object.values((st?.objects?.mapFeatures ?? {}) as Record<string, { terrain?: { difficult?: boolean } }>);
+    const spells = this.effects.filter((e) => e.map === map && !!e.terrain && e.lasting && e.id !== 'preview');
+    const atlasHas = this.difficultDouble && feats.some((f) => !!f?.terrain?.difficult);
+    if (!atlasHas && !spells.length) return 0;
+    const who = this.terrainWho(t, token, null);
+    // (nothing Atlas counts otherwise: no one ignoring it, no terrain dearer than double)
+    if (!who.fly && !who.free && !who.webs && !spells.some((e) => terrainCost(e.terrain) > 2 || (e.terrain === true && !this.difficultDouble))) return 0;
+    const cell = this.scaleOf(t).cell;
+    const tok = st?.objects?.tokens?.[token];
+    const r = (Math.max(1, Math.round(typeof size === 'number' && size > 0 ? size : cellsAcross(tok?.size))) * cell) / 2;
+    const mine = new Map<string, number>(), atlas = new Map<string, number>();
+    const memo = (m: Map<string, number>, f: (p: Point) => number) => (p: Point) => { const k = `${Math.round(p.x)},${Math.round(p.y)}`; let v = m.get(k); if (v === undefined) { v = f(p); m.set(k, v); } return v; };
+    const polys = this.difficultDouble ? Object.values((st?.objects?.mapFeatures ?? {}) as Record<string, { polygon?: Point[]; terrain?: { difficult?: boolean } }>).filter((f) => f?.terrain?.difficult && Array.isArray(f.polygon) && f.polygon.length >= 3) : [];
+    const ours = memo(mine, (p) => this.terrainAt(t, p, who));
+    const theirs = memo(atlas, (p) => polys.some((f) => inPolygon(p, f.polygon!)) ? 2 : 1);
+    let diff = 0;
+    for (let i = 1; i < points.length; i++) diff += this.moveCost(t, points[i - 1], points[i], r, ours) - this.moveCost(t, points[i - 1], points[i], r, theirs);
+    return diff / cell;
+  }
+
+  /**
+   * What a creature's move straight from `a` to `b` costs (world units), as Atlas's movement ruler counts it: its
+   * length by the diagonal rule, and each step into difficult terrain (any square of its space) what it costs again
+   * (Plant Growth: three times again). `r`: half the creature's size. `at`: what a spot costs (kept, as it's asked often).
+   */
+  moveCost(t: Tab, a: Point, b: Point, r: number, at: (p: Point) => number = (p) => this.terrainAt(t, p)): number {
+    const cell = this.scaleOf(t).cell;
+    const length = this.ruleDist(t, b.x - a.x, b.y - a.y, cell);
+    if (!(cell > 0)) return length;
+    let extra = 0;
+    if (this.hex) {
+      const steps = Math.round(length / cell);
+      for (let k = 1; k <= steps; k++) {
+        const q = this.hexCentre(t, { x: a.x + (b.x - a.x) * k / steps, y: a.y + (b.y - a.y) * k / steps });
+        const m = at(q); if (m > 1) extra += (m - 1) * cell;
+      }
+      return length + extra;
+    }
+    const cols = Math.round((b.x - a.x) / cell), rows = Math.round((b.y - a.y) / cell);
+    const steps = Math.max(Math.abs(cols), Math.abs(rows));
+    if (!steps) return length;
+    const n = Math.max(1, Math.round((2 * r) / cell));
+    const share = length / steps;
+    let col = 0, row = 0, diagonals = 0;
+    for (let k = 1; k <= steps; k++) {
+      const nc = Math.round((cols * k) / steps), nr = Math.round((rows * k) / steps);
+      const diagonal = nc !== col && nr !== row;
+      let cost = share;
+      if (this.diagonal === 'alternating') cost = (diagonal && diagonals % 2 === 1 ? 2 : 1) * cell;
+      else if (this.diagonal === 'manhattan') cost = (diagonal ? 2 : 1) * cell;
+      else if (this.diagonal === 'equidistant') cost = cell;
+      if (diagonal) diagonals++;
+      col = nc; row = nr;
+      // the squares of its space there: the dearest of them
+      const cx = a.x + col * cell, cy = a.y + row * cell;
+      let m = 1;
+      for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) m = Math.max(m, at({ x: cx - r + (i + 0.5) * cell, y: cy - r + (j + 0.5) * cell }));
+      if (m > 1) extra += (m - 1) * cost;
+    }
+    return length + extra;
+  }
+
+  /** Whether the map has a grid at all (Atlas's Grid on): without one nothing snaps. */
+  gridOn(t: Tab): boolean { return (t.store.getState()?.grid as { enabled?: boolean } | undefined)?.enabled !== false; }
+  /** Whether tokens snap to the grid in Atlas (its Snap to grid), turned round while Alt is held. */
+  tokenSnap(t: Tab, ev?: { altKey?: boolean } | null): boolean {
+    const g = t.store.getState()?.grid as { enabled?: boolean; snapToGrid?: boolean } | undefined;
+    if (g?.enabled === false) return false;
+    return (g?.snapToGrid !== false) !== !!ev?.altKey;
+  }
+  /** The middle of the hex nearest `p` (Atlas's own hex layout: its origin the top-left of hex 0,0's box). */
+  hexCentre(t: Tab, p: Point): Point {
+    const g = (t.store.getState()?.grid ?? {}) as { offsetX?: number; offsetY?: number };
+    const size = this.scaleOf(t).cell, rad = size / Math.sqrt(3), pointy = this.hex === 'pointy';
+    const ox = (g.offsetX ?? 0) + (pointy ? size : 2 * rad) / 2, oy = (g.offsetY ?? 0) + (pointy ? 2 * rad : size) / 2;
+    const dx = p.x - ox, dy = p.y - oy;
+    const fq = pointy ? ((Math.sqrt(3) / 3) * dx - dy / 3) / rad : ((2 / 3) * dx) / rad;
+    const fr = pointy ? ((2 / 3) * dy) / rad : (-dx / 3 + (Math.sqrt(3) / 3) * dy) / rad;
+    const fs = -fq - fr;
+    let q = Math.round(fq), r = Math.round(fr); const s = Math.round(fs);
+    const qd = Math.abs(q - fq), rd = Math.abs(r - fr), sd = Math.abs(s - fs);
+    if (qd > rd && qd > sd) q = -r - s; else if (rd > sd) r = -q - s;
+    return pointy ? { x: ox + size * (q + r / 2), y: oy + 1.5 * rad * r } : { x: ox + 1.5 * rad * q, y: oy + size * (r + q / 2) };
+  }
 
   /**
    * How far apart two points are as the map's rules count it (world units): on a square grid a diagonal square counts
@@ -1715,6 +1901,13 @@ export default class AtlasSpellEffects extends Plugin {
   ruleDist(t: Tab, dx: number, dy: number, cellSize?: number): number {
     const cell = cellSize ?? this.scaleOf(t).cell;
     const whole = (v: number) => { const r = Math.round(v); return Math.abs(v - r) < 1e-3 ? r : v; };
+    if (this.hex) {
+      // hex steps, as Atlas counts them: the cube distance (whole between hex middles)
+      const rad = cell / Math.sqrt(3), pointy = this.hex === 'pointy';
+      const q = pointy ? ((Math.sqrt(3) / 3) * dx - dy / 3) / rad : ((2 / 3) * dx) / rad;
+      const r = pointy ? ((2 / 3) * dy) / rad : (-dx / 3 + (Math.sqrt(3) / 3) * dy) / rad;
+      return whole((Math.abs(q) + Math.abs(r) + Math.abs(q + r)) / 2) * cell;
+    }
     const a = whole(Math.abs(dx) / cell), b = whole(Math.abs(dy) / cell);
     const hi = Math.max(a, b), lo = Math.min(a, b);
     const cells = this.diagonal === 'euclidean' ? Math.hypot(a, b) : this.diagonal === 'manhattan' ? a + b : this.diagonal === 'alternating' ? hi + (Number.isInteger(lo) ? Math.floor(lo / 2) : lo / 2) : hi;
@@ -1722,11 +1915,12 @@ export default class AtlasSpellEffects extends Plugin {
   }
 
   /** The farthest point toward p that is within max of c, as the map's rules count it. */
-  clampRule(t: Tab, c: Point, p: Point, max: number): Point {
+  clampRule(t: Tab, c: Point, p: Point, max: number, dist?: (q: Point) => number): Point {
     const cell = this.scaleOf(t).cell;
-    if (this.ruleDist(t, p.x - c.x, p.y - c.y, cell) <= max + 0.5) return p;
+    const far = dist ?? ((q: Point) => this.ruleDist(t, q.x - c.x, q.y - c.y, cell));
+    if (far(p) <= max + 0.5) return p;
     let lo = 0, hi = 1;
-    for (let i = 0; i < 24; i++) { const m = (lo + hi) / 2; if (this.ruleDist(t, (p.x - c.x) * m, (p.y - c.y) * m, cell) <= max) lo = m; else hi = m; }
+    for (let i = 0; i < 24; i++) { const m = (lo + hi) / 2; if (far({ x: c.x + (p.x - c.x) * m, y: c.y + (p.y - c.y) * m }) <= max) lo = m; else hi = m; }
     return { x: c.x + (p.x - c.x) * lo, y: c.y + (p.y - c.y) * lo };
   }
 
@@ -1752,8 +1946,8 @@ export default class AtlasSpellEffects extends Plugin {
   /** A reach round a point drawn as the map's rules make it: a square where diagonals count as one, a diamond where they count as two, else a circle. */
   reachShape(t: Tab, base: Omit<Effect, 'shape' | 'size'>, radius: number): Effect {
     this.scaleOf(t);
-    if (this.diagonal === 'equidistant') return { ...base, shape: 'cube', size: 2 * radius };
-    if (this.diagonal === 'manhattan') return { ...base, shape: 'cube', size: radius * Math.SQRT2, spin: Math.PI / 4 };
+    if (!this.hex && this.diagonal === 'equidistant') return { ...base, shape: 'cube', size: 2 * radius };
+    if (!this.hex && this.diagonal === 'manhattan') return { ...base, shape: 'cube', size: radius * Math.SQRT2, spin: Math.PI / 4 };
     return { ...base, shape: 'radius', size: radius };
   }
 
@@ -1769,10 +1963,13 @@ export default class AtlasSpellEffects extends Plugin {
     const bands = (m.rangeBands ?? []).filter((b) => b && typeof b.name === 'string' && b.maxSquares > 0);
     const cone = typeof m.coneAngle === 'number' && m.coneAngle > 0 && m.coneAngle < 180 ? m.coneAngle : CONE_ANGLE;
     const coneRound = m.coneEnd !== 'flat';
-    const key = JSON.stringify([per, unit, cone, coneRound, bands]);
+    const name = typeof m.unitName === 'string' ? m.unitName.trim() : '';
+    this.cellRule = m.areaCellRule === 'centre' || m.areaCellRule === 'any' ? m.areaCellRule : 'half';
+    this.difficultDouble = m.difficultTerrain === 'double';
+    const key = JSON.stringify([per, unit, cone, coneRound, bands, name]);
     if (key === this.systemKey) return;
     this.systemKey = key;
-    setRules({ unit, perSquare: per, bands: bands.map((b) => ({ name: b.name, squares: b.maxSquares })) });
+    setRules({ unit, perSquare: per, bands: bands.map((b) => ({ name: b.name, squares: b.maxSquares })), ...(name ? { name } : {}) });
     // saved spells read again in this game system's units (one saved in another's: the same squares)
     window.setTimeout(() => this.indexSpells(), 0);
     this.atlasSystem = { perSquare: per, unit: unitLabel(), cone, coneRound, bands: bands.map((b) => b.name) };
@@ -1826,7 +2023,9 @@ export default class AtlasSpellEffects extends Plugin {
 
   /** A point on the grid's corners when snapping is on. */
   snapPoint(t: Tab, p: Point, ev?: { altKey?: boolean } | null): Point {
-    if (!this.snapOn(ev)) return p;
+    if (!this.snapOn(ev) || !this.gridOn(t)) return p;
+    this.scaleOf(t);
+    if (this.hex) return this.hexCentre(t, p);
     const g = t.store.getState()?.grid ?? {};
     return snapCorner(p, this.scaleOf(t).cell, { x: g.offsetX ?? 0, y: g.offsetY ?? 0 });
   }
@@ -2157,6 +2356,7 @@ export default class AtlasSpellEffects extends Plugin {
     this.safely('markers', () => this.hideMarkers());
     this.safely('walls', () => this.syncWalls());
     this.safely('terrain and summoned things', () => this.syncMade());
+    this.safely('the movement ruler', () => { for (const t of this.atlasTabs()) this.hookRuler(t); });
   }
 
   /** The effects drawn in each Atlas tab's canvas. */
@@ -2350,6 +2550,27 @@ export default class AtlasSpellEffects extends Plugin {
     try { return (a.getCollectionSettings(id).conditions ?? []).filter((c) => c && typeof c.id === 'string' && typeof c.name === 'string'); } catch { return []; }
   }
 
+  /** One of the open map's collection settings (Atlas's), or undefined. */
+  collectionValue(t: Tab | null, key: string): unknown {
+    if (!t) return undefined;
+    const id = this.collectionOf(t); const a = this.assetsOf(t);
+    try { return id && a ? a.getCollectionSettings(id)[key] : undefined; } catch { return undefined; }
+  }
+
+  /**
+   * A token's hit points among its Atlas resources: the collection's resource for them (its field `hp`, or named
+   * HP, Hit Points or Health), and whether it fills up as damage is taken (marked, as Daggerheart's are) or drains.
+   */
+  hpOf(t: Tab, res: Record<string, { current: number; max: number }>): { key: string; fills: boolean } | null {
+    const defs = this.collectionValue(t, 'resources');
+    if (Array.isArray(defs)) {
+      const d = (defs as { key?: string; name?: string; field?: string; direction?: string }[]).find((x) => x && typeof x.key === 'string' && res[x.key] && (/^(hp|hit_?points|health)$/i.test(x.field ?? '') || /^(hp|hit points|health)$/i.test((x.name ?? '').trim())));
+      if (d?.key) return { key: d.key, fills: d.direction === 'fills' };
+    }
+    const k = ['hp', 'health', 'hitpoints'].find((x) => res[x]);
+    return k ? { key: k, fills: false } : null;
+  }
+
   /** The game system a tab's map plays by (Atlas's preset id for it, from its collection), or "" when it can't tell. */
   systemOf(t: Tab | null = this.atlasTab()): string {
     if (!t) return '';
@@ -2412,6 +2633,31 @@ export default class AtlasSpellEffects extends Plugin {
     return false;
   }
 
+  /**
+   * Whether an area catches a creature, as the collection's area rule says (Atlas's "an area covers a cell when"):
+   * each square of its space is caught when half of it is covered (the default), its middle is, or any of it is.
+   */
+  caughtBy(e: Effect, b: ReturnType<typeof boxOf>, at: { x: number; y: number; r: number }, cell: number, pieces?: ReturnType<typeof wallPieces>): boolean {
+    const hit = (p: Point) => hitEffect(e, b, p, pieces);
+    const n = Math.max(1, Math.round((2 * at.r) / cell));
+    const side = (2 * at.r) / n;
+    // (a wall or a creature smaller than a square: any of it, as before)
+    const rule = e.shape === 'wall' ? 'any' : this.cellRule;
+    const k = rule === 'centre' ? 1 : 5;
+    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+      const x0 = at.x - at.r + i * side, y0 = at.y - at.r + j * side;
+      if (k === 1) { if (hit({ x: x0 + side / 2, y: y0 + side / 2 })) return true; continue; }
+      // a square's spots: 5 × 5, from just inside its edges
+      let got = 0;
+      for (let u = 0; u < k; u++) for (let v = 0; v < k; v++) {
+        const p = { x: x0 + side * (0.04 + 0.92 * u / (k - 1)), y: y0 + side * (0.04 + 0.92 * v / (k - 1)) };
+        if (hit(p)) { got++; if (rule === 'any') return true; }
+      }
+      if (rule === 'half' && got * 2 >= k * k) return true;
+    }
+    return false;
+  }
+
   /** The tokens inside an effect on a tab's map now (any part of their space: their middle, or round it). */
   insideOf(t: Tab, e: Effect): string[] {
     const tokens = t.store.getState()?.objects?.tokens ?? {};
@@ -2429,8 +2675,7 @@ export default class AtlasSpellEffects extends Plugin {
       // a cone, a line or an aura from its caster: the others in it, not the caster
       if (tok.offMap || id === e.caster || (e.shape === 'emanation' && id === e.token)) continue;
       const at = this.tokenOf(t, id); if (!at) continue;
-      const pts = [{ x: at.x, y: at.y }, ...Array.from({ length: 8 }, (_, i) => ({ x: at.x + Math.cos(i * Math.PI / 4) * at.r * 0.6, y: at.y + Math.sin(i * Math.PI / 4) * at.r * 0.6 }))];
-      if (pts.some((p) => hitEffect(e, b, p, pieces))) out.push(id);
+      if (this.caughtBy(e, b, at, s.cell, pieces)) out.push(id);
     }
     return out;
   }
@@ -2603,11 +2848,14 @@ export default class AtlasSpellEffects extends Plugin {
   }
 
   /** A token of this size put on the grid as Atlas has them (an odd-sized one's middle in a square's, an even one's on a corner). */
-  private gridSpot(t: Tab, q: Point, r: number): Point {
-    if (!this.settings.snap) return q;
+  private gridSpot(t: Tab, q: Point, r: number, ev?: { altKey?: boolean } | null): Point {
+    // as Atlas puts tokens down: its Snap to grid (Alt the other way), on its grid's squares or hexes
+    if (!this.tokenSnap(t, ev)) return q;
     const cell = this.scaleOf(t).cell, cells = Math.max(1, Math.round((2 * r) / cell));
-    if (cells % 2 === 0) return this.snapPoint(t, q);
-    const c = this.snapPoint(t, { x: q.x - cell / 2, y: q.y - cell / 2 });
+    if (this.hex) return this.hexCentre(t, q);
+    const g = t.store.getState()?.grid ?? {}; const off = { x: g.offsetX ?? 0, y: g.offsetY ?? 0 };
+    if (cells % 2 === 0) return snapCorner(q, cell, off);
+    const c = snapCorner({ x: q.x - cell / 2, y: q.y - cell / 2 }, cell, off);
     return { x: c.x + cell / 2, y: c.y + cell / 2 };
   }
 
@@ -2943,8 +3191,8 @@ export default class AtlasSpellEffects extends Plugin {
       // Legendary Resistance left today
       if (stats?.legendary) stats.legendary = Math.max(0, stats.legendary - (this.settings.legendary[`${map}|${k}`] ?? 0));
       const hp = ((t.store.getState()?.objects?.tokens?.[k] as { resources?: Record<string, { current: number; max: number }> } | undefined)?.resources ?? {});
-      const hk = ['hp', 'health', 'hitpoints'].find((x) => hp[x]);
-      const hurt = !!hk && hp[hk].max > 0 && hp[hk].current < hp[hk].max;
+      const hk = this.hpOf(t, hp);
+      const hurt = !!hk && hp[hk.key].max > 0 && (hk.fills ? hp[hk.key].current > 0 : hp[hk.key].current < hp[hk.key].max);
       const own = this.settings.rollWho === 'npcs' && this.isPC(t, k);
       return { id: k, name: this.tokenName(t, k), stats, conds: this.condNames(t, k), ...(feet !== undefined ? { feet: Math.round(feet * 10) / 10 } : {}), ...(hurt ? { hurt } : {}), ...(own ? { own } : {}) };
     }));
@@ -3009,15 +3257,17 @@ export default class AtlasSpellEffects extends Plugin {
       if (r.applied || !(r.damage > 0 || (r.temp ?? 0) > 0)) continue;
       const tok = toks[r.id] as { resources?: Record<string, { current: number; max: number }> } | undefined;
       const res = { ...(tok?.resources ?? {}) };
-      const key = ['hp', 'health', 'hitpoints'].find((k) => res[k]);
+      const hpr = this.hpOf(t, res); const key = hpr?.key;
       const tmp = this.tempOf(t, r.id);
       let left = r.damage, temp = tmp.value;
       // temporary hit points go first; new ones replace old if more (they don't add up) (healing never touches them)
       if (left > 0 && temp > 0 && r.outcome !== 'heal') { const used = Math.min(temp, left); temp -= used; left -= used; }
       if ((r.temp ?? 0) > temp) temp = r.temp ?? 0;
       if (left > 0 && !key) { missing++; continue; }
-      if (key && left > 0 && r.outcome === 'heal') { res[key] = { ...res[key], current: Math.min(res[key].max, res[key].current + left) }; left = 0; }
-      if (key && left > 0) res[key] = { ...res[key], current: Math.max(0, res[key].current - left) };
+      // (hit points that fill as they're marked, as Daggerheart's do: damage adds, healing takes away)
+      const up = (n: number) => Math.min(res[key!].max, res[key!].current + n), down = (n: number) => Math.max(0, res[key!].current - n);
+      if (key && left > 0 && r.outcome === 'heal') { res[key] = { ...res[key], current: hpr!.fills ? down(left) : up(left) }; left = 0; }
+      if (key && left > 0) res[key] = { ...res[key], current: hpr!.fills ? up(left) : down(left) };
       // the bar: full when given, emptying as they're used; gone (no maximum) once none are left
       if (temp !== tmp.value || (r.temp ?? 0) > 0) res[tmp.key] = temp > 0 ? { current: temp, max: (r.temp ?? 0) >= temp && (r.temp ?? 0) > tmp.value ? temp : Math.max(tmp.max, temp) } : { current: 0, max: 0 };
       changes.push({ id: r.id, changes: { resources: res } });
@@ -3608,7 +3858,7 @@ export default class AtlasSpellEffects extends Plugin {
     const reach = pending.teleport ?? 0;
     let caster: { id: string; x: number; y: number; r: number } | null = null;
     const goes = walk ? `${pending.walk?.mode === 'fly' ? 'flies' : pending.walk?.mode === 'swim' ? 'swims' : pending.walk?.mode === 'climb' ? 'climbs' : pending.walk?.mode === 'burrow' ? 'burrows' : 'moves'}` : 'teleports';
-    const say = () => { hint.textContent = `${pending.name}: ` + (caster ? `click where ${this.tokenName(tab, caster.id)} ${goes} to (up to ${Math.round(reach * 10) / 10} ${unitLabel()})${pending.walk?.then ? `, then its ${pending.walk.count && pending.walk.count > 1 ? `${pending.walk.count} ` : ''}${pending.walk.then} attack${pending.walk.count && pending.walk.count > 1 ? 's' : ''}` : ''}` : `click the token that ${goes}`) + '   ·   Esc to stop'; };
+    const say = () => { hint.textContent = `${pending.name}: ` + (caster ? `click where ${this.tokenName(tab, caster.id)} ${goes} to (up to ${Math.round(reach * 10) / 10} ${unitLabel()}${rough ? ', difficult terrain costing more' : ''})${pending.walk?.then ? `, then its ${pending.walk.count && pending.walk.count > 1 ? `${pending.walk.count} ` : ''}${pending.walk.then} attack${pending.walk.count && pending.walk.count > 1 ? 's' : ''}` : ''}` : `click the token that ${goes}`) + '   ·   Esc to stop'; };
     const toWorld = (e: PointerEvent | MouseEvent): Point | null => {
       const r = tab.canvas.getBoundingClientRect();
       if (e.clientX < r.left || e.clientY < r.top || e.clientX > r.right || e.clientY > r.bottom) return null;
@@ -3617,23 +3867,24 @@ export default class AtlasSpellEffects extends Plugin {
     };
     const ppf = pxPerFoot(this.scaleOf(tab));
     const map = this.mapOf(tab);
+    // what each spot costs to move through, looked up once each while placing
+    const costs = new Map<string, number>();
+    let who: TerrainWho = {};
+    const terrain = (p: Point): number => { const k = `${Math.round(p.x)},${Math.round(p.y)}`; let v = costs.get(k); if (v === undefined) { v = this.terrainAt(tab, p, who); costs.set(k, v); } return v; };
+    let rough = walk && (this.effects.some((e) => e.map === map && !!e.terrain && e.lasting) || (this.difficultDouble && Object.values(tab.store.getState()?.objects?.mapFeatures ?? {}).some((f) => !!(f as { terrain?: { difficult?: boolean } })?.terrain?.difficult)));
     // where the token lands: within reach of where it stands (middle to middle), its space on the grid
     const landing = (p: Point, ev?: { altKey?: boolean }): Point | null => {
       if (!caster) return null;
       const max = reach * ppf;
-      // (as the map counts distance: on a D&D grid a diagonal square is 5 ft, so 15 ft reaches 3 squares diagonally)
-      const far = (q: Point) => this.ruleDist(tab, q.x - caster!.x, q.y - caster!.y);
-      const clamp = (q: Point): Point => this.clampRule(tab, caster!, q, max);
+      // (as the map counts distance: on a D&D grid a diagonal square is 5 ft, so 15 ft reaches 3 squares diagonally;
+      // a creature that moves pays for difficult terrain on the way, as Atlas's movement ruler counts it: a teleport doesn't)
+      const far = (q: Point) => walk ? this.moveCost(tab, caster!, q, caster!.r, terrain) : this.ruleDist(tab, q.x - caster!.x, q.y - caster!.y);
+      const clamp = (q: Point): Point => this.clampRule(tab, caster!, q, max, far);
       const tok = t0();
       const cells = Math.max(1, Math.round(cellsAcross(tok?.size)));
       const cell = this.scaleOf(tab).cell;
-      const snap = (q: Point): Point => {
-        if (!this.snapOn(ev)) return q;
-        // an odd-sized token's middle sits in a square's middle, an even one's on a corner
-        if (cells % 2 === 0) return this.snapPoint(tab, q, ev);
-        const c = this.snapPoint(tab, { x: q.x - cell / 2, y: q.y - cell / 2 }, ev);
-        return { x: c.x + cell / 2, y: c.y + cell / 2 };
-      };
+      // (where Atlas would put it down: an odd-sized token's middle in a square's middle, an even one's on a corner, a hex's middle)
+      const snap = (q: Point): Point => this.gridSpot(tab, q, (cells * cell) / 2, ev);
       let q = snap(clamp(p));
       // snapped past its reach: a spot nearer, half a square at a time
       for (let i = 1; i <= 8 && far(q) > max + 0.5; i++) {
@@ -3649,6 +3900,8 @@ export default class AtlasSpellEffects extends Plugin {
     const choose = (id: string): boolean => {
       const at = this.tokenOf(tab, id); if (!at) return false;
       caster = { id, x: at.x, y: at.y, r: at.r };
+      // (what terrain costs this creature: it flies, or ignores it)
+      if (walk) { who = this.terrainWho(tab, id, sbFrom, pending.walk); costs.clear(); if (who.free || (who.fly && !this.effects.some((e) => e.map === map && !!e.terrain && e.lasting && e.terrainAir))) rough = false; }
       if (this.placing) this.placing.range = ring();
       say(); this.wake();
       return true;
@@ -4509,6 +4762,12 @@ function wallsPicker(pane: HTMLElement, blocks: WallBlocks | undefined, lasting:
 }
 
 /** Whether a point is inside a polygon (a lasso). */
+/**
+ * Who's moving, for what difficult terrain costs them: flying (over the ground's), ignoring it all (a trait that says
+ * so, Freedom of Movement, set by hand), or webs alone (Spider Climb, Web Walker).
+ */
+interface TerrainWho { fly?: boolean; free?: boolean; webs?: boolean }
+
 function inPolygon(p: Point, poly: Point[]): boolean {
   let inside = false;
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
@@ -5214,8 +5473,12 @@ class CastModal extends Modal {
     }
     // difficult terrain
     if (!aimed && a.lasting) {
-      new Setting(box).setName('Difficult terrain').setDesc(m.terrain ? 'While it lasts, its area is difficult terrain in Atlas (a map feature named after it, which Atlas’s movement ruler counts; the GM’s alone).' : 'Off.')
-        .addToggle((t) => t.setValue(!!m.terrain).onChange((v) => { if (v) m.terrain = true; else delete m.terrain; this.render(); }));
+      const tc = terrainCost(m.terrain);
+      const row = new Setting(box).setName('Difficult terrain').setDesc(!tc ? 'Off.' : `While it lasts, moving through its area costs ${tc} ${unitLabel()} for every 1 ${unitLabel()}${tc === 2 ? ' (difficult terrain)' : ''}: Combat+ counts it when a creature’s ability moves it. It’s also difficult terrain in Atlas (a map feature named after it, which Atlas’s movement ruler counts as double; the GM’s alone).`)
+        .addToggle((t) => t.setValue(!!tc).onChange((v) => { if (v) m.terrain = true; else delete m.terrain; this.render(); }));
+      if (tc) new Setting(box).setName('Fills the air').setDesc(m.terrainAir ? 'Webs, a swarm, fog, a wall: flying creatures pay for it too.' : 'On the ground: a flying creature passes over it.')
+        .addToggle((t) => t.setValue(!!m.terrainAir).onChange((v) => { if (v) m.terrainAir = true; else delete m.terrainAir; this.render(); }));
+      if (tc) row.addDropdown((d) => d.addOptions({ '2': 'Each foot costs 2 (difficult)', '3': 'Each foot costs 3', '4': 'Each foot costs 4 (Plant Growth)' }).setValue(String(Math.min(4, Math.max(2, Math.round(tc))))).onChange((v) => { const n = Number(v); m.terrain = n > 2 ? n : true; this.render(); }));
     }
   }
 
@@ -5252,6 +5515,10 @@ class CastModal extends Modal {
       this.render();
     }));
     if (w.size !== undefined) row.addText((t) => { t.inputEl.type = 'number'; t.inputEl.addClass('sfx-num'); t.setValue(String(w.size)); t.onChange((v) => { const n = Number(v); if (n > 0) { this.walkSet = true; this.walk = { ...w, size: n }; } }); });
+    new Setting(body.createDiv({ cls: 'sfx-walk' })).setName('How it moves').setDesc(w.mode === 'fly' ? 'Flying: difficult terrain on the ground costs it nothing (webs, a swarm or fog still do).' : 'Difficult terrain on the way costs it more, as Atlas’s movement ruler counts it.')
+      .addDropdown((d) => d.addOptions({ walk: 'On foot', fly: 'Flies', swim: 'Swims', climb: 'Climbs', burrow: 'Burrows' }).setValue(w.mode ?? 'walk').onChange((v) => { this.walkSet = true; const { mode, ...rest } = w; void mode; this.walk = v === 'walk' ? rest : { ...rest, mode: v as Walk['mode'] }; this.render(); }));
+    new Setting(body.createDiv({ cls: 'sfx-walk' })).setName('Ignores difficult terrain').setDesc('Costs it nothing anywhere. (Also on its own when its statblock says so, or Freedom of Movement is on it.)')
+      .addToggle((t) => t.setValue(!!w.free).onChange((v) => { this.walkSet = true; const { free, ...rest } = w; void free; this.walk = v ? { ...rest, free: true } : rest; this.render(); }));
     if (!own) new Setting(body.createDiv({ cls: 'sfx-walk' })).setName('When').setDesc('Before the rest of it (placed from where it lands), or after.')
       .addDropdown((d) => d.addOptions({ first: 'Moves first', after: 'Moves after' }).setValue(w.first ? 'first' : 'after').onChange((v) => { this.walkSet = true; this.walk = { ...w, first: v === 'first' }; this.render(); }));
   }

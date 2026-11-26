@@ -16,8 +16,13 @@ export interface More {
   chainRange?: number;
   /** It makes a thing that stays and can be moved (Spiritual Weapon): a token of its own on the map. */
   summon?: boolean;
-  /** Its area is difficult terrain while it lasts. */
-  terrain?: boolean;
+  /**
+   * Its area is difficult terrain while it lasts (true: each foot costs 2), or moving through it costs this many feet
+   * a foot (Plant Growth: 4).
+   */
+  terrain?: boolean | number;
+  /** Its terrain fills the air (webs, a swarm, fog, a wall), so flying creatures pay for it too; else it's on the ground. */
+  terrainAir?: boolean;
 }
 
 const WORDS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, twelve: 12 };
@@ -60,7 +65,21 @@ export function moreOf(spell: SpellEntry, area?: Area | null): More {
   }
   // "you can move the weapon up to 20 feet": a thing of its own (its area none, or no bigger than a square)
   if (/\bmove\s+(?:it|the\s+[\w'’-]+(?:\s+[\w'’-]+)?)\s+up to\s+\d/i.test(t) && (!area || area.target || area.size <= square())) out.summon = true;
-  if (/\bdifficult terrain\b/i.test(t) && !/\b(?:ignore|ignores|ignoring|unaffected by|isn't slowed by)\b[^.]{0,30}difficult terrain/i.test(t)) out.terrain = true;
+  if (/\bdifficult terrain\b/i.test(t) && !/\b(?:ignore|ignores|ignoring|unaffected by|isn['’]t slowed by|(?:doesn['’]t|does not|don['’]t|do not|no longer) counts? as|isn['’]t|is not)\b[^.]{0,30}difficult terrain/i.test(t) && !/\bdifficult terrain\b[^.]{0,60}\binto ordinary terrain\b/i.test(t)) out.terrain = true;
+  // moving through it costs more than that: "must spend 4 feet of movement for every 1 foot it moves" (Plant Growth),
+  // "each foot … costs 4 feet of movement" (Transmute Rock), "every foot of movement through the fog costs 2 extra
+  // feet", Pathfinder's greater difficult terrain (each square three)
+  const W: Record<string, number> = { one: 1, a: 1, an: 1, two: 2, three: 3, four: 4, five: 5 };
+  const nw = (x: string) => W[x.toLowerCase()] ?? Number(x);
+  let cost = 0;
+  if ((m = /\bspend\s+(\d+|two|three|four|five)\s+feet of movement for (?:every|each)\s+(?:1|one)\s+foot\b/i.exec(t))) cost = nw(m[1]);
+  else if ((m = /\b(?:each|every)\s+foot\b[^.]{0,60}?\bcosts?\s+(\d+|two|three|four|five)\s+feet of movement\b/i.exec(t))) cost = nw(m[1]);
+  else if ((m = /\b(?:each|every)\s+foot of movement\s+(?:through|in|within)\b[^.]{0,40}?\bcosts?\s+(\d+|an?|one|two|three|four)\s+(?:extra|additional|more)\s+f(?:ee|oo)t\b/i.exec(t))) cost = nw(m[1]) + 1;
+  else if (/\bgreater difficult terrain\b/i.test(t)) cost = 3;
+  if (cost >= 2) out.terrain = cost === 2 ? true : cost;
+  // what's difficult: the ground (rubble, plants, mud, grease, ice: a flying creature passes over it) or the air
+  // through it (webs, a swarm, fog, wind, a wall)
+  if (out.terrain && /\b(?:webs?|webbing|fog|mist|cloud|swarms?|insects|locusts|wind|gust|whirling|gravity|spirits|blackness|darkness|wall)\b/i.test(t) && !/\b(?:the ground|ground in|ground within|floor)\b[^.]{0,60}\bdifficult terrain\b|\bdifficult terrain\b[^.]{0,40}\b(?:on the ground|ground)\b/i.test(t)) out.terrainAir = true;
   return out;
 }
 
@@ -72,4 +91,7 @@ export function countAt(more: More | undefined, level: number | null | undefined
 }
 
 /** Whether there's anything in it. */
+/** What moving a foot through a terrain costs, in feet (0: it isn't terrain). */
+export const terrainCost = (t: boolean | number | undefined): number => t === true ? 2 : typeof t === 'number' && t > 1 ? t : 0;
+
 export const hasMore = (m: More | undefined): boolean => !!m && (!!m.push || (m.count ?? 0) > 1 || !!m.steps?.length || !!m.chain || !!m.summon || !!m.terrain);

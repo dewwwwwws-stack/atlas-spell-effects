@@ -51,16 +51,19 @@ export interface Rules {
   /** Game units in one rules square (the collection's distance per cell). */
   perSquare: number;
   bands: { name: string; squares: number }[];
+  /** The unit's name as the GM typed it ("mi", "ly"): shown in place of the unit type's own. */
+  name?: string;
 }
 let rules: Rules = { unit: 'feet', perSquare: 5, bands: [] };
 /** Sets the measures spell text is read with (the add-on does, from the open Atlas map). */
 export function setRules(r: Rules): void {
-  rules = { unit: r.unit, perSquare: r.perSquare > 0 ? r.perSquare : 5, bands: r.bands.filter((b) => b.name && b.squares > 0).sort((a, b) => b.name.length - a.name.length) };
+  rules = { unit: r.unit, ...(r.name && r.name.trim() ? { name: r.name.trim() } : {}), perSquare: r.perSquare > 0 ? r.perSquare : 5, bands: r.bands.filter((b) => b.name && b.squares > 0).sort((a, b) => b.name.length - a.name.length) };
 }
 export function currentRules(): Rules { return rules; }
 
 /** The game unit, as a label: "ft", "yd", "m", or "squares" (Draw Steel's units, one to a square). */
 export function unitLabel(): string {
+  if (rules.name) return rules.name;
   return rules.unit === 'feet' ? 'ft' : rules.unit === 'yards' ? 'yd' : rules.unit === 'meters' ? 'm' : rules.perSquare === 1 ? 'squares' : 'units';
 }
 /** One square in game units: the step sizes go in, and the size of things that default to one square. */
@@ -149,7 +152,7 @@ export function teleportOf(spell: SpellEntry): number | null {
  * ("…and it makes one Rend attack"). Not one that moves others ("pushes the target up to 10 feet", "the target
  * moves"), nor a teleport (teleportOf).
  */
-export interface Walk { size?: number; of?: number; then?: string; mode?: 'fly' | 'swim' | 'climb' | 'burrow'; /** It moves before the rest of the ability (its area, its save) happens; else after ("…can then fly up to half its flying speed"). */ first?: boolean; /** How many of its `then` attacks ("then makes two Tusk attacks"). */ count?: number }
+export interface Walk { size?: number; of?: number; then?: string; mode?: 'fly' | 'swim' | 'climb' | 'burrow'; /** It moves before the rest of the ability (its area, its save) happens; else after ("…can then fly up to half its flying speed"). */ first?: boolean; /** How many of its `then` attacks ("then makes two Tusk attacks"). */ count?: number; /** It pays nothing for difficult terrain (set by hand). */ free?: boolean }
 
 /** An attack a creature makes after it moves or teleports: "…and it makes one Rend attack", "It can then make a Spike attack", "makes two Tusk attacks", "one Grave Strike or Shadow Lance attack". */
 export function thenOf(text: string): { then: string; count: number } | null {

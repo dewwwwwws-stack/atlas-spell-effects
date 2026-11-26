@@ -85,8 +85,10 @@ export interface Effect {
   rollBy?: string;
   /** Pushes those it catches this far (game units) from where it comes from when cast; negative: pulls. */
   push?: number;
-  /** Its area is difficult terrain while it lasts (kept in Atlas as a map feature). */
-  terrain?: boolean;
+  /** Its area is difficult terrain while it lasts (kept in Atlas as a map feature); a number: feet each foot through it costs. */
+  terrain?: boolean | number;
+  /** Its terrain fills the air: flying creatures pay for it too. */
+  terrainAir?: boolean;
   /** Atlas's map feature that makes its area difficult terrain. */
   terrainId?: string;
   /** The token it made on the map (a summoned thing): gone when the spell ends. */

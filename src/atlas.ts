@@ -137,6 +137,12 @@ export interface Measurement {
   coneEnd?: string;
   /** How diagonal steps count on square grids: 'equidistant' (unset: each 1, as D&D 5e), 'alternating' (5-10-5), 'euclidean', 'manhattan'. */
   diagonalRule?: string;
+  /** The unit's name as the GM typed it ("mi", "ly"), the scene's or the collection's. */
+  unitName?: string;
+  /** When a measured area covers a cell: 'half' (unset), 'centre' or 'any'. */
+  areaCellRule?: string;
+  /** What a cell of difficult terrain costs a token's move: 'double', or 'none' (unset). */
+  difficultTerrain?: string;
 }
 
 /** What the add-on reads of one Atlas map tab. */
