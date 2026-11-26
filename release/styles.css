@@ -27,6 +27,7 @@
 @keyframes sfx-pulse{0%,100%{opacity:.78}50%{opacity:1}}
 .sfx-preview .sfx-drawn{animation:none;opacity:.55;outline:2px dashed var(--c)}
 .sfx.sfx-range .sfx-drawn{background:none;box-shadow:none;outline:none;opacity:.9;border:2px dashed color-mix(in srgb,var(--c) 85%,white);border-radius:50%;box-sizing:border-box}
+.sfx.sfx-range.sfx-cube .sfx-drawn{border-radius:0}
 .sfx.sfx-wall{width:0;height:0;transform:none;overflow:visible}
 .sfx-piece{position:absolute;left:0;top:0;transform-origin:50% 50%}
 .sfx-piece>video,.sfx-piece>img{position:absolute;top:0;left:0;height:100%;display:block;object-fit:fill}

@@ -32,7 +32,6 @@ const PLAYER_VIEW = 'atlas-vtt-local-player';
 const PLAYER_CANVAS = 'atlas-player-canvas';
 
 /** `p`, or the nearest point to it no further than `reach` from `c`. */
-const inReach = (p: Point, c: Point, reach: number): Point => { const d = Math.hypot(p.x - c.x, p.y - c.y); return d <= reach || d === 0 ? p : { x: c.x + ((p.x - c.x) * reach) / d, y: c.y + ((p.y - c.y) * reach) / d }; };
 /** How many of the spells cast last are kept (✨'s menu, the cast window). */
 const RECENT = 5;
 const uid = () => 'fx' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -1626,7 +1625,62 @@ export default class AtlasSpellEffects extends Plugin {
     const dist = m?.unitDistance;
     const per = typeof dist === 'number' && Number.isFinite(dist) && dist > 0 ? dist : 5;
     this.readSystem(m, per);
+    const gt = field(call(t.renderer, 'getGridOptions'), 'type') ?? (t.store.getState()?.grid as { type?: string } | undefined)?.type;
+    const d = m?.diagonalRule;
+    this.diagonal = typeof gt === 'string' && gt.startsWith('hex') ? 'euclidean' : d === 'alternating' || d === 'euclidean' || d === 'manhattan' ? d : 'equidistant';
     return { cell, feetPerCell: per };
+  }
+
+  /** How the open map counts diagonal steps (Atlas's collection setting; a hex grid: straight across). */
+  diagonal: 'equidistant' | 'alternating' | 'euclidean' | 'manhattan' = 'equidistant';
+
+  /**
+   * How far apart two points are as the map's rules count it (world units): on a square grid a diagonal square counts
+   * as one (D&D), 5-10-5, two, or its true length, as the collection's diagonal rule says.
+   */
+  ruleDist(t: Tab, dx: number, dy: number, cellSize?: number): number {
+    const cell = cellSize ?? this.scaleOf(t).cell;
+    const whole = (v: number) => { const r = Math.round(v); return Math.abs(v - r) < 1e-3 ? r : v; };
+    const a = whole(Math.abs(dx) / cell), b = whole(Math.abs(dy) / cell);
+    const hi = Math.max(a, b), lo = Math.min(a, b);
+    const cells = this.diagonal === 'euclidean' ? Math.hypot(a, b) : this.diagonal === 'manhattan' ? a + b : this.diagonal === 'alternating' ? hi + (Number.isInteger(lo) ? Math.floor(lo / 2) : lo / 2) : hi;
+    return cells * cell;
+  }
+
+  /** The farthest point toward p that is within max of c, as the map's rules count it. */
+  clampRule(t: Tab, c: Point, p: Point, max: number): Point {
+    const cell = this.scaleOf(t).cell;
+    if (this.ruleDist(t, p.x - c.x, p.y - c.y, cell) <= max + 0.5) return p;
+    let lo = 0, hi = 1;
+    for (let i = 0; i < 24; i++) { const m = (lo + hi) / 2; if (this.ruleDist(t, (p.x - c.x) * m, (p.y - c.y) * m, cell) <= max) lo = m; else hi = m; }
+    return { x: c.x + (p.x - c.x) * lo, y: c.y + (p.y - c.y) * lo };
+  }
+
+  /**
+   * How far apart two creatures are as the rules count it (game units): square to nearest square, diagonals by the
+   * map's rule, next to each other 5 ft. `half`: the least half-size a space is (a tiny creature's is still a square).
+   */
+  feetApart(t: Tab, a: { x: number; y: number; r: number }, b: { x: number; y: number; r: number }, half = 0): number {
+    const s = this.scaleOf(t); const ppf = pxPerFoot(s);
+    const pad = Math.max(a.r, half) + Math.max(b.r, half) - s.cell;
+    const d = this.ruleDist(t, Math.max(0, Math.abs(b.x - a.x) - pad), Math.max(0, Math.abs(b.y - a.y) - pad), s.cell);
+    return Math.max(square(), d / ppf);
+  }
+
+  /** How far to go along a direction (unit vector) to cover `want` (world units) as the map's rules count it. */
+  ruleAlong(t: Tab, ux: number, uy: number, want: number): number {
+    const cell = this.scaleOf(t).cell;
+    let lo = 0, hi = want * 2;
+    for (let i = 0; i < 24; i++) { const m = (lo + hi) / 2; if (this.ruleDist(t, ux * m, uy * m, cell) <= want + 0.5) lo = m; else hi = m; }
+    return lo;
+  }
+
+  /** A reach round a point drawn as the map's rules make it: a square where diagonals count as one, a diamond where they count as two, else a circle. */
+  reachShape(t: Tab, base: Omit<Effect, 'shape' | 'size'>, radius: number): Effect {
+    this.scaleOf(t);
+    if (this.diagonal === 'equidistant') return { ...base, shape: 'cube', size: 2 * radius };
+    if (this.diagonal === 'manhattan') return { ...base, shape: 'cube', size: radius * Math.SQRT2, spin: Math.PI / 4 };
+    return { ...base, shape: 'radius', size: radius };
   }
 
   /** The game system Atlas measures the open map with (its collection's): what the settings show. */
@@ -2492,10 +2546,14 @@ export default class AtlasSpellEffects extends Plugin {
     if (!k || !dist || typeof st?.moveToken !== 'function') return false;
     const gap = Math.hypot(k.x - from.x, k.y - from.y); if (gap < 0.5) return false;
     const ux = (k.x - from.x) / gap, uy = (k.y - from.y) / gap;
-    let d = Math.abs(dist) * pxPerFoot(this.scaleOf(t));
+    // (as the map counts it: pushed 10 ft diagonally on a D&D grid is 2 squares)
+    let d = this.ruleAlong(t, ux, uy, Math.abs(dist) * pxPerFoot(this.scaleOf(t)));
     if (dist < 0) d = -Math.min(d, Math.max(0, gap - fromR - k.r));
     if (Math.abs(d) < 0.5) return false;
-    const to = this.gridSpot(t, { x: k.x + ux * d, y: k.y + uy * d }, k.r);
+    let to = this.gridSpot(t, { x: k.x + ux * d, y: k.y + uy * d }, k.r);
+    // its square on the grid no further than it goes (5-10-5: the second diagonal is 10 ft)
+    const want = Math.abs(dist) * pxPerFoot(this.scaleOf(t)), cell = this.scaleOf(t).cell;
+    for (let i = 1; i <= 6 && this.ruleDist(t, to.x - k.x, to.y - k.y, cell) > want + 0.5; i++) { const dd = Math.sign(d) * Math.max(0, Math.abs(d) - i * cell / 2); to = this.gridSpot(t, { x: k.x + ux * dd, y: k.y + uy * dd }, k.r); }
     if (Math.hypot(to.x - k.x, to.y - k.y) < 0.5) return false;
     st.moveToken(id, to.x, to.y);
     return true;
@@ -2578,7 +2636,7 @@ export default class AtlasSpellEffects extends Plugin {
         if (id === target) continue;
         const o = this.tokenOf(t, id); if (!o) continue;
         if (caster && Math.hypot(o.x - caster.x, o.y - caster.y) <= o.r + 1) continue;          // not back to the caster
-        const d = Math.max(0, Math.hypot(o.x - k.x, o.y - k.y) - o.r - k.r);
+        const d = this.feetApart(t, k, o) * ppf;
         if (d <= reach + 0.5) near.push({ id, d });
       }
       const plain: Pending = { ...pending }; delete plain.more;
@@ -2801,12 +2859,12 @@ export default class AtlasSpellEffects extends Plugin {
   private async rollOnNow(t: Tab, id: string, name: string, spec: RollSpec, ids: string[], by: string | undefined, edge: Edge, slot?: number): Promise<CastRoll | null> {
     const caster = await this.statsOfToken(t, by);
     if (caster) await this.chooseBonuses(t, by!, caster, spec);
-    const c0 = by ? this.tokenOf(t, by) : null, ppf = pxPerFoot(this.scaleOf(t));
+    const c0 = by ? this.tokenOf(t, by) : null;
     const map = this.mapOf(t);
     const targets = await Promise.all(ids.map(async (k) => {
       const tk = this.tokenOf(t, k);
       // as the rules count it: next to the caster is 5 ft (a square), one square between them 10 ft
-      const feet = c0 && tk ? Math.max(0, Math.max(Math.abs(tk.x - c0.x), Math.abs(tk.y - c0.y)) - tk.r - c0.r) / ppf + square() : undefined;
+      const feet = c0 && tk ? this.feetApart(t, c0, tk) : undefined;
       const stats = await this.statsOfToken(t, k);
       // Legendary Resistance left today
       if (stats?.legendary) stats.legendary = Math.max(0, stats.legendary - (this.settings.legendary[`${map}|${k}`] ?? 0));
@@ -3460,7 +3518,7 @@ export default class AtlasSpellEffects extends Plugin {
     if (!ft || !(ft > 0)) return null;
     const ppf = pxPerFoot(this.scaleOf(tab));
     const reach = caster.r + ft * ppf;
-    return { reach, ring: { id: 'preview-range', map: this.mapOf(tab), name: pending.name, shape: 'radius', size: reach / ppf, at: { x: caster.x, y: caster.y }, colour: pending.colour, lasting: false, started: 0 } };
+    return { reach, ring: this.reachShape(tab, { id: 'preview-range', map: this.mapOf(tab), name: pending.name, at: { x: caster.x, y: caster.y }, colour: pending.colour, lasting: false, started: 0 }, reach / ppf) };
   }
 
   /**
@@ -3489,7 +3547,9 @@ export default class AtlasSpellEffects extends Plugin {
     const landing = (p: Point, ev?: { altKey?: boolean }): Point | null => {
       if (!caster) return null;
       const max = reach * ppf;
-      const clamp = (q: Point): Point => { const dx = q.x - caster!.x, dy = q.y - caster!.y, d = Math.hypot(dx, dy); return d <= max || d === 0 ? q : { x: caster!.x + dx * max / d, y: caster!.y + dy * max / d }; };
+      // (as the map counts distance: on a D&D grid a diagonal square is 5 ft, so 15 ft reaches 3 squares diagonally)
+      const far = (q: Point) => this.ruleDist(tab, q.x - caster!.x, q.y - caster!.y);
+      const clamp = (q: Point): Point => this.clampRule(tab, caster!, q, max);
       const tok = t0();
       const cells = Math.max(1, Math.round(cellsAcross(tok?.size)));
       const cell = this.scaleOf(tab).cell;
@@ -3501,16 +3561,17 @@ export default class AtlasSpellEffects extends Plugin {
         return { x: c.x + cell / 2, y: c.y + cell / 2 };
       };
       let q = snap(clamp(p));
-      // snapped past its reach: a square nearer
-      for (let i = 0; i < 4 && Math.hypot(q.x - caster.x, q.y - caster.y) > max + 0.5; i++) {
-        const d = Math.hypot(q.x - caster.x, q.y - caster.y);
-        q = snap({ x: caster.x + (q.x - caster.x) * (d - cell) / d, y: caster.y + (q.y - caster.y) * (d - cell) / d });
+      // snapped past its reach: a spot nearer, half a square at a time
+      for (let i = 1; i <= 8 && far(q) > max + 0.5; i++) {
+        const d = Math.hypot(q.x - caster.x, q.y - caster.y); if (d === 0) break;
+        const k = Math.max(0, d - i * cell / 2) / d;
+        q = snap({ x: caster.x + (q.x - caster.x) * k, y: caster.y + (q.y - caster.y) * k });
       }
-      return Math.hypot(q.x - caster.x, q.y - caster.y) <= max + 0.5 ? q : { x: caster.x, y: caster.y };
+      return far(q) <= max + 0.5 ? q : { x: caster.x, y: caster.y };
     };
     const t0 = () => (caster ? tab.store.getState()?.objects?.tokens?.[caster.id] : undefined);
     const ghost = (q: Point): Effect => ({ id: 'preview', map, name: pending.name, shape: 'radius', size: (caster?.r ?? 0) / ppf, at: q, colour: pending.colour, ...(pending.colour2 ? { colour2: pending.colour2 } : {}), outline: true, lasting: false, started: 0 });
-    const ring = (): Effect | null => (caster ? { id: 'preview-range', map, name: pending.name, shape: 'radius', size: reach + caster.r / ppf, at: { x: caster.x, y: caster.y }, colour: pending.colour, lasting: false, started: 0 } : null);
+    const ring = (): Effect | null => (caster ? this.reachShape(tab, { id: 'preview-range', map, name: pending.name, at: { x: caster.x, y: caster.y }, colour: pending.colour, lasting: false, started: 0 }, reach + caster.r / ppf) : null);
     const choose = (id: string): boolean => {
       const at = this.tokenOf(tab, id); if (!at) return false;
       caster = { id, x: at.x, y: at.y, r: at.r };
@@ -3634,7 +3695,7 @@ export default class AtlasSpellEffects extends Plugin {
     // area can't go beyond it
     const rc = casterToken && !needsCaster ? this.tokenOf(tab, casterToken) : null;
     const reach = rc ? this.rangeRing(tab, pending, rc) : null;
-    const inRange = (p: Point): Point => reach && rc ? inReach(p, rc, reach.reach) : p;
+    const inRange = (p: Point): Point => reach && rc ? this.clampRule(tab, rc, p, reach.reach) : p;
     // a cone shown (and cast) as Atlas will draw it
     const effectAt = (q: Point, id: string): Effect | null => { const fx = shapeAt(q, id); if (fx) this.fitCone(fx, tab); return fx; };
     const shapeAt = (q: Point, id: string): Effect | null => {
@@ -3885,20 +3946,17 @@ export default class AtlasSpellEffects extends Plugin {
     const ka = a ? this.tokenOf(t, a) : null, kb = b ? this.tokenOf(t, b) : null;
     if (!ka || !kb) return undefined;
     // (from the edge of each one's space, as Atlas measures: a tiny one's space is still a square)
-    const half = this.scaleOf(t).cell / 2;
-    return Math.max(0, Math.max(Math.abs(kb.x - ka.x), Math.abs(kb.y - ka.y)) - Math.max(kb.r, half) - Math.max(ka.r, half)) / pxPerFoot(this.scaleOf(t)) + square();
+    return this.feetApart(t, ka, kb, this.scaleOf(t).cell / 2);
   }
 
   /** A creature and those within `feet` of it (as the rules count: next to it, 5 ft). */
   near(t: Tab, id: string, feet: number): string[] {
     const k = this.tokenOf(t, id); if (!k) return [id];
-    const ppf = pxPerFoot(this.scaleOf(t));
     const out = [id];
     for (const o of Object.keys(t.store.getState()?.objects?.tokens ?? {})) {
       if (o === id) continue;
       const p = this.tokenOf(t, o); if (!p) continue;
-      const half = this.scaleOf(t).cell / 2;
-      const gap = Math.max(0, Math.max(Math.abs(p.x - k.x), Math.abs(p.y - k.y)) - Math.max(p.r, half) - Math.max(k.r, half)) / ppf + square();
+      const gap = this.feetApart(t, k, p, this.scaleOf(t).cell / 2);
       if (feet > 0 && gap <= feet + 0.5) out.push(o);
     }
     return out;
@@ -3914,10 +3972,10 @@ export default class AtlasSpellEffects extends Plugin {
     for (const id of Object.keys(toks)) {
       if (id === caster) continue;
       const k = this.tokenOf(t, id); if (!k) continue;
-      // how far, as the rules count it: the squares to its space, its own counted (next to it: 5 ft)
-      const gap = c ? Math.max(0, Math.max(Math.abs(k.x - c.x), Math.abs(k.y - c.y)) - c.r - k.r) : 0;      // (diagonals count as straight, as D&D counts them)
-      if (gap + square() * ppf > reach + 0.5 * ppf) continue;
-      out.push({ id, name: this.tokenName(t, id), ft: c ? Math.round(gap / ppf / square()) * square() + square() : null });
+      // how far, as the rules count it: square to square, diagonals as the map counts them (next to it: 5 ft)
+      const ft = c ? this.feetApart(t, c, k) : 0;
+      if (ft * ppf > reach + 0.5 * ppf) continue;
+      out.push({ id, name: this.tokenName(t, id), ft: c ? Math.round(ft / square()) * square() : null });
     }
     return out.sort((x, y) => (x.ft ?? 0) - (y.ft ?? 0) || x.name.localeCompare(y.name));
   }
@@ -4216,7 +4274,7 @@ export default class AtlasSpellEffects extends Plugin {
         let best: { id: string; d: number } | null = null;
         for (const id of Object.keys(t.store.getState()?.objects?.tokens ?? {})) {
           const tok = this.tokenOf(t, id); if (!tok) continue;
-          const d = Math.max(0, Math.hypot(tok.x - b.cx, tok.y - b.cy) - tok.r);
+          const d = this.ruleDist(t, Math.max(0, Math.abs(tok.x - b.cx) - tok.r), Math.max(0, Math.abs(tok.y - b.cy) - tok.r));
           if (!best || d < best.d) best = { id, d };
         }
         if (best) { const st = square(), ft = Math.round(best.d / ppf / st) * st; bits.push(ft <= st ? `by ${this.tokenName(t, best.id)}` : `${Math.round(ft * 10) / 10} ${unitLabel()} from ${this.tokenName(t, best.id)}`); }

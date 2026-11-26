@@ -4767,10 +4767,6 @@ function alongWall(pieces, step) {
 var ATLAS_VIEW = "atlas-vtt";
 var PLAYER_VIEW = "atlas-vtt-local-player";
 var PLAYER_CANVAS = "atlas-player-canvas";
-var inReach = (p, c, reach) => {
-  const d = Math.hypot(p.x - c.x, p.y - c.y);
-  return d <= reach || d === 0 ? p : { x: c.x + (p.x - c.x) * reach / d, y: c.y + (p.y - c.y) * reach / d };
-};
 var RECENT = 5;
 var uid = () => "fx" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 function rowText(r, withDamage = true) {
@@ -6658,7 +6654,68 @@ ${text}`);
     const dist = m?.unitDistance;
     const per = typeof dist === "number" && Number.isFinite(dist) && dist > 0 ? dist : 5;
     this.readSystem(m, per);
+    const gt = field(call(t.renderer, "getGridOptions"), "type") ?? t.store.getState()?.grid?.type;
+    const d = m?.diagonalRule;
+    this.diagonal = typeof gt === "string" && gt.startsWith("hex") ? "euclidean" : d === "alternating" || d === "euclidean" || d === "manhattan" ? d : "equidistant";
     return { cell, feetPerCell: per };
+  }
+  /** How the open map counts diagonal steps (Atlas's collection setting; a hex grid: straight across). */
+  diagonal = "equidistant";
+  /**
+   * How far apart two points are as the map's rules count it (world units): on a square grid a diagonal square counts
+   * as one (D&D), 5-10-5, two, or its true length, as the collection's diagonal rule says.
+   */
+  ruleDist(t, dx, dy, cellSize) {
+    const cell = cellSize ?? this.scaleOf(t).cell;
+    const whole = (v) => {
+      const r = Math.round(v);
+      return Math.abs(v - r) < 1e-3 ? r : v;
+    };
+    const a = whole(Math.abs(dx) / cell), b = whole(Math.abs(dy) / cell);
+    const hi = Math.max(a, b), lo = Math.min(a, b);
+    const cells = this.diagonal === "euclidean" ? Math.hypot(a, b) : this.diagonal === "manhattan" ? a + b : this.diagonal === "alternating" ? hi + (Number.isInteger(lo) ? Math.floor(lo / 2) : lo / 2) : hi;
+    return cells * cell;
+  }
+  /** The farthest point toward p that is within max of c, as the map's rules count it. */
+  clampRule(t, c, p, max) {
+    const cell = this.scaleOf(t).cell;
+    if (this.ruleDist(t, p.x - c.x, p.y - c.y, cell) <= max + 0.5) return p;
+    let lo = 0, hi = 1;
+    for (let i = 0; i < 24; i++) {
+      const m = (lo + hi) / 2;
+      if (this.ruleDist(t, (p.x - c.x) * m, (p.y - c.y) * m, cell) <= max) lo = m;
+      else hi = m;
+    }
+    return { x: c.x + (p.x - c.x) * lo, y: c.y + (p.y - c.y) * lo };
+  }
+  /**
+   * How far apart two creatures are as the rules count it (game units): square to nearest square, diagonals by the
+   * map's rule, next to each other 5 ft. `half`: the least half-size a space is (a tiny creature's is still a square).
+   */
+  feetApart(t, a, b, half = 0) {
+    const s = this.scaleOf(t);
+    const ppf = pxPerFoot(s);
+    const pad = Math.max(a.r, half) + Math.max(b.r, half) - s.cell;
+    const d = this.ruleDist(t, Math.max(0, Math.abs(b.x - a.x) - pad), Math.max(0, Math.abs(b.y - a.y) - pad), s.cell);
+    return Math.max(square(), d / ppf);
+  }
+  /** How far to go along a direction (unit vector) to cover `want` (world units) as the map's rules count it. */
+  ruleAlong(t, ux, uy, want) {
+    const cell = this.scaleOf(t).cell;
+    let lo = 0, hi = want * 2;
+    for (let i = 0; i < 24; i++) {
+      const m = (lo + hi) / 2;
+      if (this.ruleDist(t, ux * m, uy * m, cell) <= want + 0.5) lo = m;
+      else hi = m;
+    }
+    return lo;
+  }
+  /** A reach round a point drawn as the map's rules make it: a square where diagonals count as one, a diamond where they count as two, else a circle. */
+  reachShape(t, base, radius) {
+    this.scaleOf(t);
+    if (this.diagonal === "equidistant") return { ...base, shape: "cube", size: 2 * radius };
+    if (this.diagonal === "manhattan") return { ...base, shape: "cube", size: radius * Math.SQRT2, spin: Math.PI / 4 };
+    return { ...base, shape: "radius", size: radius };
   }
   /** The game system Atlas measures the open map with (its collection's): what the settings show. */
   atlasSystem = null;
@@ -7733,10 +7790,15 @@ ${text}`);
     const gap = Math.hypot(k.x - from.x, k.y - from.y);
     if (gap < 0.5) return false;
     const ux = (k.x - from.x) / gap, uy = (k.y - from.y) / gap;
-    let d = Math.abs(dist) * pxPerFoot(this.scaleOf(t));
+    let d = this.ruleAlong(t, ux, uy, Math.abs(dist) * pxPerFoot(this.scaleOf(t)));
     if (dist < 0) d = -Math.min(d, Math.max(0, gap - fromR - k.r));
     if (Math.abs(d) < 0.5) return false;
-    const to = this.gridSpot(t, { x: k.x + ux * d, y: k.y + uy * d }, k.r);
+    let to = this.gridSpot(t, { x: k.x + ux * d, y: k.y + uy * d }, k.r);
+    const want = Math.abs(dist) * pxPerFoot(this.scaleOf(t)), cell = this.scaleOf(t).cell;
+    for (let i = 1; i <= 6 && this.ruleDist(t, to.x - k.x, to.y - k.y, cell) > want + 0.5; i++) {
+      const dd = Math.sign(d) * Math.max(0, Math.abs(d) - i * cell / 2);
+      to = this.gridSpot(t, { x: k.x + ux * dd, y: k.y + uy * dd }, k.r);
+    }
     if (Math.hypot(to.x - k.x, to.y - k.y) < 0.5) return false;
     st.moveToken(id, to.x, to.y);
     return true;
@@ -7819,7 +7881,7 @@ ${text}`);
         const o = this.tokenOf(t, id);
         if (!o) continue;
         if (caster && Math.hypot(o.x - caster.x, o.y - caster.y) <= o.r + 1) continue;
-        const d = Math.max(0, Math.hypot(o.x - k.x, o.y - k.y) - o.r - k.r);
+        const d = this.feetApart(t, k, o) * ppf;
         if (d <= reach + 0.5) near.push({ id, d });
       }
       const plain = { ...pending };
@@ -8123,11 +8185,11 @@ ${text}`);
   async rollOnNow(t, id, name, spec, ids, by, edge, slot) {
     const caster = await this.statsOfToken(t, by);
     if (caster) await this.chooseBonuses(t, by, caster, spec);
-    const c0 = by ? this.tokenOf(t, by) : null, ppf = pxPerFoot(this.scaleOf(t));
+    const c0 = by ? this.tokenOf(t, by) : null;
     const map = this.mapOf(t);
     const targets = await Promise.all(ids.map(async (k) => {
       const tk = this.tokenOf(t, k);
-      const feet = c0 && tk ? Math.max(0, Math.max(Math.abs(tk.x - c0.x), Math.abs(tk.y - c0.y)) - tk.r - c0.r) / ppf + square() : void 0;
+      const feet = c0 && tk ? this.feetApart(t, c0, tk) : void 0;
       const stats = await this.statsOfToken(t, k);
       if (stats?.legendary) stats.legendary = Math.max(0, stats.legendary - (this.settings.legendary[`${map}|${k}`] ?? 0));
       const hp = t.store.getState()?.objects?.tokens?.[k]?.resources ?? {};
@@ -8986,7 +9048,7 @@ ${text}`);
     if (!ft || !(ft > 0)) return null;
     const ppf = pxPerFoot(this.scaleOf(tab));
     const reach = caster.r + ft * ppf;
-    return { reach, ring: { id: "preview-range", map: this.mapOf(tab), name: pending.name, shape: "radius", size: reach / ppf, at: { x: caster.x, y: caster.y }, colour: pending.colour, lasting: false, started: 0 } };
+    return { reach, ring: this.reachShape(tab, { id: "preview-range", map: this.mapOf(tab), name: pending.name, at: { x: caster.x, y: caster.y }, colour: pending.colour, lasting: false, started: 0 }, reach / ppf) };
   }
   /**
    * A spell that teleports its caster (Misty Step, Dimension Door): the caster (from the statblock, or clicked),
@@ -9015,10 +9077,8 @@ ${text}`);
     const landing = (p, ev) => {
       if (!caster) return null;
       const max = reach * ppf;
-      const clamp = (q2) => {
-        const dx = q2.x - caster.x, dy = q2.y - caster.y, d = Math.hypot(dx, dy);
-        return d <= max || d === 0 ? q2 : { x: caster.x + dx * max / d, y: caster.y + dy * max / d };
-      };
+      const far = (q2) => this.ruleDist(tab, q2.x - caster.x, q2.y - caster.y);
+      const clamp = (q2) => this.clampRule(tab, caster, q2, max);
       const tok = t0();
       const cells = Math.max(1, Math.round(cellsAcross(tok?.size)));
       const cell = this.scaleOf(tab).cell;
@@ -9029,15 +9089,17 @@ ${text}`);
         return { x: c.x + cell / 2, y: c.y + cell / 2 };
       };
       let q = snap(clamp(p));
-      for (let i = 0; i < 4 && Math.hypot(q.x - caster.x, q.y - caster.y) > max + 0.5; i++) {
+      for (let i = 1; i <= 8 && far(q) > max + 0.5; i++) {
         const d = Math.hypot(q.x - caster.x, q.y - caster.y);
-        q = snap({ x: caster.x + (q.x - caster.x) * (d - cell) / d, y: caster.y + (q.y - caster.y) * (d - cell) / d });
+        if (d === 0) break;
+        const k = Math.max(0, d - i * cell / 2) / d;
+        q = snap({ x: caster.x + (q.x - caster.x) * k, y: caster.y + (q.y - caster.y) * k });
       }
-      return Math.hypot(q.x - caster.x, q.y - caster.y) <= max + 0.5 ? q : { x: caster.x, y: caster.y };
+      return far(q) <= max + 0.5 ? q : { x: caster.x, y: caster.y };
     };
     const t0 = () => caster ? tab.store.getState()?.objects?.tokens?.[caster.id] : void 0;
     const ghost = (q) => ({ id: "preview", map, name: pending.name, shape: "radius", size: (caster?.r ?? 0) / ppf, at: q, colour: pending.colour, ...pending.colour2 ? { colour2: pending.colour2 } : {}, outline: true, lasting: false, started: 0 });
-    const ring = () => caster ? { id: "preview-range", map, name: pending.name, shape: "radius", size: reach + caster.r / ppf, at: { x: caster.x, y: caster.y }, colour: pending.colour, lasting: false, started: 0 } : null;
+    const ring = () => caster ? this.reachShape(tab, { id: "preview-range", map, name: pending.name, at: { x: caster.x, y: caster.y }, colour: pending.colour, lasting: false, started: 0 }, reach + caster.r / ppf) : null;
     const choose = (id) => {
       const at = this.tokenOf(tab, id);
       if (!at) return false;
@@ -9207,7 +9269,7 @@ ${text}`);
     let alt = false;
     const rc = casterToken && !needsCaster ? this.tokenOf(tab, casterToken) : null;
     const reach = rc ? this.rangeRing(tab, pending, rc) : null;
-    const inRange = (p) => reach && rc ? inReach(p, rc, reach.reach) : p;
+    const inRange = (p) => reach && rc ? this.clampRule(tab, rc, p, reach.reach) : p;
     const effectAt = (q, id) => {
       const fx = shapeAt(q, id);
       if (fx) this.fitCone(fx, tab);
@@ -9549,21 +9611,18 @@ ${text}`);
   feetBetween(t, a, b) {
     const ka = a ? this.tokenOf(t, a) : null, kb = b ? this.tokenOf(t, b) : null;
     if (!ka || !kb) return void 0;
-    const half = this.scaleOf(t).cell / 2;
-    return Math.max(0, Math.max(Math.abs(kb.x - ka.x), Math.abs(kb.y - ka.y)) - Math.max(kb.r, half) - Math.max(ka.r, half)) / pxPerFoot(this.scaleOf(t)) + square();
+    return this.feetApart(t, ka, kb, this.scaleOf(t).cell / 2);
   }
   /** A creature and those within `feet` of it (as the rules count: next to it, 5 ft). */
   near(t, id, feet) {
     const k = this.tokenOf(t, id);
     if (!k) return [id];
-    const ppf = pxPerFoot(this.scaleOf(t));
     const out = [id];
     for (const o of Object.keys(t.store.getState()?.objects?.tokens ?? {})) {
       if (o === id) continue;
       const p = this.tokenOf(t, o);
       if (!p) continue;
-      const half = this.scaleOf(t).cell / 2;
-      const gap = Math.max(0, Math.max(Math.abs(p.x - k.x), Math.abs(p.y - k.y)) - Math.max(p.r, half) - Math.max(k.r, half)) / ppf + square();
+      const gap = this.feetApart(t, k, p, this.scaleOf(t).cell / 2);
       if (feet > 0 && gap <= feet + 0.5) out.push(o);
     }
     return out;
@@ -9579,9 +9638,9 @@ ${text}`);
       if (id === caster) continue;
       const k = this.tokenOf(t, id);
       if (!k) continue;
-      const gap = c ? Math.max(0, Math.max(Math.abs(k.x - c.x), Math.abs(k.y - c.y)) - c.r - k.r) : 0;
-      if (gap + square() * ppf > reach + 0.5 * ppf) continue;
-      out.push({ id, name: this.tokenName(t, id), ft: c ? Math.round(gap / ppf / square()) * square() + square() : null });
+      const ft = c ? this.feetApart(t, c, k) : 0;
+      if (ft * ppf > reach + 0.5 * ppf) continue;
+      out.push({ id, name: this.tokenName(t, id), ft: c ? Math.round(ft / square()) * square() : null });
     }
     return out.sort((x, y) => (x.ft ?? 0) - (y.ft ?? 0) || x.name.localeCompare(y.name));
   }
@@ -10006,7 +10065,7 @@ ${text}`);
         for (const id of Object.keys(t.store.getState()?.objects?.tokens ?? {})) {
           const tok = this.tokenOf(t, id);
           if (!tok) continue;
-          const d = Math.max(0, Math.hypot(tok.x - b.cx, tok.y - b.cy) - tok.r);
+          const d = this.ruleDist(t, Math.max(0, Math.abs(tok.x - b.cx) - tok.r), Math.max(0, Math.abs(tok.y - b.cy) - tok.r));
           if (!best || d < best.d) best = { id, d };
         }
         if (best) {

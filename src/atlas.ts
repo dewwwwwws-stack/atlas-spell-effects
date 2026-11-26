@@ -135,6 +135,8 @@ export interface Measurement {
   coneAngle?: number;
   /** How Atlas ends a measured cone: 'round' (unset) or 'flat'. */
   coneEnd?: string;
+  /** How diagonal steps count on square grids: 'equidistant' (unset: each 1, as D&D 5e), 'alternating' (5-10-5), 'euclidean', 'manhattan'. */
+  diagonalRule?: string;
 }
 
 /** What the add-on reads of one Atlas map tab. */
